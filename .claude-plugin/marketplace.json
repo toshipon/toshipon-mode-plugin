@@ -7,7 +7,7 @@
       "name": "toshipon-mode",
       "source": "./plugins/toshipon-mode",
       "description": "Playbook-driven working mode for non-trivial tasks: verbatim playbook todolists, engineering principles, evidence-gated completion, plus the how/why/unslop/technical-writing/arena/interrogate skill set it routes to.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "author": { "name": "toshipon" }
     }
   ]
