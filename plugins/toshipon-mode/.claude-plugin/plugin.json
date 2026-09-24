@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "toshipon-mode",
   "displayName": "toshipon mode",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Playbook-driven working mode for non-trivial tasks. Copies the matching playbook into the todolist verbatim, applies engineering principles, delegates by model tier, and declares done only on evidence. Bundles the skills it routes to (how, why, unslop, technical-writing, show-me-your-work, arena, interrogate, blast-radius, web-perf, tdd, commit-rules, verification-loop), the pr-create / pr-feedback / check-github-ci / sync-main commands, and the architect agent.",
   "author": { "name": "toshipon", "url": "https://github.com/toshipon" },
   "homepage": "https://github.com/toshipon/toshipon-mode-plugin",

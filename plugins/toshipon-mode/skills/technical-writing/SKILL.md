@@ -115,16 +115,3 @@ After:
 > `budget.mjs` reads the committed budget from `budget.json` and counts the files that import protos. If the count exceeds the budget, CI fails. Run `budget.mjs --write` only to lower the budget.
 
 各層ごとの修正点は次の通りである。"configuration is performed" は "`budget.mjs` reads" になり、誰かが何かをする形になった（Google）。"Ratchet" は消えた。スクリプトの実際のファイル名が命名を担う（jargon ルール）。5 つの名詞が連なった文字列は平易な節に分解された（Global English）。ヘッジ表現の "note that it's important to remember" は削除された（仕事をしていない単語はすべて削る）。失敗条件は、それが説明するステップより前に移動した（STE）。埋もれていた "should only be done when lowering" は、"only" をその動詞の隣に置いたコマンド文になった（STE）。"If exceeded" には主語（count）が与えられた（Global English）。
-
-## Review checklist
-
-このスキルが扱うあらゆる文章に適用する。項目 1 はドキュメント群にのみ適用される。
-
-1. 各ファイルは 1 つの Diátaxis モードになっていて、モードが交わる箇所にはリンクがあるか。
-2. すべての指示はコマンド形式で、条件がその前に書かれているか。
-3. 2 つの指示や 2 つの考えを運んでいる文はないか。あれば分割する。
-4. 意味を失わずに削れる単語はないか。あれば削る。
-5. "only" はそれが修飾する単語の隣にあるか。すべての "it" は 1 つの対象を指しているか。すべての節に動詞はあるか。
-6. それぞれの対象は、ドキュメント全体を通じて正確に 1 つの名前を持っているか。
-7. これらの言葉を開発者は口に出して言うだろうか。作られた比喩や凝った類義語は、平易な言葉か実際のシンボル名に置き換えられているか。
-8. すべてのシンボル・パス・件数は、このコミットの時点で実在し、件数を再生成するコマンドが添えられているか。

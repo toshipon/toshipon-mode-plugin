@@ -31,7 +31,7 @@
 
 ### Arm the program
 
-- [ ] operator にこの protocol とこのプランを伝え、止まる。実行は彼らの明示的な go があってから始める。
+- [ ] operator にこの protocol とこのプランを伝え、止まる。実行は operator の明示的な go があってから始める。
 - [ ] go が出たら、この正確なテキストでセッション内の standing goal を再宣言する。「<プランのパス、順番通りの PR id、verification rule、誰がマージするか、done の条件。>」
 - [ ] プログラム開始時にこれらを trunk から読む。tick ごとに再読する。
   - [ ] `cat ${CLAUDE_PLUGIN_ROOT}/skills/toshipon-mode/SKILL.md`
@@ -39,7 +39,7 @@
   - [ ] `git show origin/master:<driver skill path>`
   - [ ] `cat ${CLAUDE_PLUGIN_ROOT}/skills/toshipon-mode/references/principles/INDEX.md`
 - [ ] Claude Code 組み込みの `/loop` で 30 分ごとの audit tick を仕込む。cadence を記憶任せにしない。
-- [ ] この tick プロンプトを逐語で使う。「trunk から execution playbook と standing goal を再読する。両方に対して operation を監査し、この tick で drift を直す。すべてのアクティブなレーンを probe し、side effect だけで進捗を判断する。行き詰まったレーンは stand down させ、その代替をすぐに dispatch する。それから operator に status message を送る。何も変わっていなくても送る。PR・owner・state・head SHA のキュー table、前回の tick 以降の判定、マージされたもの、未解決の operator gate、blocker を含める。」
+- [ ] この tick プロンプトを逐語で使う。「trunk から execution playbook と standing goal を再読する。両方に対して operation を監査し、この tick で drift を直す。すべてのアクティブなレーンを probe し、side effect だけで進捗を判断する。行き詰まったレーンは stand down させ、その代替をすぐに dispatch する。それから、以前の status message がまだ報告していない追跡対象の変化をこの監査で見つけたときだけ、チャットで operator に短い status message を送る。変化とは、PR のオープン、code-ready な head、ラウンドの開始や終了、判定、マージ、行き詰まった agent と取った対応、blocker の追加や解消、operator にしか下せない判断などである。そうした変化をすべて名指しし、それ以外は書かない。table、マージ済みの一覧、変わっていない blocker を繰り返さない。監査で何も見つからなければ、返信テキストなしでターンを終える。どちらの場合も、この tick の行を decision trail に記録する。その行は報告した項目か none を名指しする。」
 - [ ] operator の hold または stand-down の指示があれば、すべての owner に zero-writes order を一斉に送る。
 
 ### Spawn owners
@@ -58,12 +58,12 @@
 - [ ] PR 向けの push の前に `/verification-loop` を一度実行する。hook を有効にしたまま push する。
 - [ ] 各 commit の前に、diff の prose とコメントに `/unslop` を実行し、レビュー前に narrating comment がないか diff を読み直す。
 - [ ] すべての review-bot と security-reviewer のコメントを `../references/review-bot-triage.md` に従って triage する。
-- [ ] CI パスの前と merge-ready report の前に、それぞれ現在の trunk に rebase する。
+- [ ] code-ready report と CI パスの前に、現在の trunk に rebase する。fix ラウンドではその merge base を保つ。再び rebase するのは、merge 準備時、trunk との `git merge-tree` で conflict が出たとき、trunk 側の変更に起因する CI failure が出たときだけである。
 
 ### Verdict and merge, for every PR
 
-- [ ] merge-ready の head SHA で、並列の verification agent を fan out する。1 つは `/verification-loop` を走らせる gate レーン。live レーンは PR の **Verify, live** block から。perf レーンはその **Verify, perf** block から。1 つの audit レーンが diff と証拠を読み、PR body を疑ってかかる。
-- [ ] すべてのレーンが `PASS` のときだけ clean とする。findings は owner に戻す。新しい head は新しい fan-out と新しい判定を得る。
+- [ ] code-ready の head SHA と、その後 patch を変える各 push で、並列の verification agent を fan out する。1 つは `/verification-loop` を走らせる gate レーン。live レーンは PR の **Verify, live** block から。perf レーンはその **Verify, perf** block から。それぞれ独自の焦点を持つ 2 つ以上の audit レーンが diff と証拠を読み、PR body を疑ってかかる。判定の前に、merge-ready report の証拠を自分で監査する。
+- [ ] すべてのレーンが `PASS` のときだけ clean とする。findings は owner に戻す。レーンが note として記録した defect も含む。新しい head は新しい fan-out と新しい判定を得る。ただし、次の patch-id ルールの下で有効なままの結果は除く。
 - [ ] 判定の後、現在の trunk に rebase する。`git patch-id` は変わらない。patch-id が変わったら新しい head であり、新しい判定が必要である。
 
 ### Boot recipe, for every live lane
