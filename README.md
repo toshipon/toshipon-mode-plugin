@@ -4,9 +4,20 @@
 
 ## 由来
 
-このプラグインは、Cursor 向けプラグイン [pstack](https://github.com/cursor/plugins/tree/main/pstack)（Lauren Tan 作、MIT License）を参考に作りました。`toshipon-mode` skill は pstack の `poteto-mode` を、principles や `how`、`why`、`unslop`、`interrogate`、`arena` などのサブ skill は pstack の同名 skill を元にしています。日本語に翻訳したうえで、Claude Code の Agent tool やモデル指定（`opus` / `sonnet` / `haiku`）に合わせて書き換えています。pstack の著作権表示は `Copyright (c) 2026 Lauren Tan` です。
+このプラグインは、Cursor 向けプラグイン [pstack](https://github.com/cursor/plugins/tree/main/pstack)（Lauren Tan 作、MIT License）を参考に作りました。`toshipon-mode` skill は pstack の `poteto-mode` を、principles や `how`、`why`、`unslop`、`interrogate`、`arena` などのサブ skill は pstack の同名 skill を元にしています。日本語に翻訳したうえで、Claude Code の Agent tool やモデル指定（`opus` / `sonnet` / `haiku`）に合わせて書き換えています。
 
 upstream の変更は定期的に確認して取り込んでいます。最後に取り込んだのは pstack 0.15.5（cursor/plugins `12d587d`）です。
+
+pstack 以外にも、次のコンポーネントは外部のリポジトリが元になっています。
+
+- `architect` agent と `verification-loop` skill: [ECC（everything-claude-code）](https://github.com/affaan-m/ECC)（MIT License）
+- `web-perf` skill: [cloudflare/skills](https://github.com/cloudflare/skills)（Apache License 2.0）
+
+各ライセンスの著作権表示と本文は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) にまとめています。
+
+## ライセンス
+
+[MIT License](LICENSE)。第三者由来の部分は、それぞれ元のライセンスに従います。
 
 ## インストール
 
@@ -16,8 +27,6 @@ Claude Code のセッション内で以下を実行してください。
 /plugin marketplace add toshipon/toshipon-mode-plugin
 /plugin install toshipon-mode@toshipon-tools
 ```
-
-このリポジトリは private のため、`gh auth login` や SSH 鍵などの git 認証がローカルに設定されている必要があります。バックグラウンドでの自動更新チェックには、SSH 経由のアクセスか `gh auth setup-git` による HTTPS 認証情報の設定のどちらかが要ります。認証が無い環境では marketplace の追加やインストール自体が失敗します。
 
 ## 収録コンポーネント
 
