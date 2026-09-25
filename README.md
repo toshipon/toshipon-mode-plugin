@@ -12,6 +12,7 @@ pstack 以外にも、次のコンポーネントは外部のリポジトリが�
 
 - `architect` agent と `verification-loop` skill: [ECC（everything-claude-code）](https://github.com/affaan-m/ECC)（MIT License）
 - `web-perf` skill: [cloudflare/skills](https://github.com/cloudflare/skills)（Apache License 2.0）
+- `japanese-tech-writing` skill: [k16shikano の gist](https://gist.github.com/k16shikano/fd287c3133457c4fd8f5601d34aa817d)（Unlicense）
 
 各ライセンスの著作権表示と本文は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) にまとめています。
 
@@ -57,6 +58,11 @@ APM は plugin を skill・command・agent に分解して配置するので、`
 - `tdd`: テスト駆動開発のガイドラインです。
 - `commit-rules`: コミット規約と変更管理のガイドラインです。
 - `verification-loop`: PR 前の統合検証（ビルド、型チェック、lint、テスト、セキュリティ）を回します。
+- `create-verification-skill`: 実アプリを起動・操作して証拠を残す、リポジトリ固有の検証 skill（`verify-<app>`）を生成します。
+- `e2e-replay`: iOS シミュレータと cliclick で UI E2E シナリオを再生し、各ステップのスクリーンショットを残します。runner script（`scripts/e2e/run_scenario.sh`）は利用側のリポジトリで用意します。
+- `typescript-best-practices`: `.ts` / `.tsx` を読み書きするときの TypeScript の規範です。
+- `japanese-writing`: 日本語の文章を Claude が下書きし、Gemini（Antigravity CLI の `agy`）にレビューさせて統合します。同梱の `scripts/gemini-ja.sh` を使います。
+- `japanese-tech-writing`: 日本語の技術文書の文章規範（段落の構成、論証の厳密さ、翻訳調の排除など）です。
 
 ### Commands
 
@@ -75,20 +81,18 @@ APM は plugin を skill・command・agent に分解して配置するので、`
 
 ## 外部参照している skill（未収録）
 
-`toshipon-mode` の SKILL.md は、以下の skill を名前で参照しますが、このプラグインには含まれていません。`/plugin` でインストールした場合は、利用側の環境に別途インストールされている前提です。
+このプラグインの skill は、以下の skill を名前で参照しますが、このプラグインには含まれていません。`/plugin` でインストールした場合は、利用側の環境に別途インストールされている前提です。
 
 APM でインストールした場合は、公開されている取得元があるものだけ `apm.yml` の依存として一緒に入ります。
 
 | skill | `apm.yml` での扱い |
 |---|---|
-| `hdd:hypothesis-first`、`hdd:verify`、`hdd:grill` | 依存として宣言済み（[toshipon/hypothesis-driven-development-skills](https://github.com/toshipon/hypothesis-driven-development-skills) の `plugin/`） |
-| `create-verification-skill` | 依存として宣言済み（pstack の upstream 版。cursor/plugins `12d587d` に固定） |
+| `hdd:hypothesis-first`、`hdd:verify`、`hdd:grill`、`hdd:source-traceability`（`japanese-writing` が参照） | 依存として宣言済み（[toshipon/hypothesis-driven-development-skills](https://github.com/toshipon/hypothesis-driven-development-skills) の `plugin/`） |
 | `superset:orchestrate`、`superset:browser` | 未宣言。Superset アプリが提供する skill のため |
 | `claude-in-chrome` | 未宣言。Claude Code に組み込まれている skill のため |
-| `e2e-replay` | 未宣言。公開された取得元がないため |
 
-`unslop` はこのプラグインに収録済みです。
+`unslop`、`create-verification-skill`、`e2e-replay` はこのプラグインに収録済みです。
 
 ## 注意: skill の二重ロードについて
 
-このプラグインが収録している skill と同名の skill が、すでに `~/.claude/skills/` 配下にインストールされているマシンでは、両方が二重にロードされます。該当する skill 名（`toshipon-mode`、`how`、`why`、`unslop`、`technical-writing`、`show-me-your-work`、`arena`、`interrogate`、`blast-radius`、`web-perf`、`tdd`、`commit-rules`、`verification-loop`）が個人設定側にもある場合は、どちらか片方を削除してください。
+このプラグインが収録している skill と同名の skill が、すでに `~/.claude/skills/` 配下にインストールされているマシンでは、両方が二重にロードされます。該当する skill 名（`toshipon-mode`、`how`、`why`、`unslop`、`technical-writing`、`show-me-your-work`、`arena`、`interrogate`、`blast-radius`、`web-perf`、`tdd`、`commit-rules`、`verification-loop`、`create-verification-skill`、`e2e-replay`、`typescript-best-practices`、`japanese-writing`、`japanese-tech-writing`）が個人設定側にもある場合は、どちらか片方を削除してください。

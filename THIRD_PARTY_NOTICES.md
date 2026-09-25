@@ -4,9 +4,10 @@
 
 | 由来 | ライセンス | 対象ファイル | 変更 |
 |---|---|---|---|
-| [pstack](https://github.com/cursor/plugins/tree/main/pstack)（cursor/plugins） | MIT | `plugins/toshipon-mode/skills/` 配下の `toshipon-mode`（元は `poteto-mode`）、`how`、`why`、`unslop`、`technical-writing`、`show-me-your-work`、`arena`、`interrogate`、`blast-radius`、`tdd`、`skills/toshipon-mode/references/principles/` | 日本語に翻訳し、Claude Code の Agent tool とモデル指定に合わせて書き換え |
+| [pstack](https://github.com/cursor/plugins/tree/main/pstack)（cursor/plugins） | MIT | `plugins/toshipon-mode/skills/` 配下の `toshipon-mode`（元は `poteto-mode`）、`how`、`why`、`unslop`、`technical-writing`、`show-me-your-work`、`arena`、`interrogate`、`blast-radius`、`tdd`、`create-verification-skill`、`typescript-best-practices`、`skills/toshipon-mode/references/principles/` | 日本語に翻訳し、Claude Code の Agent tool とモデル指定に合わせて書き換え |
 | [ECC（everything-claude-code）](https://github.com/affaan-m/ECC) | MIT | `plugins/toshipon-mode/agents/architect.md`、`plugins/toshipon-mode/skills/verification-loop/SKILL.md` | 内容を削り、`verification-loop` は日本語に翻訳 |
 | [cloudflare/skills](https://github.com/cloudflare/skills) | Apache-2.0 | `plugins/toshipon-mode/skills/web-perf/SKILL.md` | 変更なし。取り込み時点の版をそのまま収録（その後の upstream の変更は未反映） |
+| [k16shikano の gist](https://gist.github.com/k16shikano/fd287c3133457c4fd8f5601d34aa817d) | Unlicense | `plugins/toshipon-mode/skills/japanese-tech-writing/SKILL.md` | 軽微な修正と、`unslop` との住み分けの節を追加 |
 
 ---
 
@@ -266,4 +267,22 @@ SOFTWARE.
    distributed under the License is distributed on an "AS IS" BASIS,
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
-   limitations under the License.```
+   limitations under the License.
+```
+
+---
+
+## k16shikano gist（japanese-tech-writing）
+
+元の gist は Unlicense（パブリックドメインへの献呈）で公開されており、著作権表示の義務はありません。出典として記載しています。
+
+```
+This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or
+distribute this software, either in source code form or as a compiled
+binary, for any purpose, commercial or non-commercial, and by any
+means.
+
+For more information, please refer to <https://unlicense.org>
+```
