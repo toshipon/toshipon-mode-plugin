@@ -1,0 +1,20 @@
+# microsoft/apm (Agent Package Manager) 用の manifest。
+# Claude Code のネイティブ plugin 導入（.claude-plugin/marketplace.json）はこのファイルを読まない。
+#
+# このファイルは依存だけを宣言する aggregator として置いている。
+# plugins/toshipon-mode/ に apm.yml を置くと、nested skills があるため APM は SKILL_BUNDLE と判定し、
+# agents/ と commands/ が配布対象から外れる。そのため plugin 側には置かず、Claude plugin として解釈させる。
+name: toshipon-mode-plugin
+version: 0.1.2
+description: toshipon-mode plugin and the public skills it routes to
+author: toshipon
+license: MIT
+
+dependencies:
+  apm:
+    # 本体。同じリポジトリ内の Claude plugin（skills / agents / commands）
+    - ./plugins/toshipon-mode
+    # hdd:hypothesis-first（skill）、hdd:verify / hdd:grill（command）
+    - toshipon/hypothesis-driven-development-skills/plugin
+    # create-verification-skill の upstream（pstack 0.15.5 取り込み時点の cursor/plugins）
+    - cursor/plugins/pstack/skills/create-verification-skill#12d587dfb20741cafc376c42c696c5f6e2a64487

@@ -28,6 +28,18 @@ Claude Code のセッション内で以下を実行してください。
 /plugin install toshipon-mode@toshipon-tools
 ```
 
+### microsoft/apm で入れる場合
+
+[APM（Agent Package Manager）](https://github.com/microsoft/apm) を使う場合は、リポジトリ直下の `apm.yml` を経由して、本体と公開されている依存 skill をまとめて入れられます。
+
+```bash
+apm install toshipon/toshipon-mode-plugin
+```
+
+`apm.yml` は依存だけを宣言するファイルで、本体は `./plugins/toshipon-mode` への依存として解決されます。本体だけが必要な場合は `apm install toshipon/toshipon-mode-plugin/plugins/toshipon-mode` を使ってください。Claude Code の `/plugin` によるインストールは `apm.yml` を読まないため、上の手順には影響しません。
+
+APM は plugin を skill・command・agent に分解して配置するので、`${CLAUDE_PLUGIN_ROOT}` を前提にした参照（`/sync-main` が呼ぶ `scripts/sync-main-branch.sh` など）は動かない可能性があります。Claude Code で使う場合は `/plugin` でのインストールを推奨します。
+
 ## 収録コンポーネント
 
 ### Skills
@@ -63,16 +75,17 @@ Claude Code のセッション内で以下を実行してください。
 
 ## 外部参照している skill（未収録）
 
-`toshipon-mode` の SKILL.md は、以下の skill を名前で参照しますが、このプラグインには含まれていません。利用側の環境に別途インストールされている前提です。
+`toshipon-mode` の SKILL.md は、以下の skill を名前で参照しますが、このプラグインには含まれていません。`/plugin` でインストールした場合は、利用側の環境に別途インストールされている前提です。
 
-- `hdd:hypothesis-first`
-- `hdd:verify`
-- `hdd:grill`
-- `superset:orchestrate`
-- `superset:browser`
-- `claude-in-chrome`
-- `e2e-replay`
-- `create-verification-skill`
+APM でインストールした場合は、公開されている取得元があるものだけ `apm.yml` の依存として一緒に入ります。
+
+| skill | `apm.yml` での扱い |
+|---|---|
+| `hdd:hypothesis-first`、`hdd:verify`、`hdd:grill` | 依存として宣言済み（[toshipon/hypothesis-driven-development-skills](https://github.com/toshipon/hypothesis-driven-development-skills) の `plugin/`） |
+| `create-verification-skill` | 依存として宣言済み（pstack の upstream 版。cursor/plugins `12d587d` に固定） |
+| `superset:orchestrate`、`superset:browser` | 未宣言。Superset アプリが提供する skill のため |
+| `claude-in-chrome` | 未宣言。Claude Code に組み込まれている skill のため |
+| `e2e-replay` | 未宣言。公開された取得元がないため |
 
 `unslop` はこのプラグインに収録済みです。
 
