@@ -60,6 +60,11 @@ drafted → building → shipped → measuring → validated / invalidated / inc
 だから唯一の防御にしない）、cron の実行時刻を避ける `avoid_minutes`、マージ前の health check、
 `cap_merges_per_day`。どれか 1 つが外れても事故にならない形にする。
 
+**health check は自分が触る surface を見る。** 別のシステムの監視を指した gate は、ループ自身の
+変更で壊れうる画面について何も言わず、しかもその監視が入っていない機械ではマージを常に拒否する。
+安全側に倒れているように見えて、実際には動かない gate である。cron が定期的に書く surface なら、
+書き込みが止まったことが最も強い信号になる。沈黙は検知しやすく、しかも見逃されやすい。
+
 ## State model
 
 仮説 1 件が 1 ファイルである。`<records_dir>/hypotheses/PH-NNNN.yaml`。全フィールドと不変条件は

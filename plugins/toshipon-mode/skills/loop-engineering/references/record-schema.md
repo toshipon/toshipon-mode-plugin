@@ -130,7 +130,8 @@ deploy_verify_cwd: cloud/paper-trader
 deploy_version_jq: .versions[0].version_id
 deploy_wait_seconds: 300
 deploy_fallback:
-deploy_health: scripts/autoloop/monitor.sh
+# The surface this loop owns, not another system's monitor. See the note below.
+deploy_health: scripts/product/health.sh
 avoid_minutes: 0-14
 
 metrics_db: quant-paper-trading-db
@@ -167,6 +168,18 @@ mcp_tools:
 `deploy_fallback` を空にすると、自動デプロイが動かなかった時に「マージしたがデプロイされていない」
 として exit 1 する。ループが自分で `wrangler deploy` を打つのは、その repo でそれが正解だと人間が
 判断した時だけである。
+
+`deploy_health` は **このループが触る surface** の健康を見るコマンドにする。別のシステムの監視を
+指してはいけない。理由は 2 つある。1 つは、それがループ自身の変更で壊れうる surface について何も
+言わないこと。もう 1 つは、その監視が入っていない機械でループが一度もマージできなくなることで、
+安全側に倒れているように見えて実際には動かない gate になる。
+
+何を見るかは surface が決める。cron が定期的に書くなら、その書き込みが止まったことが最も強い信号
+である。沈黙は検知しやすく、しかも見逃されやすい。quant-lab では paper trader が 6 日間 1 行も
+書かずに誰も気づかなかった。`deploy_health` はその沈黙を見る。
+
+このコマンドを `allowed_paths` に入れない。自分の健康診断を止められるループは、壊れたことに
+気づけない。
 
 ## 3. `<records_dir>/metrics.yaml`
 
