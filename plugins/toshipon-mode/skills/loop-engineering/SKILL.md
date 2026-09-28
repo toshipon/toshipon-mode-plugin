@@ -69,6 +69,22 @@ surface の種類ごとに、繰り返される仕事が分母になる。
 **そのシステムのドメインのテーブルを先に見る。** HTTP のイベントより、ドメインの行の方がたいてい
 多く、意味がある。
 
+### flow と snapshot を混同しない
+
+metric には 2 種類ある。ここを混ぜると power gate が水増しされたサンプルで通る。
+
+- **flow**（その日に起きた件数。決済数、エラー数、リクエスト数）。日をまたいで足せる。7 日なら
+  1 日分の 7 倍のサンプルが本当に集まる
+- **snapshot**（その時点の状態。滞留している建玉、キューの長さ、建玉を持つ戦略の割合）。**同じ
+  母集団を毎日数え直しているだけ**なので、足しても増えない
+
+`loop-metrics.sh` の `n` は窓全体の `SUM(sample)` である。snapshot でこれを power の入力にすると、
+日数の分だけサンプルを水増しして数える。1 日あたりの最大を返す `n_day_max` も同時に返すので、
+snapshot の仮説はそちらを使う。
+
+`metrics.yaml` の description に flow か snapshot かを書く。書いていない metric で power を計算
+しない。
+
 **ループ自体の falsification。** terminal に達した record のうち `inconclusive` が 50% を超えたら、
 このループは劇場である。`/toshipon-mode:loop-status` がこの比率を出す。超えたら metric 設計を
 変えるか、ループを止める。

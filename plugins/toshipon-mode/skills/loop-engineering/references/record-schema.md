@@ -228,6 +228,10 @@ metrics:
 | `rate:` `share:` `errors:` | `SUM(value) / SUM(sample)` | 滞留率、エラー率、1 銘柄への偏り |
 | それ以外（`avg_ms:` など） | `SUM(value*sample) / SUM(sample)` | 所要時間、平均滞留日数 |
 
+reader は `n`（窓全体の `SUM(sample)`）と `n_day_max`（1 日あたりの最大）の両方を返す。flow の
+仮説は `n` を、snapshot の仮説は `n_day_max` を power の入力にする。snapshot は同じ母集団を毎日
+数え直しているので、`n` は日数の分だけ水増しされている。
+
 `count:` と `rate:` がドメイン側の名前で、`hits:` と `errors:` は HTTP の rollup が先に使っていた
 同じ算術の別名である。新しい metric はドメイン側の名前を使う。
 

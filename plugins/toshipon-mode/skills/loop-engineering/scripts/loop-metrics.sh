@@ -72,9 +72,13 @@ case "$key" in
   *)                            agg="COALESCE(SUM(value*sample)/NULLIF(SUM(sample),0),0)" ;;
 esac
 
-rows=$(d1 "SELECT $agg AS value, COALESCE(SUM(sample),0) AS n, COUNT(*) AS days FROM $table WHERE metric = '$key' AND day >= '$from' AND day <= '$to'") \
+# n_day_max exists because n is only an honest sample count for a flow. A snapshot metric re-counts
+# the same population every day, so summing it inflates the sample by the number of days and the
+# power gate believes it has evidence it does not have. A snapshot hypothesis uses n_day_max.
+rows=$(d1 "SELECT $agg AS value, COALESCE(SUM(sample),0) AS n, COALESCE(MAX(sample),0) AS n_day_max, COUNT(*) AS days FROM $table WHERE metric = '$key' AND day >= '$from' AND day <= '$to'") \
   || { echo '{"error":"d1 unreadable"}'; exit 1; }
 
 jq -n --argjson r "$rows" --arg q "$query_id" --arg k "$key" --arg f "$from" --arg t "$to" \
-  '{metric: $k, value: ($r[0].value // null), n: ($r[0].n // 0), days: ($r[0].days // 0),
+  '{metric: $k, value: ($r[0].value // null), n: ($r[0].n // 0), n_day_max: ($r[0].n_day_max // 0),
+    days: ($r[0].days // 0),
     window: {start: $f, end: $t}, query_id: $q, captured_at: (now | todateiso8601)}'
