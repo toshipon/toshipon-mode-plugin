@@ -94,6 +94,14 @@ rm -f "$records/hypotheses"/*.yaml "$records/paused.flag"
 check "empty records dir" "theatre check: no terminal records yet" \
                           "$(REPO="$fixture" loop_state "$records" | grep '^theatre check:')"
 
+# An unsubstituted placeholder does not fail loudly. The tick just receives the literal text and
+# silently cannot measure, check, push or merge, and the journal reads like a quiet cycle.
+prompt="$here/../references/cycle-prompt.md"
+in_prompt=$(grep -o '{{[A-Z_]*}}' "$prompt" | sort -u)
+in_runner=$(grep -o 's|{{[A-Z_]*}}' "$here/loop-run.sh" | sed 's/^s|//' | sort -u)
+check "every prompt placeholder is substituted" "" "$(comm -23 <(echo "$in_prompt") <(echo "$in_runner") | tr '\n' ' ' | sed 's/ *$//')"
+check "the runner substitutes nothing unused" "" "$(comm -13 <(echo "$in_prompt") <(echo "$in_runner") | tr '\n' ' ' | sed 's/ *$//')"
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "loop-selftest: all checks passed under $BASH_VERSION"
