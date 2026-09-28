@@ -62,12 +62,14 @@ to="${4:?to date required}"
 grep -qF "\"$key\":" "$metrics_file" || grep -qE "^  $key:" "$metrics_file" \
   || { echo "{\"error\":\"$key is not declared in $metrics_file\"}"; exit 1; }
 
-# The aggregation is fixed by the key prefix. A count sums the value; a rate and a mean weight it
-# by the sample, because each stored row already holds a per-day aggregate.
+# The aggregation is fixed by the key prefix. A count sums the value; a rate divides by the sample;
+# anything else is a sample-weighted mean, because each stored row already holds a per-day aggregate.
+# count: and rate: are the domain-facing names (closed trades, stale positions, exposure share);
+# hits: and errors: are the same maths under the names the HTTP rollup used first.
 case "$key" in
-  hits:*)   agg="COALESCE(SUM(value),0)" ;;
-  errors:*) agg="COALESCE(SUM(value)/NULLIF(SUM(sample),0),0)" ;;
-  *)        agg="COALESCE(SUM(value*sample)/NULLIF(SUM(sample),0),0)" ;;
+  hits:*|count:*)               agg="COALESCE(SUM(value),0)" ;;
+  errors:*|rate:*|share:*)      agg="COALESCE(SUM(value)/NULLIF(SUM(sample),0),0)" ;;
+  *)                            agg="COALESCE(SUM(value*sample)/NULLIF(SUM(sample),0),0)" ;;
 esac
 
 rows=$(d1 "SELECT $agg AS value, COALESCE(SUM(sample),0) AS n, COUNT(*) AS days FROM $table WHERE metric = '$key' AND day >= '$from' AND day <= '$to'") \

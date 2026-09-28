@@ -187,6 +187,24 @@ mcp_tools:
 
 ```yaml
 metrics:
+  # ドメインの仕事を数える。分母はシステムが作るので人間が見ていなくても溜まる。
+  "count:trades_closed":
+    kind: operational
+    expected_n_per_day: null
+    direction: higher_is_better
+    description: 1 日に決済した件数。サイクルが仕事をしたかを言う
+  "rate:stale_positions":
+    kind: operational
+    expected_n_per_day: null
+    direction: lower_is_better
+    description: 建てたまま n 日動いていない建玉の割合。value が分子、sample が全建玉
+  "share:top_symbol_exposure":
+    kind: operational
+    expected_n_per_day: null
+    direction: lower_is_better
+    description: 最大の 1 銘柄が notional に占める割合
+
+  # surface の metric。分母が人間なので、使う人が少ないと判定に届かない
   "avg_ms:/api/strategies":
     kind: operational
     expected_n_per_day: 400
@@ -202,8 +220,19 @@ metrics:
     direction: lower_is_better
 ```
 
-集約は key の prefix が決める。`hits:` は件数の和、`errors:` は sample 重みの比率、それ以外は
-sample 重みの平均である。これは `loop-metrics.sh` の中にあり、ループは変更できない。
+集約は key の prefix が決める。これは `loop-metrics.sh` の中にあり、ループは変更できない。
+
+| prefix | 集約 | 使いどころ |
+|---|---|---|
+| `count:` `hits:` | `SUM(value)` | 決済件数、サイクル実行回数、リクエスト数 |
+| `rate:` `share:` `errors:` | `SUM(value) / SUM(sample)` | 滞留率、エラー率、1 銘柄への偏り |
+| それ以外（`avg_ms:` など） | `SUM(value*sample) / SUM(sample)` | 所要時間、平均滞留日数 |
+
+`count:` と `rate:` がドメイン側の名前で、`hits:` と `errors:` は HTTP の rollup が先に使っていた
+同じ算術の別名である。新しい metric はドメイン側の名前を使う。
+
+書く側は必ず value と sample を対で入れる。`rate:` なら value が分子、sample が分母である。
+ここがずれると比率が静かに間違う。
 
 `kind: behavioural` の metric は、ユーザーが 1 人の surface では判定に届かない。`power` が false
 になり、仮説は abandoned になる。それが正しい振る舞いである。behavioural を測りたいなら、まず
