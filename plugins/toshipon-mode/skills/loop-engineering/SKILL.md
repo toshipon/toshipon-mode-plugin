@@ -141,6 +141,11 @@ step 0 で止まる。fail closed が既定である。
 2. **power を計算する。** `metrics.yaml` の `expected_n_per_day` と `power.horizon_days` から、
    `success` の差が検出できるかを判断し、`power.decidable` と根拠を書く。false なら `abandoned`
    にして終わる。ここで止まるのは正しい仕事である。
+
+   **「判定できない」と「まだ分からない」を混同しない。** `expected_n_per_day` が null なのは、
+   その metric が判定に届かないからではなく、実測がまだ無いからである。null のときは
+   `decidable` を false にせず、record を `drafted` のまま残し、journal に「rollup の実測を待って
+   いる」と書いて終わる。まだ分からないものを abandoned にすると、測れば通ったはずの仮説を捨てる。
 3. **falsification と success を確定させる。** どちらかが空なら `drafted` に戻して理由を書く。
    この 2 つは以後編集しない。
 4. **実装する。** `toshipon-mode` skill の Feature playbook に入る。触れるのは `allowed_paths` の
@@ -175,10 +180,20 @@ step 0 で止まる。fail closed が既定である。
 2. `list_personas` で既存ペルソナを見る。埋まっていない面を 1 つ選び、`create_persona` で 1 体
    足す。`occupation`（`role` ではない）、`goals`、`frustrations`、`behaviors` を埋める。
 3. **実際の surface を観測する。** 対話なら `claude-in-chrome` か `superset:browser` で操作する。
-   headless なら `surface_url` に WebFetch する。画面を一度も見ずに書いたインタビューは作文で
-   あり、観測できなかったならそう書く。観測したことを材料に擬似インタビューを行い、
-   `create_interview` で登録し、`<records_dir>/interviews/INT-NNN.md` に同じ内容を残す。
-   `source: synthetic` を明記する。
+   headless なら `surface_url` に WebFetch する。認証の裏にあって届かないなら、リポジトリの
+   dev サーバを起動して同じ route を叩く。画面を一度も見ずに書いたインタビューは作文であり、
+   観測できなかったならそう書く。観測したことを材料に擬似インタビューを行い、`create_interview`
+   で登録し、`<records_dir>/interviews/INT-NNN.md` に同じ内容を残す。`source: synthetic` を明記する。
+
+   **surface が読めなければ、そこで止まる。** route がエラーを返す、画面が描画されない、起動
+   できないといった場合、それは仮説の材料ではなく defect である。インタビューには観測した事実
+   （叩いた route、status、body、ログ）だけを書き、journal の `要対応` に defect を挙げて終わる。
+   壊れた画面についての仮説を書いてはいけない。壊れた surface の上で取った baseline は、その後の
+   measurement が何と比較されているのか分からなくなる。
+
+   決定表に surface の health を見る行は無い。deploy_health は別 worker の監視であって、この
+   ループが触る画面のことは何も言わない。だから surface が生きているかは、観測しに行った
+   INTERVIEW と BUILD がその場で確かめる。
 4. `metrics.yaml` に既にある metric で測れる `drafted` を 1 件から 3 件作る。測れない着想は record に
    せず、journal に「人間が metric を足せば測れる候補」として残す。
 5. `cap_new_hypotheses_per_7d` を超えない。

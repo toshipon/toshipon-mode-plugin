@@ -64,6 +64,27 @@ loop_path_allowed() {
   return 1
 }
 
+loop_oneline() { echo "$1" | tail -3 | tr '\n' ' ' | sed 's/[[:space:]]*$//'; }
+
+# loop_health <repo> <health-command-path>
+# Prints a reason and returns non-zero when the merge must not proceed. A configured command that
+# cannot run is not a pass: treating its failure as silence is fail-open, and the loop would merge
+# straight through an outage it never saw.
+loop_health() {
+  local repo="$1" cmd="$2" out
+  [ -z "$cmd" ] && return 0
+  [ -x "$repo/$cmd" ] || { echo "deploy_health is set to $cmd but it is not executable here"; return 1; }
+  if ! out=$("$repo/$cmd" 2>&1); then
+    echo "deploy_health exited non-zero: $(loop_oneline "$out")"
+    return 1
+  fi
+  if echo "$out" | grep -qiE 'anomal|halt|stale'; then
+    echo "deploy_health reports a problem: $(loop_oneline "$out")"
+    return 1
+  fi
+  return 0
+}
+
 # loop_run_checks <policy-file> <log-file> <run-surface-checks:0|1>
 # One place decides what green means, so the gate and the agent's own check command cannot drift.
 loop_run_checks() {

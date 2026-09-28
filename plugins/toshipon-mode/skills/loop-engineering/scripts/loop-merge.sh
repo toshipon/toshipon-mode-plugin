@@ -53,12 +53,8 @@ merged_today=$(gh pr list --state merged --limit 60 --json headRefName,mergedAt 
 
 # Pre-flight, not post-merge. A system that is already unhealthy does not get a new deploy on top
 # of whatever is wrong, and the next tick's GUARD step is what reads health after a merge.
-health=$(loop_cfg "$policy" deploy_health)
-if [ -n "$health" ] && [ -x "$REPO/$health" ]; then
-  out=$("$REPO/$health" 2>&1) || true
-  echo "$out" | grep -qiE 'anomal|halt|stale' \
-    && refuse "pre-flight health check reports a problem: $(echo "$out" | tail -3 | tr '\n' ' ')"
-fi
+health_reason=$(loop_health "$REPO" "$(loop_cfg "$policy" deploy_health)") \
+  || refuse "pre-flight health: $health_reason"
 
 avoid=$(loop_cfg "$policy" avoid_minutes)
 if [ -n "$avoid" ]; then

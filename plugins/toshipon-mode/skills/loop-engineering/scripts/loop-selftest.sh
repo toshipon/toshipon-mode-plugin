@@ -94,6 +94,24 @@ rm -f "$records/hypotheses"/*.yaml "$records/paused.flag"
 check "empty records dir" "theatre check: no terminal records yet" \
                           "$(REPO="$fixture" loop_state "$records" | grep '^theatre check:')"
 
+check_health() {  # check_health <label> <expected reason or empty> <health command path>
+  local label="$1" want="$2" cmd="$3" got
+  got=$(loop_health "$fixture" "$cmd") || true
+  check "$label" "$want" "$got"
+}
+mkdir -p "$fixture/bin"
+printf '#!/bin/bash\necho "equity 100 floor 83"\n' >"$fixture/bin/healthy.sh"
+printf '#!/bin/bash\necho "anomalies: below_capital_floor_trading_halted"\n' >"$fixture/bin/sick.sh"
+printf '#!/bin/bash\necho "d1 unreadable" >&2\nexit 1\n' >"$fixture/bin/broken.sh"
+printf '#!/bin/bash\necho hi\n' >"$fixture/bin/notexec.sh"
+chmod +x "$fixture/bin/healthy.sh" "$fixture/bin/sick.sh" "$fixture/bin/broken.sh"
+check_health "no health command configured is a pass" "" ""
+check_health "a healthy command is a pass"            "" "bin/healthy.sh"
+check_health "an anomaly is refused"                  "deploy_health reports a problem: anomalies: below_capital_floor_trading_halted" "bin/sick.sh"
+check_health "a non-zero exit is refused"             "deploy_health exited non-zero: d1 unreadable" "bin/broken.sh"
+check_health "a non-executable command is refused"    "deploy_health is set to bin/notexec.sh but it is not executable here" "bin/notexec.sh"
+check_health "a missing command is refused"           "deploy_health is set to bin/absent.sh but it is not executable here" "bin/absent.sh"
+
 # An unsubstituted placeholder does not fail loudly. The tick just receives the literal text and
 # silently cannot measure, check, push or merge, and the journal reads like a quiet cycle.
 prompt="$here/../references/cycle-prompt.md"
