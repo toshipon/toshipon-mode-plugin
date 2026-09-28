@@ -50,7 +50,11 @@ setup=$(loop_cfg "$LOOP_YAML" setup_command)
 
 # The gates run from a copy outside the agent's worktree, so an edit the agent makes to a gate can
 # never be the gate that judges it.
-bin="$STATE_DIR/bin"
+bin="$BIN_DIR"
+if ! reason=$(loop_pathsafe "$bin"); then
+  echo "[$(date -u +%FT%TZ)] tick refused: $reason"
+  exit 1
+fi
 mkdir -p "$bin"
 for f in loop-config.sh loop-check.sh loop-metrics.sh loop-push.sh loop-merge.sh; do
   cp "$here/$f" "$bin/$f"

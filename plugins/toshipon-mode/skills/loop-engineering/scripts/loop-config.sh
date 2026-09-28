@@ -41,7 +41,10 @@ loop_env() {
   export PATH="${LOOP_PATH:-$HOME/.local/bin:$HOME/.anyenv/envs/nodenv/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin}"
   export STATE_DIR="${LOOP_STATE_DIR:-$HOME/Library/Application Support/$LOOP_ID}"
   export LOG_DIR="${LOOP_LOG_DIR:-$HOME/Library/Logs/$LOOP_ID}"
-  mkdir -p "$STATE_DIR" "$LOG_DIR"
+  # Deliberately not under STATE_DIR. The runner names this directory inside --allowedTools
+  # patterns, and "Application Support" has a space in it, which matches nothing.
+  export BIN_DIR="${LOOP_BIN_DIR:-$HOME/.cache/loop-engineering/$LOOP_ID/bin}"
+  mkdir -p "$STATE_DIR" "$LOG_DIR" "$BIN_DIR"
 }
 
 loop_notify() {  # loop_notify <title> <message>
@@ -83,6 +86,16 @@ loop_health() {
     return 1
   fi
   return 0
+}
+
+# loop_pathsafe <path>
+# A path that goes into an --allowedTools pattern must contain no whitespace. A space there matches
+# nothing, every gate call is denied, and the tick spends its budget discovering that.
+loop_pathsafe() {
+  case "$1" in
+    *[[:space:]]*) echo "path contains whitespace and cannot be used in a tool permission: $1"; return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 # loop_lock <lock-dir>

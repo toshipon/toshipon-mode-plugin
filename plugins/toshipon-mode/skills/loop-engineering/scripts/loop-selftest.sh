@@ -112,6 +112,20 @@ check_health "a non-zero exit is refused"             "deploy_health exited non-
 check_health "a non-executable command is refused"    "deploy_health is set to bin/notexec.sh but it is not executable here" "bin/notexec.sh"
 check_health "a missing command is refused"           "deploy_health is set to bin/absent.sh but it is not executable here" "bin/absent.sh"
 
+check_pathsafe() {  # check_pathsafe <label> <expected> <path>
+  local label="$1" want="$2" got
+  got=$(loop_pathsafe "$3") || true
+  check "$label" "$want" "$got"
+}
+check_pathsafe "a plain path is usable"   "" "/Users/x/.cache/loop/bin"
+# "Application Support" is the trap: the gate paths went into --allowedTools and matched nothing,
+# so every gate call was denied and the tick burned budget discovering it.
+check_pathsafe "a path with a space is refused" \
+  "path contains whitespace and cannot be used in a tool permission: /Users/x/Library/Application Support/l/bin" \
+  "/Users/x/Library/Application Support/l/bin"
+check_pathsafe "a tab is refused too" \
+  "path contains whitespace and cannot be used in a tool permission: /Users/x/a	b" "/Users/x/a	b"
+
 check_lock() {  # check_lock <label> <expected> <lock path>
   local label="$1" want="$2" got
   got=$(loop_lock "$3") || true
