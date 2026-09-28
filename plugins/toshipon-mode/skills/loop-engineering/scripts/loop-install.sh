@@ -17,6 +17,21 @@ main_repo="${1:?main repo path required}"
 loop_env "$main_repo"
 hour="${2:-15}"
 minute="${3:-30}"
+
+# Preflight. Each of these makes the loop refuse at run time or at merge time, and finding that out
+# on the first tick a week later is how a scheduled job becomes a job nobody trusts.
+if [ -z "$(loop_cfg "$LOOP_YAML" approved_by)" ] || [ -z "$(loop_cfg "$LOOP_YAML" approved_at)" ]; then
+  echo "refusing to install: $LOOP_YAML has no approved_by / approved_at." >&2
+  echo "The delegation is a signature, not a default. Sign it first." >&2
+  exit 1
+fi
+if ! reason=$(loop_health "$main_repo" "$(loop_cfg "$LOOP_YAML" deploy_health)"); then
+  echo "refusing to install: $reason" >&2
+  echo "loop-merge.sh runs the same check before every merge, so the loop could never merge here." >&2
+  echo "Either make that command work on this machine, or clear deploy_health in $LOOP_YAML and" >&2
+  echo "accept that merges go out without a health gate." >&2
+  exit 1
+fi
 label="com.toshipon.loop.$LOOP_ID"
 agents="$HOME/Library/LaunchAgents"
 mkdir -p "$agents"
