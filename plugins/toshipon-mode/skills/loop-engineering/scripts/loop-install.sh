@@ -59,5 +59,6 @@ echo
 echo "installed $label at $hour:$minute local time"
 echo "logs: $LOG_DIR"
 echo
-echo "The launchd job runs this plugin's scripts from $here. A plugin update changes what runs;"
-echo "reinstall is not needed, but read the release notes before updating."
+echo "The job runs the scripts at $here, and that path carries the plugin version. A plugin update"
+echo "installs a NEW versioned directory and leaves this one in place, so launchd keeps running the"
+echo "old scripts and says nothing. Re-run this command after every plugin update."

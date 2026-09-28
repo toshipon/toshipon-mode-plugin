@@ -247,6 +247,10 @@ denylist を使わない理由は、書き漏らした path が通ってしま�
 | `scripts/loop-install.sh <repo> [h] [m]` | launchd に日次 tick を仕込む。`--uninstall <loop_id>` |
 | `scripts/loop-selftest.sh` | config の読み取りと allowlist 照合と state 集計を fixture で検査する |
 
+launchd の job は、登録した時点の plugin ディレクトリを指す。そのパスにはバージョンが入っている。
+plugin を更新すると新しいバージョンのディレクトリが増えるだけで古い方は残るので、**launchd は
+古いスクリプトを黙って走らせ続ける**。plugin を更新したら `loop-install.sh` を再実行する。
+
 `loop-selftest.sh` は plugin を変更したら毎回 `/bin/bash` で走らせる。allowlist の照合はこの設計で
 最も効く 6 行なので、`loop_path_allowed` として 1 箇所に置き、そこを直接叩いている。gate と repo 側の
 record テストは同じ規則を見るが、問う相手が違う。gate は「この PR をマージしてよいか」を決め、repo の
