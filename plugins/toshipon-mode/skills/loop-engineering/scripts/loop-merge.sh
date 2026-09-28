@@ -40,15 +40,7 @@ while IFS= read -r line; do changed+=("$line"); done < <(gh pr view "$pr" --json
 
 outside=()
 for f in "${changed[@]}"; do
-  ok=0
-  for a in "${allowed[@]}"; do
-    case "$a" in
-      */) [ "${f#"$a"}" != "$f" ] && ok=1 ;;
-      *)  [ "$f" = "$a" ] && ok=1 ;;
-    esac
-    [ "$ok" -eq 1 ] && break
-  done
-  [ "$ok" -eq 0 ] && outside+=("$f")
+  loop_path_allowed "$f" "${allowed[@]}" || outside+=("$f")
 done
 [ "${#outside[@]}" -gt 0 ] && refuse "outside allowed_paths: ${outside[*]}"
 

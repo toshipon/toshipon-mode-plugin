@@ -49,6 +49,21 @@ loop_notify() {  # loop_notify <title> <message>
   echo "[$(date -u +%FT%TZ)] $1: $2" >>"$LOG_DIR/notify.log"
 }
 
+# loop_path_allowed <path> <allowlist entry>...
+# An entry ending in "/" covers everything under it; anything else must match exactly. This is the
+# single most consequential function here, so it lives in one place and loop-selftest.sh drives it.
+loop_path_allowed() {
+  local path="$1" entry
+  shift
+  for entry in "$@"; do
+    case "$entry" in
+      */) [ "${path#"$entry"}" != "$path" ] && return 0 ;;
+      *)  [ "$path" = "$entry" ] && return 0 ;;
+    esac
+  done
+  return 1
+}
+
 # loop_run_checks <policy-file> <log-file> <run-surface-checks:0|1>
 # One place decides what green means, so the gate and the agent's own check command cannot drift.
 loop_run_checks() {

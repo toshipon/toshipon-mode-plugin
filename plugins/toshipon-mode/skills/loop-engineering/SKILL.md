@@ -225,6 +225,12 @@ denylist を使わない理由は、書き漏らした path が通ってしま�
 | `scripts/loop-push.sh` | `branch_prefix` に一致するブランチだけを push する |
 | `scripts/loop-merge.sh <pr>` | allowlist、cap、health、merge window、checks、マージ、デプロイ確認 |
 | `scripts/loop-install.sh <repo> [h] [m]` | launchd に日次 tick を仕込む。`--uninstall <loop_id>` |
+| `scripts/loop-selftest.sh` | config の読み取りと allowlist 照合と state 集計を fixture で検査する |
+
+`loop-selftest.sh` は plugin を変更したら毎回 `/bin/bash` で走らせる。allowlist の照合はこの設計で
+最も効く 6 行なので、`loop_path_allowed` として 1 箇所に置き、そこを直接叩いている。gate と repo 側の
+record テストは同じ規則を見るが、問う相手が違う。gate は「この PR をマージしてよいか」を決め、repo の
+テストは「この record の形が正しいか」を決める。
 
 `loop-merge.sh` の exit code は 0 = マージしてデプロイ確認、1 = checks かデプロイの失敗、
 3 = 人間が見る必要がある、4 = merge window の外なので後で再試行。
