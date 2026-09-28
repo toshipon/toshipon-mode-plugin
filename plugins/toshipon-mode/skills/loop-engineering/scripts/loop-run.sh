@@ -21,9 +21,11 @@ fi
 lock="${LOOP_SHARED_LOCK:-$(loop_cfg "$LOOP_YAML" shared_lock)}"
 lock="${lock/#\~/$HOME}"
 [ -z "$lock" ] && lock="$STATE_DIR/tick.lock"
-if ! mkdir "$lock" 2>/dev/null; then
-  echo "[$(date -u +%FT%TZ)] tick skipped: another cycle holds $lock"
-  exit 0
+if ! reason=$(loop_lock "$lock"); then
+  case "$reason" in
+    busy:*) echo "[$(date -u +%FT%TZ)] tick skipped: ${reason#busy: }"; exit 0 ;;
+    *)      echo "[$(date -u +%FT%TZ)] tick refused: ${reason#unusable: }"; exit 1 ;;
+  esac
 fi
 trap 'rmdir "$lock" 2>/dev/null || true' EXIT
 

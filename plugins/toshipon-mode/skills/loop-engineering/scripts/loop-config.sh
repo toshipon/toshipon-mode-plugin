@@ -85,6 +85,25 @@ loop_health() {
   return 0
 }
 
+# loop_lock <lock-dir>
+# Takes the lock, or prints why it could not. A held lock and an unusable path are different
+# answers: the first means wait, the second means the loop is misconfigured and will never run.
+# Reporting both as "another cycle holds it" makes a broken loop look like a patient one.
+loop_lock() {
+  local lock="$1"
+  mkdir -p "$(dirname "$lock")" 2>/dev/null
+  if mkdir "$lock" 2>/dev/null; then
+    echo held
+    return 0
+  fi
+  if [ -d "$lock" ]; then
+    echo "busy: another cycle holds $lock"
+  else
+    echo "unusable: cannot create the lock at $lock"
+  fi
+  return 1
+}
+
 # loop_run_checks <policy-file> <log-file> <run-surface-checks:0|1>
 # One place decides what green means, so the gate and the agent's own check command cannot drift.
 loop_run_checks() {

@@ -112,6 +112,19 @@ check_health "a non-zero exit is refused"             "deploy_health exited non-
 check_health "a non-executable command is refused"    "deploy_health is set to bin/notexec.sh but it is not executable here" "bin/notexec.sh"
 check_health "a missing command is refused"           "deploy_health is set to bin/absent.sh but it is not executable here" "bin/absent.sh"
 
+check_lock() {  # check_lock <label> <expected> <lock path>
+  local label="$1" want="$2" got
+  got=$(loop_lock "$3") || true
+  check "$label" "$want" "$got"
+}
+check_lock "a fresh lock is taken"          "held" "$fixture/locks/a/cycle.lock"
+check_lock "the same lock is then busy"     "busy: another cycle holds $fixture/locks/a/cycle.lock" "$fixture/locks/a/cycle.lock"
+# A missing parent used to be reported as "another cycle holds it", so a misconfigured loop looked
+# like a patient one and skipped every tick forever.
+printf 'not a directory\n' >"$fixture/afile"
+check_lock "a path under a file is unusable" "unusable: cannot create the lock at $fixture/afile/cycle.lock" "$fixture/afile/cycle.lock"
+check_lock "a deep new parent is created"    "held" "$fixture/locks/b/c/d/cycle.lock"
+
 # An unsubstituted placeholder does not fail loudly. The tick just receives the literal text and
 # silently cannot measure, check, push or merge, and the journal reads like a quiet cycle.
 prompt="$here/../references/cycle-prompt.md"
