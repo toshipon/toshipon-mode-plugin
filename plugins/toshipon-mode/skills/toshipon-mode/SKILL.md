@@ -18,6 +18,7 @@ description: 非自明なタスクの標準エントリポイント。playbook �
 - 並列 fan-out → 独立したスライスは、`references/common/agents.md` に従い 1 メッセージ内で同時実行する Agent 呼び出しとして送る。設計やコードの bakeoff には、base selection と grafting を備えた **arena** を使う。
 - 議論の分かれる設計 → 出荷前に **interrogate** skill（multi-model adversarial）を使う。
 - 新機能・プロダクト変更・改善 → 設計の前に **hdd:hypothesis-first** skill を使う。Feature playbook はこの gate から始まる。
+- 仮説検証を人間の承認なしで回し続ける仕組み（定期実行、マージからデプロイと計測まで閉じるループ、ペルソナとインタビューで仮説を継ぎ足す運用）→ **loop-engineering** skill。1 tick が 1 判断であり、その skill の決定表が何を実行するかを決める。
 - 非自明な複数ステップ → throughput checkpoint を書く（Feature step 4）。
 - あらゆる prose surface → **unslop** skill。あなたの返信も prose surface であり、**Writing the reply** に従って書く。
 - ドキュメント・RFC・readme・PR 説明・commit メッセージ → 構成と文の規律には **unslop** に加えて **technical-writing** skill を使う。commit の形は `${CLAUDE_PLUGIN_ROOT}/skills/commit-rules/SKILL.md` に従う。
