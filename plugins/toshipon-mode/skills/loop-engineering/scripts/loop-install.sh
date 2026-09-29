@@ -15,8 +15,21 @@ fi
 
 main_repo="${1:?main repo path required}"
 loop_env "$main_repo"
+# hour is either one hour (daily) or a step like "*/3" (every 3 hours, aligned to midnight UTC-local).
 hour="${2:-15}"
 minute="${3:-30}"
+case "$hour" in
+  \*/*)
+    step="${hour#*/}"
+    case "$step" in ''|*[!0-9]*) echo "bad hour step: $hour" >&2; exit 1 ;; esac
+    [ "$step" -ge 1 ] && [ "$step" -le 12 ] || { echo "hour step must be 1..12" >&2; exit 1; }
+    hours=""
+    h=0
+    while [ "$h" -lt 24 ]; do hours="$hours $h"; h=$((h + step)); done
+    ;;
+  ''|*[!0-9]*) echo "bad hour: $hour" >&2; exit 1 ;;
+  *) hours="$hour" ;;
+esac
 
 # Preflight. Each of these makes the loop refuse at run time or at merge time, and finding that out
 # on the first tick a week later is how a scheduled job becomes a job nobody trusts.
@@ -45,9 +58,18 @@ cat >"$agents/$label.plist" <<PLIST
   <key>ProgramArguments</key><array>
     <string>/bin/bash</string><string>$here/loop-run.sh</string><string>$main_repo</string><string>daily</string>
   </array>
-  <key>StartCalendarInterval</key><dict>
-    <key>Hour</key><integer>$hour</integer><key>Minute</key><integer>$minute</integer>
-  </dict>
+  <key>StartCalendarInterval</key>$(
+    set -- $hours
+    if [ $# -eq 1 ]; then
+      printf '<dict><key>Hour</key><integer>%s</integer><key>Minute</key><integer>%s</integer></dict>' "$1" "$minute"
+    else
+      printf '<array>'
+      for h in $hours; do
+        printf '<dict><key>Hour</key><integer>%s</integer><key>Minute</key><integer>%s</integer></dict>' "$h" "$minute"
+      done
+      printf '</array>'
+    fi
+  )
   <key>StandardOutPath</key><string>$LOG_DIR/launchd.log</string>
   <key>StandardErrorPath</key><string>$LOG_DIR/launchd.log</string>
 </dict></plist>
@@ -56,7 +78,7 @@ PLIST
 launchctl bootstrap "gui/$(id -u)" "$agents/$label.plist"
 launchctl list | grep "$LOOP_ID" || true
 echo
-echo "installed $label at $hour:$minute local time"
+echo "installed $label at$(for h in $hours; do printf " %02d:%02d" "$h" "$minute"; done) local time"
 echo "logs: $LOG_DIR"
 echo
 echo "The job runs the scripts at $here, and that path carries the plugin version. A plugin update"

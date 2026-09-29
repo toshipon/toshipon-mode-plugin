@@ -162,6 +162,18 @@ WAIT が正しい結果であることを忘れない。窓が閉じるのを待
 2 つの効果が混ざって両方の仮説が死ぬ。`cap_concurrent_measuring` はスループットの目標ではなく、
 交絡を防ぐ予算である。同じ metric を見る `measuring` は常に 1 本までにする。
 
+### 何も動かなかった tick は ship しない
+
+**ship するのは、record の state が動いたか、コードを変えたときだけである。** どちらも無い tick は
+journal を書かず、PR も出さない。tick が走ったことは runner のログと通知に残る。
+
+これは頻度を上げると効いてくる。3 時間ごとに回せば 1 日 8 tick になり、そのうち動きがあるのは
+数回である。残りを毎回 PR にすると、`cap_merges_per_day` を使い切り、`needs-human` の PR が
+積み上がり、マージのたびに関係ない worker まで再デプロイされる。
+
+journal はループが**何をしたか**の記録であって、動いていることの証明ではない。動いている証明は
+runner のログが持つ。
+
 ## 各行動
 
 ### GUARD
@@ -313,7 +325,7 @@ denylist を使わない理由は、書き漏らした path が通ってしま�
 | `scripts/loop-metrics.sh` | 計測の唯一の経路。SQL はここにあり agent は識別子しか渡さない |
 | `scripts/loop-push.sh` | `branch_prefix` に一致するブランチだけを push する |
 | `scripts/loop-merge.sh <pr>` | allowlist、cap、health、merge window、checks、マージ、デプロイ確認 |
-| `scripts/loop-install.sh <repo> [h] [m]` | launchd に日次 tick を仕込む。`--uninstall <loop_id>` |
+| `scripts/loop-install.sh <repo> [hour] [min]` | launchd に仕込む。`hour` は `15`（日次）か `*/3`（3 時間ごと）。`--uninstall <loop_id>` |
 | `scripts/loop-selftest.sh` | config の読み取りと allowlist 照合と state 集計を fixture で検査する |
 
 launchd の job は、登録した時点の plugin ディレクトリを指す。そのパスにはバージョンが入っている。
@@ -327,6 +339,10 @@ record テストは同じ規則を見るが、問う相手が違う。gate は�
 
 `loop-merge.sh` の exit code は 0 = マージしてデプロイ確認、1 = checks かデプロイの失敗、
 3 = 人間が見る必要がある、4 = merge window の外なので後で再試行。
+
+頻度を上げるときは `cap_merges_per_day` を見直す。3 時間ごと（1 日 8 tick）でも、ship するのは
+record が動いた tick だけなので毎回マージにはならない。それでも動きの多い日は上限に当たる。
+当たった tick は PR を `needs-human` で残して終わるので、放置すると溜まる。
 
 repo が用意するのは `loop.yaml` と `metrics.yaml`、そして record の不変条件を検査するテスト 1 本
 である。テストは repo 自身の toolchain で書く。schema はこの skill が定義し、強制は repo が行う。

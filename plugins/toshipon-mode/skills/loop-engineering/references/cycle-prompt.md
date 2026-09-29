@@ -86,8 +86,11 @@ WebFetch である。ブラウザを動かすのは対話の `/toshipon-mode:loo
 
 ## 6. Journal
 
-`{{RECORDS_DIR}}/journal.md` に 1 エントリ追記する。何もしなかった tick も書く。日本語で書く
-（技術用語は英語）。見出しは `## <date> {{TICK}}`。
+record の state が動いたか、コードを変えたときだけ `{{RECORDS_DIR}}/journal.md` に 1 エントリ
+追記して ship する。どちらも無い tick は **journal を書かず、commit も PR もしない**。tick が
+走ったことは runner のログと通知に残るので、記録は要らない。
+
+書く場合は日本語で書く（技術用語は英語）。見出しは `## <date> {{TICK}}`。
 
 前半 5 行は owner の通知にそのまま出る。runner はこの 5 つだけを送る。ラベルは逐語で使う。
 翻訳も改名もしない。runner は grep で拾い、一致しない bullet を黙って落とす。
