@@ -112,6 +112,13 @@ check_health "a non-zero exit is refused"             "deploy_health exited non-
 check_health "a non-executable command is refused"    "deploy_health is set to bin/notexec.sh but it is not executable here" "bin/notexec.sh"
 check_health "a missing command is refused"           "deploy_health is set to bin/absent.sh but it is not executable here" "bin/absent.sh"
 
+# Slack must be optional. A loop with no webhook configured has to run exactly as before, so the
+# disabled path is the one worth pinning: set-but-empty posts nothing and still returns success.
+LOOP_SLACK_WEBHOOK="" loop_slack "selftest must not post this" && check "an empty webhook posts nothing" "0" "0" \
+  || check "an empty webhook posts nothing" "0" "1"
+( unset LOOP_SLACK_WEBHOOK; LOOP_YAML=/dev/null loop_slack "selftest must not post this" ) \
+  && check "no webhook configured is a pass" "0" "0" || check "no webhook configured is a pass" "0" "1"
+
 check_pathsafe() {  # check_pathsafe <label> <expected> <path>
   local label="$1" want="$2" got
   got=$(loop_pathsafe "$3") || true

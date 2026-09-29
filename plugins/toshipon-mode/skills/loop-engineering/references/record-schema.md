@@ -140,6 +140,10 @@ metrics_table: product_metrics
 
 shared_lock: /Users/toshipon/Library/Application Support/quant-autoloop/cycle.lock
 
+# tick ごとの digest を Slack に流す。省くと macOS の通知とログだけになる。
+# 値は 1Password の op:// 参照で、service account 経由で読む。webhook をファイルに書かない。
+slack_webhook_op: op://claude-code-dev/quant-autoloop-slack-webhook/password
+
 cap_concurrent_measuring: 1
 cap_new_hypotheses_per_7d: 3
 cap_merges_per_day: 3

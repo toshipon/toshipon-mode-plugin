@@ -328,6 +328,13 @@ denylist を使わない理由は、書き漏らした path が通ってしま�
 | `scripts/loop-install.sh <repo> [hour] [min]` | launchd に仕込む。`hour` は `15`（日次）か `*/3`（3 時間ごと）。`--uninstall <loop_id>` |
 | `scripts/loop-selftest.sh` | config の読み取りと allowlist 照合と state 集計を fixture で検査する |
 
+別の端末で動かす手順は [`references/another-machine.md`](references/another-machine.md) にある。
+**ループを動かす端末は常に 1 台だけにする。** 2 台が同じ main にマージすると、どちらの checks も
+相手の変更を見ていない。移行するなら先に移行元で `loop-install.sh --uninstall` を実行する。
+
+tick ごとの digest は `slack_webhook_op` を設定すると Slack に流れる。設定しなければ macOS の
+通知とログだけになる。webhook は 1Password の op:// 参照で読み、ファイルには書かない。
+
 launchd の job は、登録した時点の plugin ディレクトリを指す。そのパスにはバージョンが入っている。
 plugin を更新すると新しいバージョンのディレクトリが増えるだけで古い方は残るので、**launchd は
 古いスクリプトを黙って走らせ続ける**。plugin を更新したら `loop-install.sh` を再実行する。

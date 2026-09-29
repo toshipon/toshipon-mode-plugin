@@ -138,10 +138,21 @@ brief=$(echo "$journal" | awk '
   /^- / { keep = 0; next }
   keep && /^[[:space:]]/ { if (++n <= 3) print; next }
   { keep = 0 }' | head -c 2000)
-loop_notify "$LOOP_ID ($label)" "rc=$rc cost=\$$cost"
+# The digest is what a person reads on their phone: what the tick decided, and whether anything
+# needs them. A tick that moved nothing writes no journal, so say that rather than showing a gap.
+digest="*$LOOP_ID · $label · $stamp*
+
+${brief:-_この tick は記録を動かさなかった（journal なし）_}
+
+*PRs*
+${prs:-• none}
+_rc=${rc} · \$${cost}_"
+osascript -e "display notification \"rc=$rc cost=\$$cost\" with title \"$LOOP_ID ($label)\"" >/dev/null 2>&1 || true
+echo "[$(date -u +%FT%TZ)] $LOOP_ID ($label): rc=$rc cost=\$$cost" >>"$LOG_DIR/notify.log"
+loop_slack "$digest"
 {
   echo "=== $LOOP_ID $label $stamp  rc=$rc cost=\$$cost"
-  echo "${brief:-(no journal entry, see $LOG_DIR/tick-$stamp.json)}"
+  echo "${brief:-(tick moved nothing; no journal entry)}"
   echo "PRs: ${prs:-none}"
 } | tee -a "$LOG_DIR/digest.log"
 exit "$rc"

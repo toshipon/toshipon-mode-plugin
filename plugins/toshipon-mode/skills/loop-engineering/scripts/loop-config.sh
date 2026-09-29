@@ -47,9 +47,29 @@ loop_env() {
   mkdir -p "$STATE_DIR" "$LOG_DIR" "$BIN_DIR"
 }
 
+# loop_slack <text>
+# Posts to the loop's Slack webhook, or does nothing when none is configured. The webhook comes from
+# LOOP_SLACK_WEBHOOK, or from the op:// reference in loop.yaml read through the 1Password service
+# account in the login Keychain. Set but empty disables Slack, which is what the tests rely on.
+loop_slack() {
+  local url ref
+  if [ -n "${LOOP_SLACK_WEBHOOK+x}" ]; then
+    url="$LOOP_SLACK_WEBHOOK"
+  else
+    ref=$(loop_cfg "${LOOP_YAML:-/dev/null}" slack_webhook_op)
+    [ -z "$ref" ] && return 0
+    url=$(OP_SERVICE_ACCOUNT_TOKEN="$(security find-generic-password -s OP_SERVICE_ACCOUNT_TOKEN -w 2>/dev/null)" \
+      op read "$ref" 2>/dev/null)
+  fi
+  [ -z "$url" ] && return 0
+  curl -s -m 15 -X POST -H 'Content-type: application/json' \
+    --data "$(jq -n --arg t "$1" '{text: $t}')" "$url" >/dev/null 2>&1 || true
+}
+
 loop_notify() {  # loop_notify <title> <message>
   osascript -e "display notification \"${2//\"/\\\"}\" with title \"${1//\"/\\\"}\"" >/dev/null 2>&1 || true
   echo "[$(date -u +%FT%TZ)] $1: $2" >>"$LOG_DIR/notify.log"
+  loop_slack "*$1*: $2"
 }
 
 # loop_path_allowed <path> <allowlist entry>...
