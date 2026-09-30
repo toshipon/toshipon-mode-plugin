@@ -113,6 +113,7 @@ claude -p "$prompt" \
     "Bash($bin/loop-push.sh)" "Bash($bin/loop-merge.sh:*)" \
     "Bash(cd:*)" "Bash(ls:*)" "Bash(cat:*)" "Bash(head:*)" "Bash(tail:*)" "Bash(grep:*)" \
     "Bash(sed -n:*)" "Bash(jq:*)" "Bash(wc:*)" "Bash(date:*)" "Bash(mkdir:*)" \
+    "Bash(echo:*)" \
   --disallowedTools "Bash(gh pr merge:*)" "Bash(gh pr edit:*)" "Bash(git push:*)" \
     "Bash(npm run deploy:*)" "Bash(npx wrangler:*)" "Bash(wrangler:*)" \
     "Bash(curl:*)" "Bash(op:*)" "Bash(security:*)" \

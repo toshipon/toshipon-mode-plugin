@@ -154,6 +154,17 @@ in_runner=$(grep -o 's|{{[A-Z_]*}}' "$here/loop-run.sh" | sed 's/^s|//' | sort -
 check "every prompt placeholder is substituted" "" "$(comm -23 <(echo "$in_prompt") <(echo "$in_runner") | tr '\n' ' ' | sed 's/ *$//')"
 check "the runner substitutes nothing unused" "" "$(comm -13 <(echo "$in_prompt") <(echo "$in_runner") | tr '\n' ' ' | sed 's/ *$//')"
 
+# A denied Bash call is not an error the tick reports. It lands in permission_denials in the run
+# JSON, the agent quietly tries something else, and the turns are gone. The first real loop lost
+# two turns a tick to `cat a; echo ---; cat b`, because a compound command needs EVERY part
+# allowed and `echo` was missing. So assert the read-only set the agent actually reaches for.
+allowed=$(sed -n '/--allowedTools/,/--disallowedTools/p' "$here/loop-run.sh")
+missing=""
+for c in cd ls cat head tail grep jq wc date mkdir echo; do
+  echo "$allowed" | grep -q "\"Bash($c:\*)\"" || missing="$missing $c"
+done
+check "every read-only command the tick uses is allowed" "" "${missing# }"
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "loop-selftest: all checks passed under $BASH_VERSION"
