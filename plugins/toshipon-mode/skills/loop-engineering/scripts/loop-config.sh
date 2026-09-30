@@ -250,12 +250,19 @@ loop_tick_close() {  # loop_tick_close <stamp> <host> <rc> <cost> <moved> <pr> <
       AND host    = $(loop_sql_str "$2")"
 }
 
-loop_status_summary() {  # prints liveness lines, or nothing when status_db is unset
-  local rows hosts
+loop_status_summary() {  # prints liveness lines; returns 1 when status_db is not configured
+  # "no rows" and "not configured" must not look alike. The first means the loop has not ticked
+  # since telemetry was turned on; the second means nobody can answer whether it is alive.
+  local db rows hosts
+  db=$(loop_cfg "$LOOP_YAML" status_db)
+  [ -z "$db" ] && return 1
   rows=$(loop_status_query "SELECT host, stamp, ended_at, rc, cost_usd, action, moved
     FROM loop_ticks WHERE loop_id = $(loop_sql_str "$LOOP_ID")
     ORDER BY stamp DESC LIMIT 1")
-  [ -z "$rows" ] && return 0
+  if [ -z "$rows" ] || [ "$(echo "$rows" | jq 'length' 2>/dev/null)" = "0" ]; then
+    echo "no tick recorded in $db yet for $LOOP_ID"
+    return 0
+  fi
   echo "$rows" | jq -r '.[] | "last tick: \(.stamp) on \(.host)  rc=\(.rc // "?")  $\(.cost_usd // 0)  \(if .moved == 1 then (.action // "moved a record") else "moved nothing" end)"'
   # Two hosts in a day means two loops merge into the same main without seeing each other. The
   # filesystem lock cannot see across machines, so this is the only place it shows up.

@@ -177,6 +177,10 @@ check "an empty number becomes NULL" "NULL"           "$(loop_sql_num "")"
 LOOP_YAML="$fixture/loop.yaml" REPO="$fixture" LOOP_ID=selftest
 check "no status_db writes nothing"  ""               "$(loop_status_exec "SELECT 1")"
 check "no status_db reads nothing"   ""               "$(loop_status_summary)"
+# "not configured" must be distinguishable from "configured but no rows yet", or a silent loop and
+# an unmeasured loop print the same line.
+loop_status_summary >/dev/null 2>&1
+check "no status_db reports rc 1"    "1"              "$?"
 
 echo
 if [ "$fails" -eq 0 ]; then
