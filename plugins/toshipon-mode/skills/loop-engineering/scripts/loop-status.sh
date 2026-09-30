@@ -16,3 +16,14 @@ echo "caps: measuring<=$(loop_cfg "$LOOP_YAML" cap_concurrent_measuring 1)" \
      "merges/day<=$(loop_cfg "$LOOP_YAML" cap_merges_per_day 3)" \
      "min_sample=$(loop_cfg "$LOOP_YAML" cap_min_sample 200)" \
      "budget=\$$(loop_cfg "$LOOP_YAML" cap_tick_budget_usd 8)"
+
+# Whether the loop is running at all, and from where. A tick that ends in WAIT leaves nothing in
+# git, so "is it alive" cannot be answered from the repo.
+status=$(loop_status_summary)
+if [ -n "$status" ]; then
+  echo
+  echo "$status"
+else
+  echo
+  echo "liveness: status_db is not configured (a WAIT tick leaves no trace in git)"
+fi

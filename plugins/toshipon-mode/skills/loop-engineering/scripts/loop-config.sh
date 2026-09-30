@@ -190,3 +190,82 @@ loop_state() {
   rm -f "$tmp"
   return 0
 }
+
+# --- 稼働状況（D1）-----------------------------------------------------------------
+# What goes here is telemetry, never a record: which host ran which tick, and what it cost.
+# Verdicts, metrics and hypotheses stay in git, where the integrity tests can reach them. A second
+# place that holds judgements is how a repo ends up with two answers and no way to pick one.
+#
+# The runner writes it, never the agent. The tick has no secret, no curl and no wrangler, and that
+# is the property that keeps it from writing its own scorecard. Telemetry is the runner's job
+# because the runner already runs as the user.
+
+loop_sql_str() {  # loop_sql_str <value> -> a quoted SQL literal, or NULL when empty
+  [ -z "${1:-}" ] && { echo NULL; return; }
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
+}
+
+loop_sql_num() {  # loop_sql_num <value> -> the number, or NULL when it is not one
+  case "${1:-}" in
+    ''|*[!0-9.-]*) echo NULL ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+loop_status_exec() {  # loop_status_exec <sql>  -> runs it against status_db; silent no-op without one
+  # A telemetry write must never decide whether a tick succeeded, so every failure is swallowed.
+  local db cwd
+  db=$(loop_cfg "$LOOP_YAML" status_db)
+  [ -z "$db" ] && return 0
+  cwd=$(loop_cfg "$LOOP_YAML" status_db_cwd .)
+  ( cd "$REPO/$cwd" 2>/dev/null && npx wrangler d1 execute "$db" --remote --json --command "$1" )     >/dev/null 2>&1 || true
+}
+
+loop_status_query() {  # loop_status_query <sql> -> rows as JSON, empty when unavailable
+  local db cwd out
+  db=$(loop_cfg "$LOOP_YAML" status_db)
+  [ -z "$db" ] && return 0
+  cwd=$(loop_cfg "$LOOP_YAML" status_db_cwd .)
+  out=$( cd "$REPO/$cwd" 2>/dev/null && npx wrangler d1 execute "$db" --remote --json --command "$1" 2>/dev/null ) || return 0
+  echo "$out" | jq -c '.[0].results' 2>/dev/null
+}
+
+loop_tick_open() {  # loop_tick_open <stamp> <host> <branch>
+  loop_status_exec "INSERT OR REPLACE INTO loop_ticks
+    (loop_id, stamp, host, started_at, branch, moved)
+    VALUES ($(loop_sql_str "$LOOP_ID"), $(loop_sql_str "$1"), $(loop_sql_str "$2"),
+            $(loop_sql_str "$(date -u +%FT%TZ)"), $(loop_sql_str "$3"), 0)"
+}
+
+loop_tick_close() {  # loop_tick_close <stamp> <host> <rc> <cost> <moved> <pr> <action>
+  loop_status_exec "UPDATE loop_ticks SET
+      ended_at = $(loop_sql_str "$(date -u +%FT%TZ)"),
+      rc       = $(loop_sql_num "$3"),
+      cost_usd = $(loop_sql_num "$4"),
+      moved    = $(loop_sql_num "$5"),
+      pr       = $(loop_sql_num "$6"),
+      action   = $(loop_sql_str "$7")
+    WHERE loop_id = $(loop_sql_str "$LOOP_ID")
+      AND stamp   = $(loop_sql_str "$1")
+      AND host    = $(loop_sql_str "$2")"
+}
+
+loop_status_summary() {  # prints liveness lines, or nothing when status_db is unset
+  local rows hosts
+  rows=$(loop_status_query "SELECT host, stamp, ended_at, rc, cost_usd, action, moved
+    FROM loop_ticks WHERE loop_id = $(loop_sql_str "$LOOP_ID")
+    ORDER BY stamp DESC LIMIT 1")
+  [ -z "$rows" ] && return 0
+  echo "$rows" | jq -r '.[] | "last tick: \(.stamp) on \(.host)  rc=\(.rc // "?")  $\(.cost_usd // 0)  \(if .moved == 1 then (.action // "moved a record") else "moved nothing" end)"'
+  # Two hosts in a day means two loops merge into the same main without seeing each other. The
+  # filesystem lock cannot see across machines, so this is the only place it shows up.
+  hosts=$(loop_status_query "SELECT host, COUNT(*) n, ROUND(SUM(cost_usd), 2) spent
+    FROM loop_ticks WHERE loop_id = $(loop_sql_str "$LOOP_ID")
+      AND started_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-24 hours')
+    GROUP BY host ORDER BY n DESC")
+  [ -z "$hosts" ] && return 0
+  echo "$hosts" | jq -r '.[] | "  24h: \(.host)  \(.n) ticks  $\(.spent // 0)"'
+  [ "$(echo "$hosts" | jq 'length')" -gt 1 ] \
+    && echo "  WARNING: more than one host ran this loop in the last 24h"
+  return 0
+}

@@ -97,7 +97,9 @@ budget=$(loop_cfg "$LOOP_YAML" cap_tick_budget_usd 8)
 mcp=()
 while IFS= read -r t; do [ -n "$t" ] && mcp+=("$t"); done < <(loop_cfg_list "$LOOP_YAML" mcp_tools)
 
-echo "[$(date -u +%FT%TZ)] tick start label=$label branch=$branch budget=\$$budget"
+host=$(scutil --get ComputerName 2>/dev/null || hostname -s)
+echo "[$(date -u +%FT%TZ)] tick start label=$label branch=$branch budget=\$$budget host=$host"
+loop_tick_open "$stamp" "$host" "$branch"
 claude -p "$prompt" \
   --model opus \
   --permission-mode acceptEdits \
@@ -156,4 +158,12 @@ loop_slack "$digest"
   echo "${brief:-(tick moved nothing; no journal entry)}"
   echo "PRs: ${prs:-none}"
 } | tee -a "$LOG_DIR/digest.log"
+
+# The row is closed from the journal and the PR list, not from the agent's last message. A tick
+# that says it shipped and left nothing on the branch closes as moved=0.
+moved=0
+[ -n "$journal" ] && moved=1
+action=$(echo "$journal" | sed -n 's/^- \*\*行動:\*\* *\([A-Z][A-Z]*\).*/\1/p' | head -1)
+pr=$(echo "$prs" | sed -n 's/^• #\([0-9]*\) .*/\1/p' | head -1)
+loop_tick_close "$stamp" "$host" "$rc" "$cost" "$moved" "$pr" "$action"
 exit "$rc"

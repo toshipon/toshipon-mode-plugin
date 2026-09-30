@@ -252,3 +252,33 @@ reader は `n`（窓全体の `SUM(sample)`）と `n_day_max`（1 日あたり�
 ## 4. `<records_dir>/journal.md`
 
 1 tick 1 エントリ。書式は [`cycle-prompt.md`](cycle-prompt.md) の step 6 にある。
+
+## 稼働状況（任意）
+
+```yaml
+status_db: quant-loop-db          # D1 の名前。無ければ機能ごと no-op
+status_db_cwd: cloud/paper-trader  # npx wrangler を走らせる場所（repo 相対）
+```
+
+テーブルは 1 つだけである。
+
+```sql
+CREATE TABLE loop_ticks (
+  loop_id    TEXT    NOT NULL,
+  stamp      TEXT    NOT NULL,   -- 20260930-0030（UTC）
+  host       TEXT    NOT NULL,   -- scutil --get ComputerName
+  started_at TEXT    NOT NULL,
+  ended_at   TEXT,
+  rc         INTEGER,
+  cost_usd   REAL,
+  action     TEXT,               -- journal の「行動:」から取る。動かさなければ NULL
+  branch     TEXT,
+  pr         INTEGER,
+  moved      INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (loop_id, stamp, host)
+);
+```
+
+ここに verdict・metric・仮説を入れてはいけない。判断の置き場所は git だけである。`moved` と
+`action` は journal の diff から導出する。エージェントの最終メッセージからは取らない。ship したと
+言って何も残さなかった tick は `moved=0` で閉じる。

@@ -14,6 +14,10 @@ launchctl list | grep com.toshipon.loop     # 消えていること
 同じ repo に別のループ（研究用など）がある場合は `shared_lock` を共有する。片方だけが動いている
 端末でも、lock は単独の mutex として働く。
 
+**`shared_lock` は端末を跨がない。** ファイルシステムの mutex なので、2 台が同時に動いていても
+互いを見ない。それを検知できるのは `status_db` だけで、`loop-status.sh` が 24h に 2 つ以上の host を
+見たら警告を出す。移行の前後はここを見る。
+
 ## 1. 必要なもの
 
 | | 確認 |
@@ -24,6 +28,7 @@ launchctl list | grep com.toshipon.loop     # 消えていること
 | repo のツールチェーン | `repo_check` と `surface_checks` が走る環境（uv / node など） |
 | デプロイ確認のコマンド | `deploy_verify` が返すこと（Cloudflare なら `wrangler` のログイン） |
 | 1Password CLI | Slack 通知を使う場合のみ |
+| wrangler の認証 | `status_db` を使う場合のみ。`npx wrangler d1 list` が通ること |
 
 macOS 前提である。launchd と `osascript` を使う。
 
@@ -102,6 +107,7 @@ bash <新しい version の scripts>/loop-install.sh $LOOP_REPO "*/3" 30
 | 盤面 | `loop-status.sh <repo>` |
 | 何をしたか | `<records_dir>/journal.md`。記録を動かした tick だけが書く |
 | 人間待ちの PR | GitHub の `needs-human` ラベル |
+| どの端末が回しているか | `loop-status.sh <repo>` の最後の行（`status_db` を設定した場合） |
 
 止めるときは `<records_dir>/paused.flag` を commit する。次の tick が決定表の行 0 で止まり、人間が
 消すまで動かない。端末から外すなら `loop-install.sh --uninstall <loop_id>`。

@@ -165,6 +165,19 @@ for c in cd ls cat head tail grep jq wc date mkdir echo; do
 done
 check "every read-only command the tick uses is allowed" "" "${missing# }"
 
+# Telemetry SQL is built by string concatenation, so an apostrophe in a host name or a branch would
+# otherwise end the literal early. These two are the only escaping in the loop.
+check "a plain value is quoted"      "'daily'"        "$(loop_sql_str daily)"
+check "an apostrophe is doubled"     "'toshipon''s Mac'" "$(loop_sql_str "toshipon's Mac")"
+check "an empty value becomes NULL"  "NULL"           "$(loop_sql_str "")"
+check "a number passes through"      "1.06"           "$(loop_sql_num 1.06)"
+check "a non-number becomes NULL"    "NULL"           "$(loop_sql_num '?')"
+check "an empty number becomes NULL" "NULL"           "$(loop_sql_num "")"
+# Without status_db the whole feature is a no-op, so a repo that has not opted in still ticks.
+LOOP_YAML="$fixture/loop.yaml" REPO="$fixture" LOOP_ID=selftest
+check "no status_db writes nothing"  ""               "$(loop_status_exec "SELECT 1")"
+check "no status_db reads nothing"   ""               "$(loop_status_summary)"
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "loop-selftest: all checks passed under $BASH_VERSION"
