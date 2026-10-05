@@ -131,6 +131,15 @@ npm run test:coverage
 - [確認方法]
 ```
 
+**修正コミットへの参照はリンクにする**
+
+返信の末尾などで修正コミットを示すときは、SHA を裸で書かずに PR のコミット画面へのリンクにする。
+短縮 SHA を表示名、完全な SHA を URL に使う（完全な SHA は `gh api repos/<owner>/<repo>/commits/<short> --jq .sha` で取る）。
+
+```markdown
+対応しました。[`7832fab3`](https://github.com/<owner>/<repo>/pull/<number>/commits/<full-sha>)
+```
+
 **技術判断説明**
 
 ```markdown
