@@ -351,6 +351,7 @@ sandbox の結果を後から「効いたから本番に上げる」と引用す
 | `scripts/loop-status.sh <repo>` | state 別の件数、劇場チェック、record 一覧 |
 | `scripts/loop-check.sh` | repo_check と surface_checks。agent の唯一の check 経路 |
 | `scripts/loop-metrics.sh` | 計測の唯一の経路。SQL はここにあり agent は識別子しか渡さない |
+| `scripts/loop-metrics-command.sh` | 同じ契約で、行を repo のスクリプト（`metrics_command`）から読む版。`metrics_backend: command` の repo では、runner がこれを tick の `loop-metrics.sh` として置く |
 | `scripts/loop-push.sh` | `branch_prefix` に一致するブランチだけを push する |
 | `scripts/loop-merge.sh <pr>` | allowlist、cap、health、merge window、checks、マージ、デプロイ確認 |
 | `scripts/loop-install.sh <repo> [hour] [min]` | launchd に仕込む。`hour` は `15`（日次）か `*/3`（3 時間ごと）。`--uninstall <loop_id>` |

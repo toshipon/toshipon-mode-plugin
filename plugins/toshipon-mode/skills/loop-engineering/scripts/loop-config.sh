@@ -157,6 +157,17 @@ loop_run_checks() {
   return 0
 }
 
+# loop_metrics_script <metrics_backend> -> the reader the tick is given as loop-metrics.sh.
+# Each backend is its own file so that its sha, which is the query_id, changes only when that
+# backend's scoring changes.
+loop_metrics_script() {
+  case "${1:-d1}" in
+    d1)      echo loop-metrics.sh ;;
+    command) echo loop-metrics-command.sh ;;
+    *)       echo "unknown metrics_backend: $1" >&2; return 1 ;;
+  esac
+}
+
 # loop_state <records-dir-abs> -> the state summary the tick prompt embeds.
 # No associative arrays here: launchd runs these through /bin/bash, which is 3.2 on macOS.
 loop_state() {
