@@ -55,10 +55,15 @@ if ! reason=$(loop_pathsafe "$bin"); then
   echo "[$(date -u +%FT%TZ)] tick refused: $reason"
   exit 1
 fi
+if ! metrics_script=$(loop_metrics_script "$(loop_cfg "$LOOP_YAML" metrics_backend)" 2>&1); then
+  echo "[$(date -u +%FT%TZ)] tick refused: $metrics_script"
+  exit 1
+fi
 mkdir -p "$bin"
-for f in loop-config.sh loop-check.sh loop-metrics.sh loop-push.sh loop-merge.sh; do
+for f in loop-config.sh loop-check.sh loop-push.sh loop-merge.sh; do
   cp "$here/$f" "$bin/$f"
 done
+cp "$here/$metrics_script" "$bin/loop-metrics.sh"
 chmod +x "$bin"/loop-*.sh
 printf 'LOOP_REPO=%s\nexport LOOP_REPO\n' "$worktree" >"$bin/loop.env"
 

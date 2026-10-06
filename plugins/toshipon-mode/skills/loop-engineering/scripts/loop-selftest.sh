@@ -182,6 +182,110 @@ check "no status_db reads nothing"   ""               "$(loop_status_summary)"
 loop_status_summary >/dev/null 2>&1
 check "no status_db reports rc 1"    "1"              "$?"
 
+# The backend picks which reader the tick gets as loop-metrics.sh. An unknown name must refuse, or
+# a typo in loop.yaml would quietly hand the repo the D1 reader and every metric would read as
+# unreadable.
+check "no backend means the D1 reader"   "loop-metrics.sh"         "$(loop_metrics_script "")"
+check "d1 is the D1 reader"              "loop-metrics.sh"         "$(loop_metrics_script d1)"
+check "command has its own reader"       "loop-metrics-command.sh" "$(loop_metrics_script command)"
+loop_metrics_script bigquery >/dev/null 2>&1
+check "an unknown backend is refused"    "1"                       "$?"
+
+# The command reader: the repo supplies a script that prints daily rows, the plugin aggregates. The
+# aggregation is the contract a hypothesis is scored by, so each prefix is pinned to a number
+# worked out by hand.
+cr="$fixture/cmd"
+mkdir -p "$cr/scripts" "$cr/product" "$cr/state"
+cat >"$cr/loop.yaml" <<'YAML'
+loop_id: selftest-cmd
+metrics_backend: command
+metrics_command: scripts/metric-rows.sh
+metrics_file: metrics.yaml
+allowed_paths:
+  - product/
+YAML
+cat >"$cr/metrics.yaml" <<'YAML'
+metrics:
+  "count:calls":
+    kind: operational
+  "rate:failures":
+    kind: operational
+  "avg_ms:call":
+    kind: operational
+YAML
+cat >"$cr/scripts/metric-rows.sh" <<'SH'
+#!/bin/bash
+echo "$*" >>"$FAKE_ROWS_LOG"
+case "$2" in
+  2099-*) echo '[]' ;;
+  *) echo '[{"day":"2026-10-01","value":10,"sample":100},{"day":"2026-10-02","value":"30","sample":"300"},{"day":"2026-10-03","value":20,"sample":200}]' ;;
+esac
+SH
+cmd_git() { git -C "$cr" -c user.name=selftest -c user.email=selftest@example.com "$@"; }
+cmd_publish() { cmd_git add -A && cmd_git commit -qm "$1" && cmd_git update-ref refs/remotes/origin/main HEAD; }
+git -C "$cr" init -q
+cmd_publish fixture
+cmd_metrics() {
+  FAKE_ROWS_LOG="$cr/rows.log" LOOP_REPO="$cr" \
+  LOOP_STATE_DIR="$cr/state" LOOP_LOG_DIR="$cr/state" LOOP_BIN_DIR="$cr/state" \
+    /bin/bash "$here/loop-metrics-command.sh" "$@" 2>/dev/null
+}
+out=$(cmd_metrics metric count:calls 2026-10-01 2026-10-03)
+check "command count sums the value"        "60"   "$(echo "$out" | jq -r .value)"
+check "command n sums the sample"           "600"  "$(echo "$out" | jq -r .n)"
+check "command n_day_max is the busiest day" "300" "$(echo "$out" | jq -r .n_day_max)"
+check "command counts the days"             "3"    "$(echo "$out" | jq -r .days)"
+check "command passes metric and window"    "count:calls 2026-10-01 2026-10-03" "$(tail -1 "$cr/rows.log")"
+check "command rate divides by the sample"  "0.1"  "$(cmd_metrics metric rate:failures 2026-10-01 2026-10-03 | jq -r .value)"
+# (10*100 + 30*300 + 20*200) / 600
+check "command mean is sample-weighted"     "23.3" "$(cmd_metrics metric avg_ms:call 2026-10-01 2026-10-03 | jq -r '.value * 10 | round / 10')"
+check "command empty window is zero, not an error" "0" "$(cmd_metrics metric count:calls 2099-01-01 2099-01-02 | jq -r .n)"
+check "command events sums every declared metric" "1800" "$(cmd_metrics events 2026-10-01 | jq -r .n)"
+check "command refuses an undeclared metric" "count:other is not declared in $cr/metrics.yaml" \
+  "$(cmd_metrics metric count:other 2026-10-01 2026-10-03 | jq -r .error)"
+check "command lists the declared metrics"  "count:calls rate:failures avg_ms:call" "$(cmd_metrics list | tr '\n' ' ' | sed 's/ *$//')"
+# query_id covers the repo's script as well as the reader, so a change to how rows are fetched
+# stops judgment on records in flight the same way a change to the reader does.
+qid_before=$(echo "$out" | jq -r .query_id)
+check "command query_id names both shas" "1" "$(echo "$qid_before" | grep -cE '^m:[0-9a-f]{7}\.[0-9a-f]{7}$')"
+
+# The tick can edit its own worktree. The script that runs is origin/main's, never the worktree's.
+cat >"$cr/scripts/metric-rows.sh" <<'SH'
+#!/bin/bash
+echo '[{"day":"2026-10-01","value":999999,"sample":1}]'
+SH
+check "command ignores a worktree edit of the script" "60" \
+  "$(cmd_metrics metric count:calls 2026-10-01 2026-10-03 | jq -r .value)"
+cmd_publish "the scoring script changed on main"
+check "command query_id moves when the script changes on main" "1" \
+  "$([ "$(cmd_metrics metric count:calls 2026-10-01 2026-10-03 | jq -r .query_id)" != "$qid_before" ] && echo 1 || echo 0)"
+
+cmd_policy() {  # cmd_policy <label> <sed expression> -> the reader's error with that loop.yaml on origin/main
+  sed -i.bak -e "$2" "$cr/loop.yaml" && rm -f "$cr/loop.yaml.bak"
+  cmd_publish "$1"
+  cmd_metrics metric count:calls 2026-10-01 2026-10-03 | jq -r .error
+}
+# A loop that may edit its own reader writes its own scorecard, whatever origin/main says today.
+check "command inside allowed_paths is refused" "metrics_command must be outside allowed_paths" \
+  "$(cmd_policy inside 's|^metrics_command:.*|metrics_command: product/metric-rows.sh|')"
+check "command path that climbs out of the repo is refused" "metrics_command must be a path inside the repo" \
+  "$(cmd_policy climbs 's|^metrics_command:.*|metrics_command: ../outside.sh|')"
+check "command missing on origin/main is unreadable" "metrics_command is not readable from origin/main" \
+  "$(cmd_policy missing 's|^metrics_command:.*|metrics_command: scripts/absent.sh|')"
+sed -i.bak -e 's|^metrics_command:.*|metrics_command: scripts/metric-rows.sh|' "$cr/loop.yaml" && rm -f "$cr/loop.yaml.bak"
+printf '#!/bin/bash\necho "not json"\n' >"$cr/scripts/metric-rows.sh"
+cmd_publish "a script that prints garbage"
+# Garbage is "cannot measure", never "measured zero": a zero would be scored as a real baseline.
+check "command output that is not rows is unreadable" "metrics_command did not return rows" \
+  "$(cmd_metrics metric count:calls 2026-10-01 2026-10-03 | jq -r .error)"
+printf '#!/bin/bash\nexit 3\n' >"$cr/scripts/metric-rows.sh"
+cmd_publish "a script that fails"
+check "command that exits non-zero is unreadable" "metrics_command did not return rows" \
+  "$(cmd_metrics metric count:calls 2026-10-01 2026-10-03 | jq -r .error)"
+cmd_git update-ref -d refs/remotes/origin/main
+check "command without origin/main cannot measure" "loop.yaml is not readable from origin/main" \
+  "$(cmd_metrics metric count:calls 2026-10-01 2026-10-03 | jq -r .error)"
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "loop-selftest: all checks passed under $BASH_VERSION"

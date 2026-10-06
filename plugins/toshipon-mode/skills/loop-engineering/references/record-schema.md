@@ -185,6 +185,51 @@ mcp_tools:
 このコマンドを `allowed_paths` に入れない。自分の健康診断を止められるループは、壊れたことに
 気づけない。
 
+### 計測の backend
+
+`metrics_backend` が、tick に渡す計測スクリプトを決める。書かなければ `d1` である。
+
+| `metrics_backend` | 行の出どころ | 必要なキー |
+|---|---|---|
+| `d1`（既定） | Cloudflare D1 のテーブル | `metrics_db`、`metrics_db_cwd`、`metrics_table` |
+| `command` | repo が持つスクリプト | `metrics_command` |
+
+`command` は、rollup が D1 に無い repo のためにある。plugin は repo のデータストアを知らない。repo が
+1 metric の日次の行を返すスクリプトを持ち、plugin はそれを呼んで集約する。
+
+```yaml
+metrics_backend: command
+metrics_command: scripts/product/metric-rows.sh
+```
+
+スクリプトの契約はこれだけである。
+
+```
+<metrics_command> <metric> <from YYYY-MM-DD> <to YYYY-MM-DD>
+  -> [{"day": "2026-10-01", "value": 10, "sample": 100}, ...]   # stdout、JSON 配列、1 日 1 行
+```
+
+- 行が無い窓は空配列を返す。読めなかったときは非 0 で終わる。空配列と失敗を混ぜない。0 件は本物の
+  baseline として採点される
+- `value` と `sample` の意味は D1 版と同じで、集約の規則も同じである（key の prefix が決める）
+- 鍵が要るなら、スクリプトが自分で読む。plugin は渡さない
+- スクリプトは repo のルートを cwd にして実行される。ほかのファイルを source しない 1 本にする
+
+repo のコードが採点の一部になるので、plugin が 3 つを強制する。
+
+1. **実行するのは origin/main の版である。** tick は worktree を書き換えられる。worktree の版を実行すると、
+   自分の採点スクリプトを差し替えられる。`metrics_command` の値自体も origin/main の `loop.yaml` から読む
+2. **`metrics_command` は `allowed_paths` の外になければならない。** 中にあれば reader は読むのを拒否する。
+   今日の origin/main が正しくても、明日のマージで書き換えられるからである
+3. **`query_id` はスクリプトの sha も含む。** `m:<reader の sha7>.<スクリプトの sha7>` の形で、行の取り方を
+   変えると、集約を変えたときと同じく進行中の record の判定が止まる
+
+backend ごとに reader のファイルが分かれているのは、`query_id` が reader 自身の sha だからである。
+1 本にまとめて分岐を足すと、片方を直しただけで、もう片方で進行中の record が全部 mismatch になる。
+`loop-run.sh` は選ばれた方を tick の `loop-metrics.sh` として置くので、tick から見た経路は 1 つのまま
+である。未知の `metrics_backend` は tick を拒否する。黙って `d1` に倒すと、綴りを間違えた repo が
+「読めない」を返し続ける。
+
 ## 3. `<records_dir>/metrics.yaml`
 
 人間だけが書く。`allowed_paths` に入れない。ループはここにある metric しか使えない。
