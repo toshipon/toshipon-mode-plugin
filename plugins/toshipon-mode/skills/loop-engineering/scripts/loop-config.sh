@@ -47,6 +47,13 @@ loop_env() {
   mkdir -p "$STATE_DIR" "$LOG_DIR" "$BIN_DIR"
 }
 
+# loop_op_read <op:// reference> -> the secret, read through the 1Password service account whose
+# token sits in the login Keychain. Nothing is written to disk.
+loop_op_read() {
+  OP_SERVICE_ACCOUNT_TOKEN="$(security find-generic-password -s OP_SERVICE_ACCOUNT_TOKEN -w 2>/dev/null)" \
+    op read "$1" 2>/dev/null
+}
+
 # loop_slack <text>
 # Posts to the loop's Slack webhook, or does nothing when none is configured. The webhook comes from
 # LOOP_SLACK_WEBHOOK, or from the op:// reference in loop.yaml read through the 1Password service
@@ -58,8 +65,7 @@ loop_slack() {
   else
     ref=$(loop_cfg "${LOOP_YAML:-/dev/null}" slack_webhook_op)
     [ -z "$ref" ] && return 0
-    url=$(OP_SERVICE_ACCOUNT_TOKEN="$(security find-generic-password -s OP_SERVICE_ACCOUNT_TOKEN -w 2>/dev/null)" \
-      op read "$ref" 2>/dev/null)
+    url=$(loop_op_read "$ref")
   fi
   [ -z "$url" ] && return 0
   curl -s -m 15 -X POST -H 'Content-type: application/json' \
