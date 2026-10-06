@@ -211,6 +211,11 @@ backend ごとにスクリプトが分かれているのは、`query_id` がス�
 1 つのままである。未知の `metrics_backend` は tick を拒否する。黙って `d1` に倒すと、綴りを間違えた
 repo が「読めない」を返し続ける。
 
+`postgrest` の reader は、`metrics_rest_url`、`metrics_rest_key_op`、`metrics_table` を worktree ではなく
+**origin/main の `loop.yaml` から** 読む。tick は worktree の `loop.yaml` を書き換えられるので、worktree に
+従う reader は、書き換えられた宛先へ鍵を送ってしまう。`metrics_rest_url` は https の origin だけ、
+`metrics_table` は識別子だけを受け付ける。接続先を変えたら、main にマージされるまで reader は古い値で読む。
+
 `metrics_rest_key_op` の鍵は、その table か view を読めれば足りる。service_role の鍵でも動くが、
 読める範囲が広い。view だけを SELECT できる role の JWT を使える環境ではそちらにする。
 

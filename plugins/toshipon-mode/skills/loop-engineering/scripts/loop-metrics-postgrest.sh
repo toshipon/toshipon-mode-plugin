@@ -21,22 +21,35 @@ loop_env "${LOOP_REPO:?LOOP_REPO not set}" || exit 1
 
 query_id="m:$(shasum -a 256 "$0" | cut -c1-7)"
 metrics_file="$REPO/$(loop_cfg "$LOOP_YAML" metrics_file "$RECORDS_DIR/metrics.yaml")"
-base=$(loop_cfg "$LOOP_YAML" metrics_rest_url)
-table=$(loop_cfg "$LOOP_YAML" metrics_table product_metrics)
-[ -z "$base" ] && { echo '{"error":"metrics_rest_url is not set in loop.yaml"}'; exit 1; }
+
+# Where the key is sent, and which key, come from origin/main and never from the worktree. The tick
+# can edit the worktree's loop.yaml; a reader that followed it would hand the key to any host the
+# edit names, and could be pointed at any other op:// secret the service account can read.
+policy=$(mktemp)
+trap 'rm -f "$policy"' EXIT
+git -C "$REPO" show "origin/main:${LOOP_YAML#"$REPO"/}" >"$policy" 2>/dev/null \
+  || { echo '{"error":"loop.yaml is not readable from origin/main"}'; exit 1; }
+base=$(loop_cfg "$policy" metrics_rest_url)
+table=$(loop_cfg "$policy" metrics_table product_metrics)
+key_ref=$(loop_cfg "$policy" metrics_rest_key_op)
+# Both go into the request URL, so each is held to a shape that cannot carry a path or a query.
+[[ "$base" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]] \
+  || { echo '{"error":"metrics_rest_url must be an https origin"}'; exit 1; }
+[[ "$table" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
+  || { echo '{"error":"metrics_table must be a plain identifier"}'; exit 1; }
 
 rest() {  # rest <query string> -> the rows array, empty after three failed tries
   local key out i
   if [ -n "${LOOP_METRICS_REST_KEY+x}" ]; then
     key="$LOOP_METRICS_REST_KEY"
   else
-    key=$(loop_op_read "$(loop_cfg "$LOOP_YAML" metrics_rest_key_op)")
+    key=$(loop_op_read "$key_ref")
   fi
   [ -z "$key" ] && return 1
   for i in 1 2 3; do
     # The key goes in through stdin so it never appears in the process list.
     out=$(printf 'header = "apikey: %s"\nheader = "Authorization: Bearer %s"\n' "$key" "$key" \
-            | curl -s -m 20 -K - "${base%/}/rest/v1/$table?$1" 2>/dev/null) \
+            | curl -s -m 20 --proto '=https' -K - "${base%/}/rest/v1/$table?$1" 2>/dev/null) \
       && echo "$out" | jq -e 'type == "array"' >/dev/null 2>&1 \
       && { echo "$out"; return 0; }
     sleep $((i * 5))
