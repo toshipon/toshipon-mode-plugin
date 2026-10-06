@@ -185,6 +185,35 @@ mcp_tools:
 このコマンドを `allowed_paths` に入れない。自分の健康診断を止められるループは、壊れたことに
 気づけない。
 
+### 計測の backend
+
+`metrics_backend` が、tick に渡す計測スクリプトを決める。書かなければ `d1` である。
+
+| `metrics_backend` | 読む先 | 必要なキー |
+|---|---|---|
+| `d1`（既定） | Cloudflare D1 のテーブル | `metrics_db`、`metrics_db_cwd`、`metrics_table` |
+| `postgrest` | PostgREST（Supabase）の table か view | `metrics_rest_url`、`metrics_rest_key_op`、`metrics_table` |
+
+```yaml
+metrics_backend: postgrest
+metrics_rest_url: https://<project-ref>.supabase.co
+metrics_rest_key_op: op://<vault>/<item>/<field>   # 値はファイルに書かない
+metrics_table: product_metrics
+```
+
+どちらの backend でも、読む先は `(day, metric, value, sample)` の行を 1 日 1 metric で持つ。集約の規則も
+同じで、key の prefix が決める。`postgrest` の読む先は repo が `allowed_paths` の外で定義する。view を
+書き換えられるループは自分の採点を書き換えられる。
+
+backend ごとにスクリプトが分かれているのは、`query_id` がスクリプト自身の sha7 だからである。1 本に
+まとめて分岐を足すと、片方の backend を直しただけで、もう片方で進行中の record が全部 mismatch に
+なる。`loop-run.sh` は選ばれた方を tick の `loop-metrics.sh` として置くので、tick から見た経路は
+1 つのままである。未知の `metrics_backend` は tick を拒否する。黙って `d1` に倒すと、綴りを間違えた
+repo が「読めない」を返し続ける。
+
+`metrics_rest_key_op` の鍵は、その table か view を読めれば足りる。service_role の鍵でも動くが、
+読める範囲が広い。view だけを SELECT できる role の JWT を使える環境ではそちらにする。
+
 ## 3. `<records_dir>/metrics.yaml`
 
 人間だけが書く。`allowed_paths` に入れない。ループはここにある metric しか使えない。

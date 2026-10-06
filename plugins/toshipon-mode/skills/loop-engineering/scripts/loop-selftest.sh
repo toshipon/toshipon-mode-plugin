@@ -224,7 +224,7 @@ esac
 SH
 chmod +x "$pg/fakebin/curl"
 pg_metrics() {
-  FAKE_CURL_LOG="$pg/curl.log" LOOP_REPO="$pg" LOOP_METRICS_REST_KEY=test-key \
+  FAKE_CURL_LOG="$pg/curl.log" LOOP_REPO="$pg" LOOP_METRICS_REST_KEY="${PG_KEY-test-key}" \
   LOOP_PATH="$pg/fakebin:$PATH" LOOP_STATE_DIR="$pg/state" LOOP_LOG_DIR="$pg/state" LOOP_BIN_DIR="$pg/state" \
     /bin/bash "$here/loop-metrics-postgrest.sh" "$@" 2>/dev/null
 }
@@ -248,7 +248,7 @@ check "postgrest refuses an undeclared metric" "count:other is not declared in $
 check "postgrest lists the declared metrics" "count:calls rate:failures avg_ms:call" "$(pg_metrics list | tr '\n' ' ' | sed 's/ *$//')"
 # No key is "cannot measure", never "measured zero": a zero would be scored as a real baseline.
 check "postgrest without a key is unreadable" "postgrest unreadable" \
-  "$(LOOP_METRICS_REST_KEY="" pg_metrics metric count:calls 2026-10-01 2026-10-03 | jq -r .error)"
+  "$(PG_KEY="" pg_metrics metric count:calls 2026-10-01 2026-10-03 | jq -r .error)"
 
 echo
 if [ "$fails" -eq 0 ]; then
