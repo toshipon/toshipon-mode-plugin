@@ -223,6 +223,11 @@ case "$url" in
 esac
 SH
 chmod +x "$pg/fakebin/curl"
+# The reader takes its connection settings from origin/main, so the fixture is a repo that has one.
+git -C "$pg" init -q
+git -C "$pg" add loop.yaml metrics.yaml
+git -C "$pg" -c user.name=selftest -c user.email=selftest@example.com commit -qm fixture
+git -C "$pg" update-ref refs/remotes/origin/main HEAD
 pg_metrics() {
   FAKE_CURL_LOG="$pg/curl.log" LOOP_REPO="$pg" LOOP_METRICS_REST_KEY="${PG_KEY-test-key}" \
   LOOP_PATH="$pg/fakebin:$PATH" LOOP_STATE_DIR="$pg/state" LOOP_LOG_DIR="$pg/state" LOOP_BIN_DIR="$pg/state" \
@@ -249,6 +254,37 @@ check "postgrest lists the declared metrics" "count:calls rate:failures avg_ms:c
 # No key is "cannot measure", never "measured zero": a zero would be scored as a real baseline.
 check "postgrest without a key is unreadable" "postgrest unreadable" \
   "$(PG_KEY="" pg_metrics metric count:calls 2026-10-01 2026-10-03 | jq -r .error)"
+
+# The tick can edit loop.yaml in its own worktree. A reader that followed the worktree would send
+# the key to whatever host the edit names, and could be pointed at any other op:// secret as well.
+sed -i.bak -e 's|^metrics_rest_url:.*|metrics_rest_url: https://attacker.example|' \
+  -e 's|^metrics_table:.*|metrics_table: other_table|' "$pg/loop.yaml" && rm -f "$pg/loop.yaml.bak"
+: >"$pg/curl.log"
+pg_metrics metric count:calls 2026-10-01 2026-10-03 >/dev/null
+check "postgrest ignores a worktree edit of the endpoint" \
+  "https://example.supabase.co/rest/v1/product_metrics?select=value,sample&metric=eq.count%3Acalls&day=gte.2026-10-01&day=lte.2026-10-03" \
+  "$(tail -1 "$pg/curl.log")"
+git -C "$pg" checkout -q -- loop.yaml
+
+pg_policy() {  # pg_policy <sed expression> -> the reader's error with that edit committed as origin/main
+  local out
+  sed -i.bak -e "$1" "$pg/loop.yaml" && rm -f "$pg/loop.yaml.bak"
+  git -C "$pg" -c user.name=selftest -c user.email=selftest@example.com commit -qam policy
+  git -C "$pg" update-ref refs/remotes/origin/main HEAD
+  : >"$pg/curl.log"
+  out=$(pg_metrics metric count:calls 2026-10-01 2026-10-03 | jq -r .error)
+  echo "$out|$(wc -l <"$pg/curl.log" | tr -d ' ')"
+}
+check "postgrest refuses a plain-http endpoint and sends nothing" \
+  "metrics_rest_url must be an https origin|0" "$(pg_policy 's|^metrics_rest_url:.*|metrics_rest_url: http://example.supabase.co|')"
+check "postgrest refuses an endpoint with a path and sends nothing" \
+  "metrics_rest_url must be an https origin|0" "$(pg_policy 's|^metrics_rest_url:.*|metrics_rest_url: https://example.supabase.co/x?y=|')"
+check "postgrest refuses a table that is not an identifier and sends nothing" \
+  "metrics_table must be a plain identifier|0" \
+  "$(pg_policy 's|^metrics_rest_url:.*|metrics_rest_url: https://example.supabase.co|; s|^metrics_table:.*|metrics_table: product_metrics?select=*\&x|')"
+git -C "$pg" update-ref -d refs/remotes/origin/main
+check "postgrest without origin/main cannot measure" "loop.yaml is not readable from origin/main" \
+  "$(pg_metrics metric count:calls 2026-10-01 2026-10-03 | jq -r .error)"
 
 echo
 if [ "$fails" -eq 0 ]; then
