@@ -205,7 +205,8 @@ step 0 で止まる。fail closed が既定である。
 
 1. **baseline を先に取る。** `loop-metrics.sh metric <key> <from> <to>` を実行し、返った JSON を
    record の `baseline` に写す。`window.end` は今日の前日にする。`deploy_version` は
-   `deploy_verify` の現在値である。デプロイ後に取った baseline は baseline ではない。
+   `deploy_verify` の現在値で、runner が tick の開始時に読んでプロンプトに渡す（tick 自身は
+   `deploy_verify` のコマンドを禁じられている）。渡された値が `unknown` なら baseline を取らない。デプロイ後に取った baseline は baseline ではない。
 2. **power を計算する。** `metrics.yaml` の `expected_n_per_day` と `power.horizon_days` から、
    `success` の差が検出できるかを判断し、`power.decidable` と根拠を書く。false なら `abandoned`
    にして終わる。ここで止まるのは正しい仕事である。

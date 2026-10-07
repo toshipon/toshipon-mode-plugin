@@ -85,8 +85,13 @@ if [ -f "$records/paused.flag" ]; then
   exit 0
 fi
 
+# The version a baseline names. The tick is denied the commands deploy_verify wraps (wrangler and the
+# like can also deploy), so the runner reads it before the tick starts. When it cannot be read the
+# prompt says unknown and the tick does not take a baseline.
+deploy_now=$(loop_deploy_version "$LOOP_YAML")
 prompt=$(sed \
   -e "s|{{REPO}}|$worktree|g" \
+  -e "s|{{DEPLOY_VERSION}}|${deploy_now:-unknown}|g" \
   -e "s|{{RECORDS_DIR}}|$RECORDS_DIR|g" \
   -e "s|{{TICK}}|$label-$stamp|g" \
   -e "s|{{SKILL_DIR}}|$(dirname "$here")|g" \

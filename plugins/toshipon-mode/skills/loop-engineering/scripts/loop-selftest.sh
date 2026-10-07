@@ -191,6 +191,21 @@ check "command has its own reader"       "loop-metrics-command.sh" "$(loop_metri
 loop_metrics_script bigquery >/dev/null 2>&1
 check "an unknown backend is refused"    "1"                       "$?"
 
+# The deployed version the runner hands the tick for its baseline. It runs deploy_verify from the
+# repo, so the tick never needs the command; an absent, failing or null answer must read as empty.
+dv="$fixture/deploy"
+mkdir -p "$dv/app"
+dv_version() {  # dv_version <deploy_verify> -> what loop_deploy_version returns for it
+  printf 'deploy_verify: %s\ndeploy_verify_cwd: app\ndeploy_version_jq: .versions[0].version_id\n' "$1" >"$dv/loop.yaml"
+  ( REPO="$dv"; loop_deploy_version "$dv/loop.yaml" )
+}
+check "deploy version is read"            "v-123" "$(dv_version "echo '{\"versions\":[{\"version_id\":\"v-123\"}]}'")"
+check "deploy_verify runs in its cwd"     "app"   "$(dv_version "basename \$PWD | jq -R '{versions:[{version_id:.}]}'")"
+check "a null version reads as empty"     ""      "$(dv_version "echo '{\"versions\":[]}'")"
+check "a failing verify reads as empty"   ""      "$(dv_version "exit 1")"
+printf 'loop_id: x\n' >"$dv/loop.yaml"
+check "no deploy_verify reads as empty"   ""      "$( REPO="$dv"; loop_deploy_version "$dv/loop.yaml" )"
+
 # The command reader: the repo supplies a script that prints daily rows, the plugin aggregates. The
 # aggregation is the contract a hypothesis is scored by, so each prefix is pinned to a number
 # worked out by hand.

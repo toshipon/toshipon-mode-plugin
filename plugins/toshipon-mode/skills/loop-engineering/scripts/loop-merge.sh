@@ -87,11 +87,7 @@ loop_run_checks "$policy" "$LOG_DIR/check-$pr.log" "$touched" \
 deploy_kind=$(loop_cfg "$policy" deploy_kind auto)
 verify=$(loop_cfg "$policy" deploy_verify)
 verify_cwd=$(loop_cfg "$policy" deploy_verify_cwd .)
-version_jq=$(loop_cfg "$policy" deploy_version_jq '.versions[0].version_id')
-version_of() {
-  [ -z "$verify" ] && return 0
-  (cd "$REPO/$verify_cwd" && bash -lc "$verify" 2>/dev/null | jq -r "$version_jq" 2>/dev/null) || true
-}
+version_of() { loop_deploy_version "$policy"; }
 prev=$(version_of)
 
 gh pr merge "$pr" --merge || { log "merge command failed"; exit 1; }

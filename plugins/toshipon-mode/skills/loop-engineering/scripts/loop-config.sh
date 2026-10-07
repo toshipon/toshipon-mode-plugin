@@ -168,6 +168,19 @@ loop_metrics_script() {
   esac
 }
 
+# loop_deploy_version <loop.yaml> -> the version deploy_verify reports now; empty when unknown.
+# The gate reads it around a merge, and the runner reads it before a tick so that a baseline can
+# name the version it measured. The agent never runs deploy_verify itself: the commands it wraps
+# (wrangler, vercel, ...) are denied to the tick because they can also deploy.
+loop_deploy_version() {
+  local verify verify_cwd version_jq
+  verify=$(loop_cfg "$1" deploy_verify)
+  [ -z "$verify" ] && return 0
+  verify_cwd=$(loop_cfg "$1" deploy_verify_cwd .)
+  version_jq=$(loop_cfg "$1" deploy_version_jq '.versions[0].version_id')
+  (cd "$REPO/$verify_cwd" && bash -lc "$verify" 2>/dev/null | jq -r "($version_jq) // empty" 2>/dev/null) || true
+}
+
 # loop_state <records-dir-abs> -> the state summary the tick prompt embeds.
 # No associative arrays here: launchd runs these through /bin/bash, which is 3.2 on macOS.
 loop_state() {
