@@ -26,7 +26,7 @@ claims: product
 not_evidence_for: trading performance (Sharpe, PnL, DSR, win rate)
 
 origin_kind: interview   # interview|owner|incident
-origin_ref: INT-001      # owner の時は空でよい
+origin_ref: e6c83f59-…  # KaizenLab の interview id。owner の時は空でよい
 
 falsification: measurement.value が baseline.value の 95% を上回ったままである
 success: measurement.value が baseline.value の 70% 以下で、n が cap_min_sample 以上ある
@@ -109,7 +109,6 @@ metrics_file: product/metrics.yaml
 # allowlist。ここに無い path に触れた PR は merge されない
 allowed_paths:
   - product/hypotheses/
-  - product/interviews/
   - product/measurements/
   - product/journal.md
   - cloud/paper-trader/src/
