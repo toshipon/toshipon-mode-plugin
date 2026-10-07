@@ -30,7 +30,6 @@ argument-hint: "[省略可。records_dir を変えたい場合はディレクト
 ## Step 2: 雛形を置く
 
 - `<records_dir>/hypotheses/.gitkeep`
-- `<records_dir>/interviews/.gitkeep`
 - `<records_dir>/measurements/.gitkeep`
 - `<records_dir>/journal.md`（見出しと、記録の読み方を 3 行）
 - `<records_dir>/metrics.yaml`（計測から実際に読める metric だけ。空でもよい）

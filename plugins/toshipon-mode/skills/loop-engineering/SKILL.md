@@ -251,7 +251,9 @@ step 0 で止まる。fail closed が既定である。
    headless なら `surface_url` に WebFetch する。認証の裏にあって届かないなら、リポジトリの
    dev サーバを起動して同じ route を叩く。画面を一度も見ずに書いたインタビューは作文であり、
    観測できなかったならそう書く。観測したことを材料に擬似インタビューを行い、`create_interview`
-   で登録し、`<records_dir>/interviews/INT-NNN.md` に同じ内容を残す。`source: synthetic` を明記する。
+   で登録する。本文は KaizenLab が正で、records には写しを残さない。journal の `Did` に persona と
+   interview の id を書き、`source: synthetic` を本文に明記する。KaizenLab への登録が失敗したら、
+   本文を journal に残して先に進む。
 
    **surface が読めなければ、そこで止まる。** route がエラーを返す、画面が描画されない、起動
    できないといった場合、それは仮説の材料ではなく defect である。インタビューには観測した事実
