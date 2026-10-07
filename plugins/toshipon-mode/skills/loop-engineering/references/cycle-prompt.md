@@ -43,6 +43,12 @@ ADVANCE / EVALUATE / BUILD / INTERVIEW / WAIT のどれか 1 つである。2 �
 含む。だから baseline の `window.end` はデプロイ日の前日、measurement の `window.start` は
 デプロイ日の翌日にする。1 日を捨てる代わりに、混ざった日を判定に使わない。
 
+baseline の `deploy_version` には **{{DEPLOY_VERSION}}** を書く。runner が tick の開始時に
+`deploy_verify` で読んだ、いま本番にあるバージョンである。`deploy_verify` のコマンド（wrangler など）は
+デプロイもできるので tick には禁じてあり、自分で実行しない。値が `unknown` なら baseline を取らず、
+record を `drafted` のまま残し、journal の `要対応` に「runner が deploy_version を読めなかった」と書いて
+終わる。
+
 `metrics_file` に無い metric は使えない。必要なら journal に「人間が metric を足せば測れる候補」
 として書き、その仮説は作らない。metrics_file と loop.yaml を自分で編集しない。編集した PR は
 merge gate が拒否する。
