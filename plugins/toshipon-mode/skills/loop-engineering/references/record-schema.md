@@ -26,7 +26,7 @@ claims: product
 not_evidence_for: trading performance (Sharpe, PnL, DSR, win rate)
 
 origin_kind: interview   # interview|owner|incident
-origin_ref: e6c83f59-…  # KaizenLab の interview id。owner の時は空でよい
+origin_ref: e6c83f59-…  # 元になった interview の id（記録面の id）。owner の時は空でよい
 
 falsification: measurement.value が baseline.value の 95% を上回ったままである
 success: measurement.value が baseline.value の 70% 以下で、n が cap_min_sample 以上ある
@@ -66,7 +66,6 @@ measurement:
 verdict: null             # {decision, reason, decided_at}
 learning: null            # 次の仮説を変える 1 文。結果の言い換えは learning ではない
 next: null                # 後継 record の id
-kaizenlab_canvas_id: null
 ```
 
 ### 不変条件
@@ -103,7 +102,6 @@ loop_id: quant-lab-product
 records_dir: product
 id_prefix: PH
 branch_prefix: autoloop/product-
-kaizenlab_project_id: 89116b2e-4e0f-47b2-8ff0-f1d5b41835a3
 metrics_file: product/metrics.yaml
 
 # allowlist。ここに無い path に触れた PR は merge されない
@@ -149,16 +147,10 @@ cap_merges_per_day: 3
 cap_tick_budget_usd: 8
 cap_min_sample: 200
 
+# tick に許可する MCP tool（repo の CLAUDE.md が定める外部の記録面を使うときだけ）。
+# 名前は完全一致で、wildcard は書かない
 mcp_tools:
-  - mcp__plugin_kaizen-lab_kaizen-lab__create_verification_canvas
-  - mcp__plugin_kaizen-lab_kaizen-lab__update_verification_canvas
-  - mcp__plugin_kaizen-lab_kaizen-lab__get_verification_canvas
-  - mcp__plugin_kaizen-lab_kaizen-lab__list_verification_canvases
-  - mcp__plugin_kaizen-lab_kaizen-lab__create_persona
-  - mcp__plugin_kaizen-lab_kaizen-lab__list_personas
-  - mcp__plugin_kaizen-lab_kaizen-lab__create_interview
-  - mcp__plugin_kaizen-lab_kaizen-lab__add_learning
-  - mcp__plugin_kaizen-lab_kaizen-lab__search_learnings
+  - mcp__<server>__<tool>
 ```
 
 `avoid_minutes` は他の worker の cron が動く分を外すためにある。マージがその worker の再デプロイを

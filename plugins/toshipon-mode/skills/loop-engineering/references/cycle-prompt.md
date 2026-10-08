@@ -78,13 +78,11 @@ record の `change.paths` を先に直す。
    - exit 4 = merge window の外。record は `building` で残し、次の tick に任せる
    - exit 1 = checks かデプロイが失敗した。原因を journal に書いて止まる
 
-## 5. KaizenLab
+## 5. 外部の記録面と観測
 
-BUILD で canvas を作り、EVALUATE で canvas を閉じて learning を 1 件足す。INTERVIEW で persona と
-interview を登録する。project_id は `loop.yaml` の `kaizenlab_project_id`。
-
-KaizenLab を読んで判定を動かさない。state も verdict も record が決める。MCP が失敗したら journal
-に書いて先に進む。KaizenLab の失敗で record の state を止めない。
+repo の `CLAUDE.md` が record の外に書く場所を定めていれば、BUILD・EVALUATE・INTERVIEW でそれに
+従う。定めが無ければ record と journal だけに書く。外部への書き込みが失敗したら journal に書いて
+先に進み、record の state を止めない。
 
 INTERVIEW で surface を観測する手段は、headless では `loop.yaml` の `surface_url` に対する
 WebFetch である。ブラウザを動かすのは対話の `/toshipon-mode:loop-tick` の時だけにする。画面を

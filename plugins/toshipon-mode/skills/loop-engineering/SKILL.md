@@ -1,6 +1,6 @@
 ---
 name: loop-engineering
-description: 仮説検証のループを自律で回す。1 tick で 1 判断だけ進め、実装・テスト・マージ・デプロイ・計測・判定・仮説へのフィードバックを閉じる。BUILD できる draft が無いとき（尽きたとき、または計測中の metric と重なって待っているとき）はペルソナを足してインタビューし新しい仮説を作る。KaizenLab MCP をトラッキング面に使う。Use when setting up or running an autonomous hypothesis-validation loop for a product, scheduling recurring claude -p cycles, or asking what the next loop tick will do.
+description: 仮説検証のループを自律で回す。1 tick で 1 判断だけ進め、実装・テスト・マージ・デプロイ・計測・判定・仮説へのフィードバックを閉じる。BUILD できる draft が無いとき（尽きたとき、または計測中の metric と重なって待っているとき）はペルソナを足してインタビューし新しい仮説を作る。Use when setting up or running an autonomous hypothesis-validation loop for a product, scheduling recurring claude -p cycles, or asking what the next loop tick will do.
 ---
 
 # loop engineering
@@ -160,7 +160,7 @@ terminal は `validated` `invalidated` `inconclusive` `abandoned` の 4 つ。te
 
 行 5 は「`drafted` が 1 件もない」ではない。`drafted` があっても、どれも `measuring` 中の metric と
 重なっていれば、その窓が閉じるまで（`power.horizon_days`、たいてい 2 週間）BUILD できない。旧い行 5
-はその間 INTERVIEW も止め、ループは何週間も WAIT だけを返した（kaizen-lab の product loop、
+はその間 INTERVIEW も止め、ループは何週間も WAIT だけを返した（ある repo の product loop、
 2026-10-08。PH-0001 が measuring、同じ metric の PH-0002 が drafted のまま）。インタビューは計測に
 触れないので、窓を待つ間に回しても交絡しない。作りすぎは `cap_new_hypotheses_per_7d` が止める。
 
@@ -226,10 +226,7 @@ step 0 で止まる。fail closed が既定である。
 4. **実装する。** `toshipon-mode` skill の Feature playbook に入る。触れるのは `allowed_paths` の
    中だけ。`metrics.yaml` と `loop.yaml` と計測コードには触れない。
 5. **`loop-check.sh` を通す。** これが gate と同じ checks を同じ順で走らせる唯一の経路である。
-6. **KaizenLab に verification canvas を作る。** 名前は `PH-NNNN: <title>`。`sections.why` に
-   purpose / targetHypothesis / successMetrics、`sections.how` に `method: analytics` と
-   mvpDefinition を入れ、`status: in-progress` にする。canvas id を record に書く。
-7. **ship する。** commit、`loop-push.sh`、`gh pr create`、`loop-merge.sh <pr>`。record は同じ PR で
+6. **ship する。** commit、`loop-push.sh`、`gh pr create`、`loop-merge.sh <pr>`。record は同じ PR で
    `building` にし、`ship.pr` を書く。exit 3 と exit 4 は `building` のまま残す。
 
 ### EVALUATE
@@ -242,10 +239,7 @@ step 0 で止まる。fail closed が既定である。
 5. `verdict` に `decision` `reason` `decided_at` を書く。`learning` は次の仮説を変える一文にする。
    結果の言い換えは learning ではない。
 6. 計測の生の JSON を `<records_dir>/measurements/PH-NNNN.json` にコミットする。これが証拠である。
-7. KaizenLab を更新する。canvas の `sections` は read-modify-write で、`what.quantitativeResults` と
-   `what.qualitativeResults` と `what.nextAction` を埋めてから `status` を動かす。3 つが空のまま
-   status を動かすと canvas が嘘になる。`add_learning` を 1 件、tags に `PH-NNNN` を入れる。
-8. `invalidated` も `inconclusive` も資産である。record を消さない。後継があれば `next` に書く。
+7. `invalidated` も `inconclusive` も資産である。record を消さない。後継があれば `next` に書く。
 
 ### INTERVIEW
 
@@ -259,15 +253,16 @@ step 0 で止まる。fail closed が既定である。
 1 本ずつ measuring に入る前提で `change_summary` を書く。
 
 1. 既存の全 record と journal を読む。同じ問いを二度立てない。
-2. `list_personas` で既存ペルソナを見る。埋まっていない面を 1 つ選び、`create_persona` で 1 体
-   足す。`occupation`（`role` ではない）、`goals`、`frustrations`、`behaviors` を埋める。
+2. 既存ペルソナを見る。埋まっていない面を 1 つ選び、1 体足す。職業、goals、frustrations、
+   behaviors を埋める。ペルソナとインタビューの置き場所は repo の CLAUDE.md が決める（下の
+   「外部の記録面」）。
 3. **実際の surface を観測する。** 対話なら `claude-in-chrome` か `superset:browser` で操作する。
    headless なら `surface_url` に WebFetch する。認証の裏にあって届かないなら、リポジトリの
    dev サーバを起動して同じ route を叩く。画面を一度も見ずに書いたインタビューは作文であり、
-   観測できなかったならそう書く。観測したことを材料に擬似インタビューを行い、`create_interview`
-   で登録する。本文は KaizenLab が正で、records には写しを残さない。journal の `Did` に persona と
-   interview の id を書き、`source: synthetic` を本文に明記する。KaizenLab への登録が失敗したら、
-   本文を journal に残して先に進む。
+   観測できなかったならそう書く。観測したことを材料に擬似インタビューを行い、
+   記録面に登録する。records には写しを残さない。journal の `Did` に persona と interview の id を
+   書き、`source: synthetic` を本文に明記する。記録面が無いか登録に失敗したら、本文を journal に
+   残して先に進む。
 
    **surface が読めなければ、そこで止まる。** route がエラーを返す、画面が描画されない、起動
    できないといった場合、それは仮説の材料ではなく defect である。インタビューには観測した事実
@@ -284,16 +279,16 @@ step 0 で止まる。fail closed が既定である。
 6. **擬似インタビューを判定の根拠にしない。** 仮説を生む装置であり、証拠は計測だけから来る。
    この区別を journal に毎回書く。
 
-## KaizenLab との関係
+## 外部の記録面
 
-同期は一方向である。ディスクの record が正で、KaizenLab はそこから派生した閲覧面である。
+この skill は特定の外部サービスを知らない。repo が record の外にも書く場所（課題管理、
+仮説管理のツールなど）を使うなら、何をいつどこへ書くかは repo の `CLAUDE.md` が定める。tick は
+`CLAUDE.md` を読むので、そこに書けば BUILD・EVALUATE・INTERVIEW の各段で従う。
 
-- **書く。** canvas、learning、persona、interview
-- **読む。** ペルソナ一覧と、既存 canvas の重複確認まで
-- **読んで判定を動かさない。** state も verdict も record が決める
-
-整合性チェックは KaizenLab に届かない。テストが走らない場所の数字は検証済みではない。第二の記録を
-根拠にすると、どちらが正か分からなくなる。
+- 使う tool は `loop.yaml` の `mcp_tools` で許可する。許可していない tool は tick から呼べない
+- 外部への書き込みが失敗しても record の state を止めない。journal に書いて先に進む
+- 外部の記録面を読んで判定を動かすかは、repo の `CLAUDE.md` の定めによる。定めが無ければ、
+  state も verdict も record が決める
 
 ## 境界
 
