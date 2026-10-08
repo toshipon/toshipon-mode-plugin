@@ -253,9 +253,10 @@ step 0 で止まる。fail closed が既定である。
 残っている `drafted` がすべて `measuring` 中の metric と重なって待っている時も走る。ここで作るのは
 仮説の候補であって証拠ではない。
 
-待っている間に作る仮説は、`measuring` 中の metric と**別の** metric を選ぶ。同じ metric の仮説を
-積んでも、窓が閉じるまで 1 本ずつしか進めず、列が伸びるだけである。別の metric で測れる着想が
-無ければ、record にせず journal に「窓が閉じたら測れる候補」として残す。
+`measuring` の数が `cap_concurrent_measuring` に届いていなければ、別の metric の仮説を優先する。
+それならいますぐ BUILD に進める。cap が埋まっているなら、どの metric でも次の窓で順に進むので、
+同じ metric の仮説を作ってよい。そのときは `priority` で順番を付け、互いの効果が混ざらないよう
+1 本ずつ measuring に入る前提で `change_summary` を書く。
 
 1. 既存の全 record と journal を読む。同じ問いを二度立てない。
 2. `list_personas` で既存ペルソナを見る。埋まっていない面を 1 つ選び、`create_persona` で 1 体
