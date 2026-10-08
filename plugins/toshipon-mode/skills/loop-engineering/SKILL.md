@@ -1,6 +1,6 @@
 ---
 name: loop-engineering
-description: 仮説検証のループを自律で回す。1 tick で 1 判断だけ進め、実装・テスト・マージ・デプロイ・計測・判定・仮説へのフィードバックを閉じる。draft が尽きたらペルソナを足してインタビューし新しい仮説を作る。KaizenLab MCP をトラッキング面に使う。Use when setting up or running an autonomous hypothesis-validation loop for a product, scheduling recurring claude -p cycles, or asking what the next loop tick will do.
+description: 仮説検証のループを自律で回す。1 tick で 1 判断だけ進め、実装・テスト・マージ・デプロイ・計測・判定・仮説へのフィードバックを閉じる。BUILD できる draft が無いとき（尽きたとき、または計測中の metric と重なって待っているとき）はペルソナを足してインタビューし新しい仮説を作る。KaizenLab MCP をトラッキング面に使う。Use when setting up or running an autonomous hypothesis-validation loop for a product, scheduling recurring claude -p cycles, or asking what the next loop tick will do.
 ---
 
 # loop engineering
@@ -15,7 +15,7 @@ state から判断する。
 ```
 drafted → building → shipped → measuring → validated / invalidated / inconclusive
    ↑                                                      │
-   └──────────── interview（drafted が尽きた時）←──────────┘
+   └──── interview（BUILD できる drafted が無い時）←────┘
 ```
 
 ## このループが壊れる 3 つの形
@@ -154,9 +154,15 @@ terminal は `validated` `invalidated` `inconclusive` `abandoned` の 4 つ。te
 | 1 | `building` の record がある | **RECONCILE** |
 | 2 | `shipped` の record にデプロイ翌日以降の event がある | **ADVANCE** |
 | 3 | `measuring` の record が horizon に達した | **EVALUATE** |
-| 4 | `measuring` の数 < `cap_concurrent_measuring` かつ `drafted` がある | **BUILD** |
-| 5 | `drafted` が 1 件もない | **INTERVIEW** |
+| 4 | `measuring` の数 < `cap_concurrent_measuring` かつ、`measuring` 中の metric と重ならない `drafted` がある | **BUILD** |
+| 5 | 行 4 に当たらない（いま BUILD できる `drafted` が無い）かつ、直近 7 日の新規仮説が `cap_new_hypotheses_per_7d` 未満 | **INTERVIEW** |
 | 6 | 上のどれでもない | **WAIT** |
+
+行 5 は「`drafted` が 1 件もない」ではない。`drafted` があっても、どれも `measuring` 中の metric と
+重なっていれば、その窓が閉じるまで（`power.horizon_days`、たいてい 2 週間）BUILD できない。旧い行 5
+はその間 INTERVIEW も止め、ループは何週間も WAIT だけを返した（kaizen-lab の product loop、
+2026-10-08。PH-0001 が measuring、同じ metric の PH-0002 が drafted のまま）。インタビューは計測に
+触れないので、窓を待つ間に回しても交絡しない。作りすぎは `cap_new_hypotheses_per_7d` が止める。
 
 WAIT が正しい結果であることを忘れない。窓が閉じるのを待つ間に同じ metric を動かす変更を出すと、
 2 つの効果が混ざって両方の仮説が死ぬ。`cap_concurrent_measuring` はスループットの目標ではなく、
@@ -243,7 +249,13 @@ step 0 で止まる。fail closed が既定である。
 
 ### INTERVIEW
 
-`drafted` が尽きた時だけ走る。ここで作るのは仮説の候補であって証拠ではない。
+いま BUILD できる `drafted` が無い時に走る（決定表の行 5）。`drafted` が尽きた時だけでなく、
+残っている `drafted` がすべて `measuring` 中の metric と重なって待っている時も走る。ここで作るのは
+仮説の候補であって証拠ではない。
+
+待っている間に作る仮説は、`measuring` 中の metric と**別の** metric を選ぶ。同じ metric の仮説を
+積んでも、窓が閉じるまで 1 本ずつしか進めず、列が伸びるだけである。別の metric で測れる着想が
+無ければ、record にせず journal に「窓が閉じたら測れる候補」として残す。
 
 1. 既存の全 record と journal を読む。同じ問いを二度立てない。
 2. `list_personas` で既存ペルソナを見る。埋まっていない面を 1 つ選び、`create_persona` で 1 体
