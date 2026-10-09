@@ -400,6 +400,11 @@ sandbox の結果を後から「効いたから本番に上げる」と引用す
 tick ごとの digest は `slack_webhook_op` を設定すると Slack に流れる。設定しなければ macOS の
 通知とログだけになる。webhook は 1Password の op:// 参照で読み、ファイルには書かない。
 
+`notify_command` を設定すると、runner と merge gate の通知（digest、拒否、停止、pull / push の失敗、
+records NOT saved、マージ）はすべてそのスクリプトに渡り、`slack_webhook_op` は使われなくなる。通知は
+`alert`（人が動く必要がある）と `milestone`（定期の知らせ）に分かれるので、repo は種類ごとに届け先を
+選べる。契約は [`references/record-schema.md`](references/record-schema.md) の「通知」にある。
+
 launchd の job は、登録した時点の plugin ディレクトリを指す。そのパスにはバージョンが入っている。
 plugin を更新すると新しいバージョンのディレクトリが増えるだけで古い方は残るので、**launchd は
 古いスクリプトを黙って走らせ続ける**。plugin を更新したら `loop-install.sh` を再実行する。

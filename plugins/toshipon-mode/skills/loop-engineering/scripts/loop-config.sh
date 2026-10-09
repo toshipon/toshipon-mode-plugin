@@ -66,10 +66,42 @@ loop_slack() {
     --data "$(jq -n --arg t "$1" '{text: $t}')" "$url" >/dev/null 2>&1 || true
 }
 
-loop_notify() {  # loop_notify <title> <message>
+# loop_deliver <alert|milestone> <title> <body> [url]
+# Hands one notification to the repo's notify_command, or returns 1 when there is none so the caller
+# falls back to Slack. alert means a person has to act (a refusal, a stop, a failure); milestone is
+# the routine news (the digest, a merge that landed). The command is trusted the way metrics_command
+# is: origin/main's copy, outside allowed_paths. A misconfigured one is logged and falls back rather
+# than going quiet, because a loop that cannot reach anyone is worse than one on the old channel.
+# A notification never decides a tick, so a failing command costs one line in notify.log.
+loop_deliver() {
+  local kind="$1" title="$2" body="$3" url="${4:-}" work reason rc
+  [ -n "${REPO:-}" ] && [ -n "${LOOP_YAML:-}" ] || return 1
+  work=$(mktemp -d) || return 1
+  git -C "$REPO" show "origin/main:${LOOP_YAML#"$REPO"/}" >"$work/loop.yaml" 2>/dev/null \
+    || cp "$LOOP_YAML" "$work/loop.yaml"
+  if [ -z "$(loop_cfg "$work/loop.yaml" notify_command)" ]; then
+    rm -rf "$work"
+    return 1
+  fi
+  if ! reason=$(loop_repo_script "$REPO" "$work/loop.yaml" notify_command "$work/notify.sh"); then
+    echo "[$(date -u +%FT%TZ)] notify_command refused: $reason; fell back to slack_webhook_op" >>"$LOG_DIR/notify.log"
+    rm -rf "$work"
+    return 1
+  fi
+  printf '%s\n' "$body" >"$work/body"
+  (cd "$REPO" && /bin/bash "$work/notify.sh" notify "$kind" "$title" "$work/body" ${url:+"$url"}) \
+    >>"$LOG_DIR/notify-command.log" 2>&1
+  rc=$?
+  [ "$rc" -ne 0 ] \
+    && echo "[$(date -u +%FT%TZ)] notify_command failed: exit $rc ($kind: $title)" >>"$LOG_DIR/notify.log"
+  rm -rf "$work"
+  return 0
+}
+
+loop_notify() {  # loop_notify <title> <message> [alert|milestone] [url]
   osascript -e "display notification \"${2//\"/\\\"}\" with title \"${1//\"/\\\"}\"" >/dev/null 2>&1 || true
   echo "[$(date -u +%FT%TZ)] $1: $2" >>"$LOG_DIR/notify.log"
-  loop_slack "*$1*: $2"
+  loop_deliver "${3:-alert}" "$1" "$2" "${4:-}" || loop_slack "*$1*: $2"
 }
 
 # loop_path_allowed <path> <allowlist entry>...

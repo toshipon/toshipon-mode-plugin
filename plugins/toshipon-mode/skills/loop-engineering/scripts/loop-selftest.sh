@@ -459,6 +459,73 @@ check "status reads the store through the pull" "PH-0001  measuring  priority=1 
   "$(echo "$out" | grep '^PH-0001')"
 check "status keeps git's paused.flag"          "1" "$(echo "$out" | grep -c '^PAUSED:')"
 
+# notify_command: the repo's own channel. Every runner notification goes through it with a kind, and
+# its own failure costs one line in notify.log, never the tick.
+cat >"$rr/main/scripts/notify.sh" <<'SH'
+#!/bin/bash
+echo NOTIFY-STDOUT
+echo NOTIFY-STDERR >&2
+{ echo "$# $1 $2 | $3 | ${5:-}"; cat "$4"; echo "--"; } >>"$FAKE_DIR/notified"
+[ -n "${FAKE_NOTIFY_FAIL:-}" ] && exit 4
+exit 0
+SH
+cp "$rr/main/scripts/notify.sh" "$rr/main/app/notify.sh"
+rm -f "$rr/main/product/paused.flag"
+notified() { [ -e "$rr/notified" ] && cat "$rr/notified" || echo none; }
+deliver() {  # deliver <args...> -> loop_deliver's rc against the run fixture's origin/main
+  ( REPO="$rr/main" LOOP_YAML="$rr/main/product/loop.yaml" LOG_DIR="$rr/state" FAKE_DIR="$rr"
+    export FAKE_DIR; loop_deliver "$@" ) >/dev/null 2>&1
+  echo $?
+}
+run_yaml "$hooks"
+rm -f "$rr/notified"
+check "no notify_command is not delivered (falls back)" "1" "$(deliver alert t body)"
+check "no notify_command runs nothing"         "none" "$(notified)"
+
+run_yaml "${hooks}notify_command: scripts/notify.sh
+"
+rm -f "$rr/notified" "$rr/state/notify-command.log"
+check "notify_command delivers"                "0" "$(deliver alert "a title" "the body" https://example.com/pr/1)"
+check "notify_command gets notify, kind, title, body file, url" \
+  "5 notify alert | a title | https://example.com/pr/1" "$(sed -n 1p "$rr/notified")"
+check "notify_command reads the body from the file" "the body" "$(sed -n 2p "$rr/notified")"
+check "notify_command output goes to its own log" "2" "$(grep -c 'NOTIFY-STD' "$rr/state/notify-command.log")"
+
+# The merge gate reports through loop_notify, with a kind and the PR's url.
+rm -f "$rr/notified"
+( REPO="$rr/main" LOOP_YAML="$rr/main/product/loop.yaml" LOG_DIR="$rr/state" FAKE_DIR="$rr"
+  PATH="$rr/fakebin:$PATH"; export FAKE_DIR PATH
+  loop_notify gate "PR #7 merged" milestone https://example.com/pr/7
+  loop_notify gate "PR #7 needs a human" ) >/dev/null 2>&1
+check "loop_notify passes the kind and url"    "5 notify milestone | gate | https://example.com/pr/7" "$(sed -n 1p "$rr/notified")"
+check "loop_notify defaults to alert"          "1" "$(grep -c '^4 notify alert | gate | $' "$rr/notified")"
+
+rm -f "$rr/notified"
+out=$(FAKE_PULL_FAIL=1 run_tick)
+check "a failed pull is an alert"              "1" "$(grep -c '^4 notify alert | loop-selftest-records | $' "$rr/notified")"
+check "the alert body says what failed"        "1" "$(grep -c 'records_pull exited 7' "$rr/notified")"
+check "notify_command output stays out of the runner's" "0" "$(echo "$out" | grep -c NOTIFY-STD)"
+rm -f "$rr/notified"
+out=$(FAKE_JOURNAL=1 run_tick)
+check "the digest is a milestone"              "1" "$(grep -c '^4 notify milestone | loop-selftest-records · t · ' "$rr/notified")"
+check "the digest body carries the journal"    "1" "$(grep -c 'working copy entry' "$rr/notified")"
+check "a delivered digest is not an alert"     "0" "$(grep -c ' alert ' "$rr/notified")"
+rm -f "$rr/notified"
+out=$(FAKE_NOTIFY_FAIL=1 FAKE_JOURNAL=1 run_tick)
+check "a failing notify_command is logged once" "1" "$(grep -c 'notify_command failed: exit 4 (milestone: ' "$rr/state/notify.log")"
+check "a failing notify_command does not fail the tick" "rc=0" "$(echo "$out" | tail -1)"
+
+run_yaml "${hooks}notify_command: app/notify.sh
+"
+rm -f "$rr/notified"
+check "notify_command inside allowed_paths falls back" "1" "$(deliver alert t body)"
+check "notify_command inside allowed_paths never runs" "none" "$(notified)"
+check "the refusal is logged" "1" \
+  "$(grep -c 'notify_command refused: notify_command must be outside allowed_paths' "$rr/state/notify.log")"
+run_yaml "${hooks}notify_command: scripts/absent.sh
+"
+check "notify_command missing on origin/main falls back" "1" "$(deliver alert t body)"
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "loop-selftest: all checks passed under $BASH_VERSION"

@@ -103,7 +103,8 @@ bash <新しい version の scripts>/loop-install.sh $LOOP_REPO "*/3" 30
 
 | 見たいもの | 場所 |
 |---|---|
-| tick ごとの digest | Slack（`slack_webhook_op` を設定した場合）、`~/Library/Logs/<loop_id>/digest.log` |
+| tick ごとの digest | `notify_command` の届け先（設定した場合）、Slack（`slack_webhook_op` を設定した場合）、`~/Library/Logs/<loop_id>/digest.log` |
+| 届かなかった通知 | `~/Library/Logs/<loop_id>/notify.log` の `notify_command failed` / `refused` の行。スクリプトの出力は `notify-command.log` |
 | tick の生ログ | `~/Library/Logs/<loop_id>/tick-*.json` |
 | 盤面 | `loop-status.sh <repo>` |
 | 何をしたか | `<records_dir>/journal.md`。記録を動かした tick だけが書く。records hooks があれば外部の記録面 |
