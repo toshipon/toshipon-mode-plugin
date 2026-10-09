@@ -318,6 +318,46 @@ repo の側で必要なことが 4 つある。
 `loop-merge.sh` は record を読まないので変わらない。`loop-status.sh` は records hooks があると
 origin/main の `records_pull` で一時ディレクトリに pull し、そこから盤面を作る。
 
+### 通知（任意）
+
+書かなければ、通知は今までどおり macOS の通知、`notify.log`、`slack_webhook_op` の Slack に出る。
+`notify_command` を書くと、Slack の代わりに repo のスクリプトへ渡す。macOS の通知と `notify.log` は
+そのまま残る。
+
+```yaml
+notify_command: scripts/product/notify.sh
+```
+
+```
+<notify_command> notify <kind> <title> <body-file> [url]
+```
+
+| 引数 | 意味 |
+|---|---|
+| `notify` | 固定。1 本のスクリプトに他の役目を持たせても混ざらないように置く |
+| `<kind>` | `alert` か `milestone` |
+| `<title>` | 1 行。通知元（`loop_id`、digest では `<loop_id> · <label> · <stamp>`） |
+| `<body-file>` | 本文が入ったファイルの絶対パス。呼び出しが終わると消える。digest の本文は Slack に出していたものと同じ |
+| `[url]` | あれば渡す。関係する PR の URL |
+
+| kind | 送るもの |
+|---|---|
+| `alert` | 人が動く必要がある失敗と停止。merge gate の拒否（`needs-human`）、マージしたがデプロイされない、`paused.flag` での skip、pull の失敗、gitignore 漏れ、通常ファイル以外の検出、records NOT saved |
+| `milestone` | 定期の知らせ。tick ごとの digest、マージとデプロイの確認 |
+
+- スクリプトは `metrics_command` と同じ規則で扱う。origin/main の `loop.yaml` から読み、origin/main の版を
+  repo のルートを cwd にして `/bin/bash` で実行する。`allowed_paths` の中にあるか origin/main に無ければ
+  実行しない
+- exit 0 が成功。それ以外は失敗として `notify.log` に 1 行（`notify_command failed: exit N (<kind>: <title>)`）
+  残す。通知の失敗は tick の成否を変えない
+- スクリプトの stdout と stderr は `notify-command.log` に追記され、runner の出力には混ざらない
+- 実行を拒否したとき（`allowed_paths` の中、origin/main に無い）は `notify.log` に
+  `notify_command refused: ...` を 1 行残し、`slack_webhook_op` に戻す。届け先の設定を間違えた
+  ループが誰にも届かなくなるより、古い経路に出る方がよい
+- 鍵が要るならスクリプトが自分で読む。plugin は渡さない
+- merge gate からも呼ばれる。gate は tick の Bash 呼び出しの中で動くので、スクリプトは速く返す
+  （ネットワークには timeout を付ける）
+
 ## 3. `<records_dir>/metrics.yaml`
 
 人間だけが書く。`allowed_paths` に入れない。ループはここにある metric しか使えない。

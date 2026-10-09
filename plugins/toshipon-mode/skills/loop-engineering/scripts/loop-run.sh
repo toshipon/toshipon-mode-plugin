@@ -248,7 +248,9 @@ ${prs:-• none}
 _rc=${rc} · \$${cost}_"
 osascript -e "display notification \"rc=$rc cost=\$$cost\" with title \"$LOOP_ID ($label)\"" >/dev/null 2>&1 || true
 echo "[$(date -u +%FT%TZ)] $LOOP_ID ($label): rc=$rc cost=\$$cost" >>"$LOG_DIR/notify.log"
-loop_slack "$digest"
+# The digest is routine news; the stops and failures above already went out as alerts.
+pr_url=$(echo "$prs" | sed -n 's/.*  \(https:[^ ]*\)$/\1/p' | head -1)
+loop_deliver milestone "$LOOP_ID · $label · $stamp" "$digest" "$pr_url" || loop_slack "$digest"
 {
   echo "=== $LOOP_ID $label $stamp  rc=$rc cost=\$$cost"
   [ -z "$unsaved" ] || echo "$unsaved"

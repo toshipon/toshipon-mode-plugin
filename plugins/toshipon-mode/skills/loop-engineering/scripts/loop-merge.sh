@@ -14,12 +14,13 @@ source "$here/loop-config.sh"
 pr="${1:?pr number required}"
 loop_env "${LOOP_REPO:?LOOP_REPO not set}" || exit 1
 cd "$REPO" || exit 1
+pr_url=$(gh pr view "$pr" --json url -q .url 2>/dev/null)
 log() { echo "[$(date -u +%FT%TZ)] merge #$pr: $*" | tee -a "$LOG_DIR/merge.log"; }
 refuse() {
   log "REFUSED: $*"
   gh pr comment "$pr" --body "loop-merge refused: $*" >/dev/null 2>&1 || true
   gh pr edit "$pr" --add-label needs-human >/dev/null 2>&1 || true
-  loop_notify "$LOOP_ID" "PR #$pr needs a human: $*"
+  loop_notify "$LOOP_ID" "PR #$pr needs a human: $*" alert "$pr_url"
   exit 3
 }
 
@@ -100,7 +101,7 @@ git fetch -q origin main && git checkout -q --detach origin/main
 if [ "$deploy_kind" != auto ] || [ -z "$verify" ]; then
   log "no automatic deploy is configured; merge only"
   echo "deploy_version=none"
-  loop_notify "$LOOP_ID" "PR #$pr merged (no deploy step)"
+  loop_notify "$LOOP_ID" "PR #$pr merged (no deploy step)" milestone "$pr_url"
   exit 0
 fi
 
@@ -114,7 +115,7 @@ done
 if [ -n "$cur" ] && [ "$cur" != "$prev" ]; then
   log "deployed: $cur"
   echo "deploy_version=$cur"
-  loop_notify "$LOOP_ID" "PR #$pr merged and deployed ($cur)"
+  loop_notify "$LOOP_ID" "PR #$pr merged and deployed ($cur)" milestone "$pr_url"
   exit 0
 fi
 
@@ -123,9 +124,9 @@ if [ -n "$fallback" ] && bash -lc "cd '$REPO/$verify_cwd' && $fallback" >"$LOG_D
   cur=$(version_of)
   log "the automatic deploy was silent; the fallback shipped $cur"
   echo "deploy_version=${cur:-fallback}"
-  loop_notify "$LOOP_ID" "PR #$pr merged; deployed by the fallback"
+  loop_notify "$LOOP_ID" "PR #$pr merged; deployed by the fallback" milestone "$pr_url"
   exit 0
 fi
 log "merged but no new version appeared in ${wait_s}s and no fallback succeeded"
-loop_notify "$LOOP_ID" "PR #$pr merged but NOT deployed. A human must deploy."
+loop_notify "$LOOP_ID" "PR #$pr merged but NOT deployed. A human must deploy." alert "$pr_url"
 exit 1
