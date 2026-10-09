@@ -509,6 +509,8 @@ rm -f "$rr/notified"
 out=$(FAKE_JOURNAL=1 run_tick)
 check "the digest is a milestone"              "1" "$(grep -c '^4 notify milestone | loop-selftest-records · t · ' "$rr/notified")"
 check "the digest body carries the journal"    "1" "$(grep -c 'working copy entry' "$rr/notified")"
+# The title goes in its own argument, and the receiver shows it above the body.
+check "the digest body does not repeat the title" "0" "$(grep -c '^\*loop-selftest-records · t · ' "$rr/notified")"
 check "a delivered digest is not an alert"     "0" "$(grep -c ' alert ' "$rr/notified")"
 rm -f "$rr/notified"
 out=$(FAKE_NOTIFY_FAIL=1 FAKE_JOURNAL=1 run_tick)
