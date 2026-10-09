@@ -8,7 +8,8 @@ description: 仮説検証のループを自律で回す。1 tick で 1 判断だ
 プロダクトを仮説検証で成長させるループを、人間の承認を待たずに回す。1 回の `claude -p` 実行が
 1 tick であり、1 tick は 1 つの判断しか進めない。
 
-tick は純関数である。入力はコミット済みの record 群と、計測スクリプトが返す数字だけ。前の tick の
+tick は純関数である。入力はコミット済みの record 群（records hooks を使う repo では、runner が
+外部の記録面から書き出した record 群）と、計測スクリプトが返す数字だけ。前の tick の
 記憶は持たず、state はすべてファイルに書かれている。途中で死んだ tick の後始末も、次の tick が
 state から判断する。
 
@@ -290,6 +291,30 @@ step 0 で止まる。fail closed が既定である。
 - 外部の記録面を読んで判定を動かすかは、repo の `CLAUDE.md` の定めによる。定めが無ければ、
   state も verdict も record が決める
 
+## 記録を外部の記録面に置く（records hooks）
+
+既定では record と journal は git にあり、record が動いた tick は PR を出してマージする。record の
+更新のたびに PR とマージが要り、`cap_merges_per_day` を record だけで使い切ることがある。
+
+`loop.yaml` に `records_pull` と `records_push` を書くと、record は外部の記録面に置かれる。runner は
+tick の前に pull で `<records_dir>` に書き出し、tick の後に push で保存する。tick から見たファイルの
+形は変わらない。変わるのは次の 4 点である。
+
+- `<records_dir>` の record は git が無視する working copy になる。tick は record も journal も
+  commit しない（runner がプロンプトに `references/cycle-prompt-records-store.md` を足して伝える）
+- record だけが動いた tick は commit も PR も出さない。BUILD の PR はコードだけを持つ
+- 通知の journal は、git の diff ではなく pull した写しとの差分から取る
+- record の不変条件は repo の push スクリプトが検査する。git の diff が record を見なくなるので、
+  ここを repo が引き受けないと、terminal の record の書き換えも基準の事後変更も通る
+
+pull が失敗したら tick は走らない。push が失敗したら digest に「records NOT saved」と出し、
+working copy を退避する。working copy に symlink や hard link があれば、秘密ファイルの持ち出しを
+防ぐため runner は push を呼ばない。2 つのスクリプトは `metrics_command` と同じく origin/main の版を
+`allowed_paths` の外から実行する。契約（引数、exit code、pull が書くもの、push が読むもの）と repo 側で
+必要な設定は [`references/record-schema.md`](references/record-schema.md) の「記録の置き場所」にある。
+
+キーを書かなければ、挙動は records hooks が無かった時と同じである。
+
 ## 境界
 
 `<records_dir>/loop.yaml` が `allowed_paths` を持つ。これは allowlist であり denylist ではない。
@@ -322,8 +347,8 @@ WAIT で終わった tick は commit も push もしない。だから「ルー�
 答えられない。動いていない端末と、待っている端末が同じ見え方になる。
 
 `status_db` を設定すると、runner が tick ごとに 1 行書く。どの端末がいつ回し、rc と費用と行動が
-何だったか。**判定・指標・仮説は git のままにする。** 整合性テストが届かない場所に判断が置かれると、
-答えが 2 つある状態になる。
+何だったか。**判定・指標・仮説は record の置き場所（git、または records hooks の記録面）だけに置く。**
+不変条件の検査が届かない場所に判断が置かれると、答えが 2 つある状態になる。
 
 書くのは runner であってエージェントではない。tick は secret も `curl` も `wrangler` も持たない。
 その性質が「自分の採点表を書かせない」を成立させているので、telemetry のために崩さない。書き込みの
@@ -358,7 +383,7 @@ sandbox の結果を後から「効いたから本番に上げる」と引用す
 
 | script | 役目 |
 |---|---|
-| `scripts/loop-run.sh <repo> [label]` | 1 tick を headless で回す |
+| `scripts/loop-run.sh <repo> [label]` | 1 tick を headless で回す。records hooks があれば tick の前に pull、後に push する |
 | `scripts/loop-status.sh <repo>` | state 別の件数、劇場チェック、record 一覧 |
 | `scripts/loop-check.sh` | repo_check と surface_checks。agent の唯一の check 経路 |
 | `scripts/loop-metrics.sh` | 計測の唯一の経路。SQL はここにあり agent は識別子しか渡さない |
@@ -366,7 +391,7 @@ sandbox の結果を後から「効いたから本番に上げる」と引用す
 | `scripts/loop-push.sh` | `branch_prefix` に一致するブランチだけを push する |
 | `scripts/loop-merge.sh <pr>` | allowlist、cap、health、merge window、checks、マージ、デプロイ確認 |
 | `scripts/loop-install.sh <repo> [hour] [min]` | launchd に仕込む。`hour` は `15`（日次）か `*/3`（3 時間ごと）。`--uninstall <loop_id>` |
-| `scripts/loop-selftest.sh` | config の読み取りと allowlist 照合と state 集計を fixture で検査する |
+| `scripts/loop-selftest.sh` | config の読み取りと allowlist 照合と state 集計、records hooks を使う runner の順序を fixture で検査する |
 
 別の端末で動かす手順は [`references/another-machine.md`](references/another-machine.md) にある。
 **ループを動かす端末は常に 1 台だけにする。** 2 台が同じ main にマージすると、どちらの checks も

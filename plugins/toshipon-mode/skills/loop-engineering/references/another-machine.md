@@ -29,6 +29,7 @@ launchctl list | grep com.toshipon.loop     # 消えていること
 | デプロイ確認のコマンド | `deploy_verify` が返すこと（Cloudflare なら `wrangler` のログイン） |
 | 1Password CLI | Slack 通知を使う場合のみ |
 | wrangler の認証 | `status_db` を使う場合のみ。`npx wrangler d1 list` が通ること |
+| 記録面の鍵 | `records_pull` / `records_push` を使う場合のみ。スクリプトが読む鍵がこの端末で読めること |
 
 macOS 前提である。launchd と `osascript` を使う。
 
@@ -67,7 +68,7 @@ S=~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/skills/loop-engineeri
 export LOOP_REPO=$(git rev-parse --show-toplevel)
 
 bash $S/loop-selftest.sh                     # 設定の読み取りと境界の照合
-bash $S/loop-status.sh $LOOP_REPO            # 盤面が出ること
+bash $S/loop-status.sh $LOOP_REPO            # 盤面が出ること（records hooks があれば pull が通ること）
 bash $S/loop-metrics.sh list                 # metric が列挙されること
 bash $S/loop-check.sh                        # repo の checks が green
 ```
@@ -105,7 +106,8 @@ bash <新しい version の scripts>/loop-install.sh $LOOP_REPO "*/3" 30
 | tick ごとの digest | Slack（`slack_webhook_op` を設定した場合）、`~/Library/Logs/<loop_id>/digest.log` |
 | tick の生ログ | `~/Library/Logs/<loop_id>/tick-*.json` |
 | 盤面 | `loop-status.sh <repo>` |
-| 何をしたか | `<records_dir>/journal.md`。記録を動かした tick だけが書く |
+| 何をしたか | `<records_dir>/journal.md`。記録を動かした tick だけが書く。records hooks があれば外部の記録面 |
+| 保存できなかった記録 | records hooks の push が失敗した tick の working copy。`$STATE_DIR/records-unsaved-<stamp>/` |
 | 人間待ちの PR | GitHub の `needs-human` ラベル |
 | どの端末が回しているか | `loop-status.sh <repo>` の最後の行（`status_db` を設定した場合） |
 

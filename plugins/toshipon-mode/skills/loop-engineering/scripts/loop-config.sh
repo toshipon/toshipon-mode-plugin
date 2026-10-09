@@ -168,6 +168,61 @@ loop_metrics_script() {
   esac
 }
 
+# loop_repo_script <repo> <policy-file> <key> <dest>
+# Copies origin/main's version of the repo script that <key> names to <dest>, or prints why it must
+# not run. The rule is metrics_command's: the path comes from origin/main's loop.yaml, the copy that
+# runs is origin/main's, and a script inside allowed_paths is refused, because a loop that can edit
+# the script that saves its records can rewrite what it is judged by. loop-metrics-command.sh keeps
+# its own copy of these lines on purpose: its sha is the query_id.
+loop_repo_script() {
+  local repo="$1" policy="$2" key="$3" dest="$4" path line allowed=()
+  path=$(loop_cfg "$policy" "$key")
+  case "$path" in ""|/*|*..*) echo "$key must be a path inside the repo"; return 1 ;; esac
+  [[ "$path" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "$key must be a path inside the repo"; return 1; }
+  while IFS= read -r line; do allowed+=("$line"); done < <(loop_cfg_list "$policy" allowed_paths)
+  if loop_path_allowed "$path" ${allowed[@]+"${allowed[@]}"}; then
+    echo "$key must be outside allowed_paths"
+    return 1
+  fi
+  git -C "$repo" show "origin/main:$path" >"$dest" 2>/dev/null \
+    || { echo "$key is not readable from origin/main"; return 1; }
+}
+
+# loop_records_hooks <policy-file> -> "on" when the records live in an external store, "off" when
+# they live in git; prints a reason and fails when only one of the two hooks is set. A pull without
+# a push loses every edit the tick makes, and a push without a pull saves over a store the tick
+# never read.
+loop_records_hooks() {
+  local pull push
+  pull=$(loop_cfg "$1" records_pull)
+  push=$(loop_cfg "$1" records_push)
+  if [ -z "$pull" ] && [ -z "$push" ]; then echo off; return 0; fi
+  if [ -z "$pull" ] || [ -z "$push" ]; then
+    echo "records_pull and records_push must be set together"
+    return 1
+  fi
+  echo on
+}
+
+# loop_records_odd <records-dir> -> up to 5 paths that are neither a directory nor a plain file with
+# one link, space separated; empty when the dir is safe. The agent can edit this dir, and the push
+# reads it and sends it off the machine, so a symlink or hard link to a secret file would carry the
+# secret out. The pull would also write through a planted symlink into whatever it points at.
+loop_records_odd() {
+  find "$1" \( -type l -o \( ! -type f ! -type d \) -o \( -type f -links +1 \) \) -print 2>/dev/null \
+    | head -5 | tr '\n' ' ' | sed 's/ *$//'
+}
+
+# loop_journal_added <old journal> <new journal> -> the lines the tick added. With records hooks
+# the journal is a working copy, so the entry is the diff against what records_pull wrote, not a
+# git diff. The filter is the one the git path uses.
+loop_journal_added() {
+  local old="$1"
+  [ -f "$old" ] || old=/dev/null
+  [ -f "$2" ] || return 0
+  diff -u "$old" "$2" 2>/dev/null | sed -n 's/^+\([^+]\)/\1/p'
+}
+
 # loop_deploy_version <loop.yaml> -> the version deploy_verify reports now; empty when unknown.
 # The gate reads it around a merge, and the runner reads it before a tick so that a baseline can
 # name the version it measured. The agent never runs deploy_verify itself: the commands it wraps
@@ -217,7 +272,8 @@ loop_state() {
 
 # --- 稼働状況（D1）-----------------------------------------------------------------
 # What goes here is telemetry, never a record: which host ran which tick, and what it cost.
-# Verdicts, metrics and hypotheses stay in git, where the integrity tests can reach them. A second
+# Verdicts, metrics and hypotheses stay where the records live (git, or the store records_push
+# validates), where the integrity checks can reach them. A second
 # place that holds judgements is how a repo ends up with two answers and no way to pick one.
 #
 # The runner writes it, never the agent. The tick has no secret, no curl and no wrangler, and that
