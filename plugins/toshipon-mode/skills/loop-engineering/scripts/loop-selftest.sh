@@ -149,7 +149,7 @@ check_lock "a deep new parent is created"    "held" "$fixture/locks/b/c/d/cycle.
 # An unsubstituted placeholder does not fail loudly. The tick just receives the literal text and
 # silently cannot measure, check, push or merge, and the journal reads like a quiet cycle.
 prompt="$here/../references/cycle-prompt.md"
-in_prompt=$(grep -o '{{[A-Z_]*}}' "$prompt" | sort -u)
+in_prompt=$(cat "$prompt" "$here/../references/cycle-prompt-records-store.md" | grep -o '{{[A-Z_]*}}' | sort -u)
 in_runner=$(grep -o 's|{{[A-Z_]*}}' "$here/loop-run.sh" | sed 's/^s|//' | sort -u)
 check "every prompt placeholder is substituted" "" "$(comm -23 <(echo "$in_prompt") <(echo "$in_runner") | tr '\n' ' ' | sed 's/ *$//')"
 check "the runner substitutes nothing unused" "" "$(comm -13 <(echo "$in_prompt") <(echo "$in_runner") | tr '\n' ' ' | sed 's/ *$//')"
@@ -300,6 +300,164 @@ check "command that exits non-zero is unreadable" "metrics_command did not retur
 cmd_git update-ref -d refs/remotes/origin/main
 check "command without origin/main cannot measure" "loop.yaml is not readable from origin/main" \
   "$(cmd_metrics metric count:calls 2026-10-01 2026-10-03 | jq -r .error)"
+
+# Records in an external store. These drive loop-run.sh end to end against a local origin, with
+# claude, gh and osascript faked, because what matters is the order the runner does things in: no
+# tick without a pull, a push after every tick that ran, and a digest that says when the push failed.
+check "one hook alone is refused" "records_pull and records_push must be set together" \
+  "$(printf 'records_pull: a.sh\n' >"$fixture/one.yaml"; loop_records_hooks "$fixture/one.yaml")"
+check "no hooks means git"        "off" "$(loop_records_hooks "$fixture/loop.yaml")"
+printf 'a\n' >"$fixture/j-old"; printf 'a\n- **要約:** x\n' >"$fixture/j-new"
+check "journal entry is the working-copy diff" "- **要約:** x" "$(loop_journal_added "$fixture/j-old" "$fixture/j-new")"
+check "a journal the pull did not write is all new" "a" "$(loop_journal_added "$fixture/absent" "$fixture/j-old")"
+
+rr="$fixture/run"
+mkdir -p "$rr/fakebin" "$rr/store" "$rr/state"
+cat >"$rr/fakebin/claude" <<'SH'
+#!/bin/bash
+printf '%s' "$2" >"$FAKE_DIR/prompt"
+touch "$FAKE_DIR/claude-ran"
+[ -n "${FAKE_JOURNAL:-}" ] && printf '\n## 2026-10-08 t\n- **要約:** working copy entry\n- **行動:** EVALUATE PH-0001\n' >>product/journal.md
+[ -n "${FAKE_SYMLINK:-}" ] && rm -f product/journal.md && ln -s "$FAKE_DIR/secret" product/journal.md
+[ -n "${FAKE_HARDLINK:-}" ] && ln "$FAKE_DIR/secret" product/hypotheses/PH-0002.yaml
+echo '{"total_cost_usd": 0.5}'
+exit "${FAKE_RC:-0}"
+SH
+printf '#!/bin/bash\nexit 0\n' >"$rr/fakebin/gh"
+printf '#!/bin/bash\nexit 0\n' >"$rr/fakebin/osascript"
+chmod +x "$rr/fakebin"/*
+printf 'id: PH-0001\nstate: measuring\npriority: 1\nmetric: count:x\n' >"$rr/store/PH-0001.yaml"
+printf '# journal\n\n## 2026-10-07 old\n- **要約:** pulled entry\n' >"$rr/store/journal.md"
+
+git init -q --bare "$rr/origin.git"
+git clone -q "$rr/origin.git" "$rr/main" 2>/dev/null
+mkdir -p "$rr/main/product" "$rr/main/scripts" "$rr/main/app"
+cat >"$rr/main/scripts/records.sh" <<'SH'
+#!/bin/bash
+case "$1" in
+  pull)
+    [ -n "${FAKE_PULL_FAIL:-}" ] && exit 7
+    mkdir -p "$3/hypotheses"
+    cp "$FAKE_DIR/store/PH-0001.yaml" "$3/hypotheses/"
+    cp "$FAKE_DIR/store/journal.md" "$3/journal.md"
+    ;;
+  push)
+    echo "$# $1 $(basename "$4")" >>"$FAKE_DIR/pushes"
+    [ -n "${FAKE_PUSH_FAIL:-}" ] && exit 5
+    diff "$4/journal.md" "$3/journal.md" >"$FAKE_DIR/pushed.diff"
+    exit 0
+    ;;
+esac
+SH
+cp "$rr/main/scripts/records.sh" "$rr/main/app/records.sh"
+printf 'product/hypotheses/\nproduct/measurements/\nproduct/journal.md\n' >"$rr/main/.gitignore"
+run_git() { git -C "$rr/main" -c user.name=selftest -c user.email=selftest@example.com "$@"; }
+run_yaml() {  # run_yaml <extra loop.yaml lines> -> publishes loop.yaml on origin/main
+  printf 'approved_by: selftest\napproved_at: 2026-10-08\nloop_id: loop-selftest-records\nrecords_dir: product\nbranch_prefix: loop/\nallowed_paths:\n  - app/\n%s' "$1" >"$rr/main/product/loop.yaml"
+  run_git add -A && run_git commit -qm "fixture: ${1:-no hooks}" --allow-empty && run_git push -q origin HEAD:main 2>/dev/null
+}
+run_tick() {  # run_tick -> the runner's stdout; leaves claude-ran, pushes, digest.log in $rr
+  rm -f "$rr/claude-ran" "$rr/pushes" "$rr/pushed.diff" "$rr/state/digest.log" "$rr/state/notify.log" \
+    "$rr"/state/state-*.txt
+  FAKE_DIR="$rr" LOOP_PATH="$rr/fakebin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+  LOOP_STATE_DIR="$rr/state" LOOP_LOG_DIR="$rr/state" LOOP_BIN_DIR="$rr/state/bin" \
+  LOOP_WORKTREE="$rr/wt" LOOP_SHARED_LOCK="$rr/lock" LOOP_SLACK_WEBHOOK="" \
+    /bin/bash "$here/loop-run.sh" "$rr/main" t 2>&1
+  echo "rc=$?"
+}
+ran() { [ -e "$rr/claude-ran" ] && echo yes || echo no; }
+pushed() { [ -e "$rr/pushes" ] && cat "$rr/pushes" || echo none; }
+hooks=$'records_pull: scripts/records.sh\nrecords_push: scripts/records.sh\n'
+
+run_git checkout -q -b main
+run_yaml ""
+out=$(run_tick)
+check "hooks absent: the tick runs"             "yes"  "$(ran)"
+check "hooks absent: nothing is pulled or pushed" "none" "$(pushed)"
+check "hooks absent: no pull log"               "0"    "$(ls "$rr/state" | grep -c '^records-pull-')"
+check "hooks absent: the prompt has no store section" "0" "$(grep -c '記録は外部の記録面にある' "$rr/prompt")"
+check "hooks absent: the digest reads git"      "1"    "$(grep -c '記録を動かさなかった\|tick moved nothing' "$rr/state/digest.log")"
+
+run_yaml $'records_pull: scripts/absent.sh\nrecords_push: scripts/records.sh\n'
+out=$(run_tick)
+check "pull missing on origin/main is refused" "tick refused: records_pull is not readable from origin/main" \
+  "$(echo "$out" | sed -n 's/^\[[^]]*\] //p' | tail -1)"
+check "a refused tick does not run"            "no"   "$(ran)"
+run_yaml $'records_pull: app/records.sh\nrecords_push: scripts/records.sh\n'
+out=$(run_tick)
+check "pull inside allowed_paths is refused"   "tick refused: records_pull must be outside allowed_paths" \
+  "$(echo "$out" | sed -n 's/^\[[^]]*\] //p' | tail -1)"
+run_yaml $'records_pull: scripts/records.sh\nrecords_push: app/records.sh\n'
+out=$(run_tick)
+check "push inside allowed_paths is refused"   "tick refused: records_push must be outside allowed_paths" \
+  "$(echo "$out" | sed -n 's/^\[[^]]*\] //p' | tail -1)"
+check "a refused tick pushes nothing"          "none" "$(pushed)"
+
+run_yaml "$hooks"
+out=$(FAKE_PULL_FAIL=1 run_tick)
+check "a failed pull does not run the tick"    "no"   "$(ran)"
+check "a failed pull exits non-zero"           "rc=1" "$(echo "$out" | tail -1)"
+check "a failed pull is logged once"           "1"    "$(echo "$out" | grep -c 'tick not run: records_pull exited 7')"
+check "a failed pull is notified"              "1"    "$(grep -c 'records_pull exited 7' "$rr/state/notify.log")"
+check "a failed pull pushes nothing"           "none" "$(pushed)"
+
+out=$(FAKE_JOURNAL=1 run_tick)
+check "hooks: the tick runs after the pull"    "yes"  "$(ran)"
+check "hooks: the tick sees the pulled records" "1"   "$(grep -c '^PH-0001  measuring' "$rr"/state/state-*.txt)"
+check "hooks: the prompt has the store section" "1"   "$(grep -c '記録は外部の記録面にある' "$rr/prompt")"
+check "hooks: push gets verb, worktree, records, pulled copy" "4 push pulled" "$(pushed)"
+check "hooks: the journal digest is the working-copy diff" "1" "$(grep -c '^- \*\*要約:\*\* working copy entry' "$rr/state/digest.log")"
+check "hooks: the pulled entry is not in the digest" "0" "$(grep -c 'pulled entry' "$rr/state/digest.log")"
+check "hooks: the push saw the new entry"      "1"    "$(grep -c 'working copy entry' "$rr/pushed.diff")"
+check "hooks: records are not committed"       ""     "$(git -C "$rr/wt" status --porcelain)"
+
+out=$(FAKE_JOURNAL=1 FAKE_RC=1 run_tick)
+check "a failed agent run is still pushed"     "4 push pulled" "$(pushed)"
+check "a failed agent run keeps its rc"        "rc=1" "$(echo "$out" | tail -1)"
+
+out=$(FAKE_JOURNAL=1 FAKE_PUSH_FAIL=1 run_tick)
+check "a failed push says NOT saved in the digest" "1" "$(grep -c 'records NOT saved' "$rr/state/digest.log")"
+check "a failed push is notified"              "1"    "$(grep -c 'records NOT saved: records_push exited 5' "$rr/state/notify.log")"
+check "a failed push keeps the working copy"   "1"    "$(grep -c 'working copy entry' "$rr"/state/records-unsaved-*/journal.md | tail -1 | sed 's/.*://')"
+check "a failed push does not fail the tick"   "rc=0" "$(echo "$out" | tail -1)"
+
+# The push sends files the agent could edit off the machine. A record swapped for a link to a secret
+# would carry the secret out, through the push or through the digest the runner posts.
+printf '# journal\n- **要約:** SECRET-TOKEN\n' >"$rr/secret"
+out=$(FAKE_SYMLINK=1 run_tick)
+check "a symlinked record is not pushed"       "none" "$(pushed)"
+check "a symlinked record says NOT saved"      "1"    "$(grep -c 'records NOT saved' "$rr/state/digest.log")"
+check "a symlinked record is notified"         "1"    "$(grep -c 'not a plain file: .*product/journal.md' "$rr/state/notify.log")"
+check "a symlinked record never reaches the digest" "0" "$(cat "$rr/state/digest.log" "$rr/state/notify.log" | grep -c SECRET-TOKEN)"
+out=$(run_tick)
+check "a symlink left behind stops the next tick" "no" "$(ran)"
+check "a symlink left behind is not pulled through" "1" "$(grep -c SECRET-TOKEN "$rr/secret")"
+rm -f "$rr/wt/product/journal.md"
+out=$(FAKE_HARDLINK=1 run_tick)
+check "a hard-linked record is not pushed"     "none" "$(pushed)"
+check "a hard-linked record says NOT saved"    "1"    "$(grep -c 'records NOT saved' "$rr/state/digest.log")"
+rm -f "$rr/wt/product/hypotheses/PH-0002.yaml"
+out=$(run_tick)
+check "a clean records dir is pushed again"    "4 push pulled" "$(pushed)"
+
+printf 'product/hypotheses/\n' >"$rr/main/.gitignore"
+run_yaml "$hooks"
+out=$(run_tick)
+check "records git can see refuse the tick"    "no"   "$(ran)"
+check "records git can see are named"          "1"    "$(echo "$out" | grep -c 'git does not ignore: ?? product/journal.md')"
+printf 'product/hypotheses/\nproduct/measurements/\nproduct/journal.md\n' >"$rr/main/.gitignore"
+touch "$rr/main/product/paused.flag"
+run_yaml "$hooks"
+out=$(run_tick)
+check "a paused tick does not run"             "no"   "$(ran)"
+check "a paused tick pushes nothing"           "none" "$(pushed)"
+
+out=$(FAKE_DIR="$rr" LOOP_PATH="$rr/fakebin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+  LOOP_STATE_DIR="$rr/state" LOOP_LOG_DIR="$rr/state" LOOP_BIN_DIR="$rr/state/bin" \
+  /bin/bash "$here/loop-status.sh" "$rr/main" 2>&1)
+check "status reads the store through the pull" "PH-0001  measuring  priority=1  metric=count:x" \
+  "$(echo "$out" | grep '^PH-0001')"
+check "status keeps git's paused.flag"          "1" "$(echo "$out" | grep -c '^PAUSED:')"
 
 echo
 if [ "$fails" -eq 0 ]; then

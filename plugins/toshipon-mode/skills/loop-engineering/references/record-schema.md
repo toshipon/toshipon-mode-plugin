@@ -221,6 +221,103 @@ backend ごとに reader のファイルが分かれているのは、`query_id`
 である。未知の `metrics_backend` は tick を拒否する。黙って `d1` に倒すと、綴りを間違えた repo が
 「読めない」を返し続ける。
 
+### 記録の置き場所（任意）
+
+書かなければ record と journal は git にあり、ここまでの説明どおりに動く。`records_pull` と
+`records_push` を書くと、record は外部の記録面にあり、`<records_dir>` はその working copy になる。
+
+```yaml
+records_pull: scripts/product/records-pull.sh
+records_push: scripts/product/records-push.sh   # 同じスクリプトを両方に書いてもよい（第 1 引数で分ける）
+```
+
+2 つは対で書く。片方だけなら tick を拒否する。pull だけなら tick の編集が失われ、push だけなら
+読んでいない記録面に上書きする。
+
+スクリプトは `metrics_command` と同じ規則で扱う。
+
+1. キーは origin/main の `loop.yaml` から読み、実行するのは origin/main の版である。runner は tick の
+   前に両方を worktree の外へ取り出し、どちらかが取り出せなければ tick を始めない
+2. `allowed_paths` の中にあれば拒否する。自分の記録を保存するスクリプトを書き換えられるループは、
+   自分の採点表を書ける
+3. repo のルート（tick では loop の worktree）を cwd にして `/bin/bash` で実行する。鍵が要るなら
+   スクリプトが自分で読む。plugin は渡さない
+
+契約はこれだけである。
+
+```
+<records_pull> pull <repo> <records-dir>
+<records_push> push <repo> <records-dir> <pulled-copy-dir>
+```
+
+| 引数 | 意味 |
+|---|---|
+| `<repo>` | 絶対パス。tick では loop の worktree、`loop-status.sh` では渡された repo |
+| `<records-dir>` | 絶対パス。存在するディレクトリ。tick では `<repo>/<records_dir>`、`loop-status.sh` では一時ディレクトリ |
+| `<pulled-copy-dir>` | 絶対パス。pull が書いた直後の `<records-dir>` の写し。push はこれと比べて変わったものを知る |
+
+**pull** は `<records-dir>` に、git にあった時と同じ形のファイルを書く。
+
+- `hypotheses/PH-NNNN.yaml` を全件（この schema の 1 節の形）
+- `measurements/PH-NNNN.json`（判定済みの record の証拠）
+- `journal.md` に直近のエントリ。tick は末尾 10 エントリを読むので、それ以上あればよい
+- 記録面から消えた record のファイルを残さない。`<records-dir>` の record は pull が持ち主である
+- `loop.yaml`、`metrics.yaml`、`paused.flag` には触れない。これらは git にある
+
+**push** は `<records-dir>` と `<pulled-copy-dir>` を比べ、変わった record と新しい journal エントリを
+記録面に書く。journal のエントリは step 6 の書式のまま末尾に追記されている。
+
+**どちらのスクリプトも symlink を辿らず、通常ファイルだけを読み書きする。** `<records-dir>` は tick が
+編集できる場所で、push はその中身を tick の外から読んで外部へ送る。record を秘密ファイルへの symlink や
+hard link に差し替えれば、その中身が記録面に持ち出される。pull が symlink を辿って書けば、指す先の
+ファイルを上書きする。push はファイルを開く前に通常ファイルであることを確かめ（`[ -f ] && [ ! -L ]`、
+または `O_NOFOLLOW`）、pull は既存のパスに書き込まず置き換える。
+
+runner も同じ検査を持つ。`<records-dir>` の下にディレクトリでも、link 数 1 の通常ファイルでもないもの
+（symlink、hard link、FIFO など）があれば、次のように止まる。
+
+- tick の後なら push を呼ばずに失敗として扱う（下の表の push 失敗と同じ通知と退避）。digest も
+  working copy の journal を読まない。digest は Slack に出るからである
+- tick の前なら pull を呼ばずに tick を走らせない。前の tick が残したものなので、人間が取り除くまで
+  止まり続ける
+
+**exit code** はどちらも 0 が成功、それ以外は失敗である。
+
+| | 失敗したとき |
+|---|---|
+| pull | tick を走らせない。runner はログに 1 行書き、通知して非 0 で終わる。push も走らない |
+| push | runner はログと通知に「records NOT saved」と書き、digest の先頭にも出す。通常ファイル以外を見つけて push を呼ばなかったときも同じ扱いにする。working copy は `$STATE_DIR/records-unsaved-<stamp>/` に写して残す。次の pull が working copy を上書きするからである。tick の rc は agent の rc のまま |
+
+push は agent が非 0 で終わった tick の後にも走る。途中で死んだ tick も record を動かしているかも
+しれないからである。拒否された tick、lock で skip した tick、`paused.flag` で止まった tick では
+走らない。
+
+repo の側で必要なことが 4 つある。
+
+1. **pull が書くファイルを `.gitignore` に入れる。** runner は pull の後に
+   `git status --porcelain -- <records_dir>` を見て、何か出れば tick を走らせない。git に見える
+   record は次の commit に乗り、記録面が検証していない record を merge gate が通すことになる
+2. **`allowed_paths` から record の path を外す。** BUILD の PR はコードだけを持つ。record を含む PR は
+   gate が拒否するので、誤って `git add -f` した record も main に入らない。`paused.flag` を GUARD に
+   置かせるなら `<records_dir>/paused.flag` だけを残す
+3. **record の不変条件を push が検査する。** git の diff はもう record を見ていない。1 節の不変条件は
+   すべて push の仕事になり、特に diff でしか検査できなかった次の 2 つは push が pulled copy と
+   比べて検査する
+   - terminal（`validated` `invalidated` `inconclusive` `abandoned`）の record を変えていない（1）
+   - `drafted` を出た record の `falsification` と `success` を変えていない（3）
+
+   残り（2、4〜13: `claims` と `not_evidence_for`、metric が `metrics.yaml` にあること、性能語の
+   禁止、`query_id` の一致と `deploy_version` の相違、`building` 以降の `power.decidable`、
+   `change_paths` ⊂ `allowed_paths`、窓とデプロイ日の前後、同じ metric の `measuring` は 1 本、
+   `cap_concurrent_measuring`、`cap_new_hypotheses_per_7d`、ID namespace）も保存の前に検査する。
+   1 つでも破れたら何も書かずに非 0 で終わる。一部だけ保存すると、記録面と journal が食い違う
+4. **record のテストは record が無くても通る形にする。** `repo_check` は CI でも gate でも走る。CI には
+   record が無く、gate の worktree には working copy がある。検査の本体は push にあり、テストは
+   無ければ skip する
+
+`loop-merge.sh` は record を読まないので変わらない。`loop-status.sh` は records hooks があると
+origin/main の `records_pull` で一時ディレクトリに pull し、そこから盤面を作る。
+
 ## 3. `<records_dir>/metrics.yaml`
 
 人間だけが書く。`allowed_paths` に入れない。ループはここにある metric しか使えない。
