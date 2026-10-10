@@ -237,9 +237,8 @@ brief=$(echo "$journal" | awk '
   { keep = 0 }' | head -c 2000)
 # The digest is what a person reads on their phone: what the tick decided, and whether anything
 # needs them. A tick that moved nothing writes no journal, so say that rather than showing a gap.
-digest="*$LOOP_ID · $label · $stamp*
-
-${unsaved:+$unsaved
+digest_title="$LOOP_ID · $label · $stamp"
+digest="${unsaved:+$unsaved
 
 }${brief:-_この tick は記録を動かさなかった（journal なし）_}
 
@@ -250,7 +249,10 @@ osascript -e "display notification \"rc=$rc cost=\$$cost\" with title \"$LOOP_ID
 echo "[$(date -u +%FT%TZ)] $LOOP_ID ($label): rc=$rc cost=\$$cost" >>"$LOG_DIR/notify.log"
 # The digest is routine news; the stops and failures above already went out as alerts.
 pr_url=$(echo "$prs" | sed -n 's/.*  \(https:[^ ]*\)$/\1/p' | head -1)
-loop_deliver milestone "$LOOP_ID · $label · $stamp" "$digest" "$pr_url" || loop_slack "$digest"
+# notify_command gets the title as its own argument; the webhook has no title, so it goes on top.
+loop_deliver milestone "$digest_title" "$digest" "$pr_url" || loop_slack "*$digest_title*
+
+$digest"
 {
   echo "=== $LOOP_ID $label $stamp  rc=$rc cost=\$$cost"
   [ -z "$unsaved" ] || echo "$unsaved"
