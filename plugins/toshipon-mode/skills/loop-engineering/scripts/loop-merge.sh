@@ -68,6 +68,17 @@ fi
 
 head=$(gh pr view "$pr" --json headRefName -q .headRefName)
 git checkout -q "$head" && git pull -q --ff-only
+# A FIX PR has no record to judge it, so its commits must show the defect and the repair before
+# origin/main is merged in and the first-parent history stops being the PR's own.
+case "$head" in
+  "${BRANCH_PREFIX}fix-"*)
+    if ! why=$(loop_fix_proof "$policy" "$(git merge-base origin/main HEAD)" "$head" "$LOG_DIR/fix-$pr.log"); then
+      log "fix proof failed: $why (see $LOG_DIR/fix-$pr.log)"
+      gh pr comment "$pr" --body "loop-merge: fix proof failed: $why" >/dev/null 2>&1 || true
+      exit 1
+    fi
+    log "fix proof holds" ;;
+esac
 if ! git merge --no-edit -q origin/main; then
   git merge --abort
   log "conflict with origin/main"
