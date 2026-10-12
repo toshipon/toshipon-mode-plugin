@@ -189,6 +189,47 @@ loop_run_checks() {
   return 0
 }
 
+# loop_fix_proof <policy> <base> <branch> <log>
+# A FIX PR carries no record and no metric; its commits are the evidence. The first commit holds only
+# the test that reproduces the defect, the commits after it change something else, and fix_red_check
+# run on the first commit's files fails at that commit and passes at the branch head. The command runs
+# in fix_red_check_cwd (default the repo root), and the paths it is given are relative to that directory. Running the
+# command at both ends is what stops a test that was always red, or one rewritten until it is green.
+# Prints why the proof does not hold and returns 1. Leaves <branch> checked out. cwd must be $REPO.
+loop_fix_proof() {
+  local policy="$1" base="$2" branch="$3" logf="$4" cmd cwd red f args="" tests=() fixed=()
+  cmd=$(loop_cfg "$policy" fix_red_check)
+  cwd=$(loop_cfg "$policy" fix_red_check_cwd .)
+  [ -n "$cmd" ] || { echo "fix_red_check is not set on origin/main"; return 1; }
+  red=$(git rev-list --reverse --first-parent "$base..$branch" | head -1)
+  if [ -z "$red" ] || [ "$red" = "$(git rev-parse "$branch")" ]; then
+    echo "a fix needs the failing test and the fix as separate commits"; return 1
+  fi
+  while IFS= read -r f; do tests+=("$f"); done < <(git diff --name-only "$base" "$red")
+  while IFS= read -r f; do fixed+=("$f"); done < <(git diff --name-only "$red" "$branch")
+  [ "${#tests[@]}" -gt 0 ] || { echo "the first commit changes nothing"; return 1; }
+  for f in ${fixed[@]+"${fixed[@]}"}; do
+    printf '%s\n' "${tests[@]}" | grep -qxF -- "$f" && { echo "the fix edits the test it is judged by: $f"; return 1; }
+  done
+  for f in "${tests[@]}"; do
+    if [ "$cwd" != . ]; then
+      [ "${f#"$cwd"/}" != "$f" ] || { echo "a test is outside fix_red_check_cwd: $f"; return 1; }
+      f="${f#"$cwd"/}"
+    fi
+    args+=" $(printf '%q' "$f")"
+  done
+  git checkout -q --detach "$red" || { echo "cannot check out the failing-test commit"; return 1; }
+  echo "[fix] $red, expecting failure: $cmd$args" >>"$logf"
+  if bash -lc "cd '$REPO/$cwd' && $cmd$args" >>"$logf" 2>&1; then
+    git checkout -q "$branch"
+    echo "the test passes before the fix, so it does not reproduce the defect"; return 1
+  fi
+  git checkout -q "$branch" || { echo "cannot return to $branch"; return 1; }
+  echo "[fix] $branch, expecting success: $cmd$args" >>"$logf"
+  bash -lc "cd '$REPO/$cwd' && $cmd$args" >>"$logf" 2>&1 || { echo "the test still fails after the fix"; return 1; }
+  return 0
+}
+
 # loop_metrics_script <metrics_backend> -> the reader the tick is given as loop-metrics.sh.
 # Each backend is its own file so that its sha, which is the query_id, changes only when that
 # backend's scoring changes.

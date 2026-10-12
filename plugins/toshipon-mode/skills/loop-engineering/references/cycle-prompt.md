@@ -24,7 +24,7 @@ state を自分で数え直して一致を確認する。一致しなければ r
 ## 1. 行動を 1 つ選ぶ
 
 SKILL.md の決定表を上から評価し、最初に一致した 1 行だけを実行する。GUARD / RECONCILE /
-ADVANCE / EVALUATE / BUILD / INTERVIEW / WAIT のどれか 1 つである。2 つ実行しない。
+ADVANCE / EVALUATE / BUILD / FIX / INTERVIEW / WAIT のどれか 1 つである。2 つ実行しない。
 
 選んだ行動の名前と、なぜその行が最初に一致したかを journal に書く。
 
@@ -53,13 +53,17 @@ record を `drafted` のまま残し、journal の `要対応` に「runner が 
 として書き、その仮説は作らない。metrics_file と loop.yaml を自分で編集しない。編集した PR は
 merge gate が拒否する。
 
-## 3. 実装（BUILD の時だけ）
+## 3. 実装（BUILD と FIX の時だけ）
 
 `toshipon-mode` skill を Skill tool で起動し、Feature playbook に入る。触れるのは `loop.yaml` の
 `allowed_paths` の中だけである。
 
 `change.paths` に書いた path 以外を触ったら merge gate が PR を拒否する。触る範囲が変わったら
 record の `change.paths` を先に直す。
+
+FIX は SKILL.md の FIX の手順に従う。ブランチ名は `<branch_prefix>fix-<slug>`、1 つ目の commit はテストだけ、
+そのテストを `loop.yaml` の `fix_red_check` に渡して落ちることを確かめてから commit する。2 つ目以降の
+commit は 1 つ目のファイルに触れない。merge gate が両端でテストを走らせ、red と green を自分で確かめる。
 
 ## 4. Ship
 
@@ -68,7 +72,8 @@ record の `change.paths` を先に直す。
 2. commit する。構造変更と動作変更を別の commit にする。
 3. `{{PUSH}}` で push する。これが唯一の push 経路である。`git push` は使えない。
 4. `gh pr create` で main に対して PR を開く。body に record id、metric、baseline の値と窓、
-   falsification、success を書く。
+   falsification、success を書く。FIX なら defect の slug、観測した入力と結果、期待した結果、
+   どの metric も動かさない理由を書く。
 5. journal のエントリを step 6 の書式で書き、同じ PR に入れる。commit は step 6 の後。
 6. `{{MERGE}} <pr>` を実行する。これが唯一の merge / deploy 経路である。
 
@@ -76,7 +81,7 @@ record の `change.paths` を先に直す。
      `ship.deploy_version` に書く。record を `shipped` にする
    - exit 3 = 人間のレビューが必要。record は `building` のまま残す
    - exit 4 = merge window の外。record は `building` で残し、次の tick に任せる
-   - exit 1 = checks かデプロイが失敗した。原因を journal に書いて止まる
+   - exit 1 = checks か FIX の証明かデプロイが失敗した。原因を journal に書いて止まる
 
 ## 5. 外部の記録面と観測
 
@@ -110,6 +115,8 @@ record の state が動いたか、コードを変えたときだけ `{{RECORDS_
 - `- **Guard:**` health check と paused.flag の状態
 - `- **Did:**` 何をしたか。判断の根拠を含む
 - `- **Records:**` state が動いた record の id と遷移（`PH-0001 drafted → building`）
+- `- **Defects:**` INTERVIEW と FIX で見つけた defect。1 行 1 件、SKILL.md の INTERVIEW にある形で書く。
+  FIX で直したものは `<slug>: fixed in #<pr>` と書く。無ければ bullet ごと省く
 - `- **Evidence:**` 計測の生の値と、どのコマンドで読んだか
 - `- **Not shipped:**` main に届かなかったもの
 - `- **Theatre check:**` terminal record のうち inconclusive の比率。50% を超えたら `要対応`

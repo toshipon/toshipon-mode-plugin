@@ -528,6 +528,49 @@ run_yaml "${hooks}notify_command: scripts/absent.sh
 "
 check "notify_command missing on origin/main falls back" "1" "$(deliver alert t body)"
 
+# A FIX PR proves itself in its commits: the first adds a test that fails, the rest make it pass
+# without touching it. The proof runs fix_red_check at both commits, so a fake red cannot pass.
+fx="$fixture/fix"
+mkdir -p "$fx" && git -C "$fx" init -q && git -C "$fx" config user.email t@t && git -C "$fx" config user.name t
+echo broken >"$fx/code.txt" && git -C "$fx" add -A && git -C "$fx" commit -qm base
+fix_base=$(git -C "$fx" rev-parse HEAD)
+printf 'fix_red_check: sh\n' >"$fixture/fix.yaml"
+fix_branch() {  # fix_branch <name> <test body> <code> [test body after the fix]
+  git -C "$fx" checkout -q -b "$1" "$fix_base"
+  echo "$2" >"$fx/t.sh" && git -C "$fx" add -A && git -C "$fx" commit -qm red
+  [ -n "$3" ] && { echo "$3" >"$fx/code.txt"; [ -n "${4:-}" ] && echo "$4" >"$fx/t.sh"; git -C "$fx" add -A && git -C "$fx" commit -qm fix; }
+  git -C "$fx" checkout -q "$1"
+}
+fix_proof() {  # fix_proof <policy> <branch> -> "ok" or the reason
+  local out
+  out=$(cd "$fx" && REPO="$fx" loop_fix_proof "$1" "$fix_base" "$2" "$fixture/fix.log") && echo ok || echo "$out"
+}
+fix_branch good 'grep -q fixed code.txt' fixed
+check "a red test made green by the fix is a proof" "ok" "$(fix_proof "$fixture/fix.yaml" good)"
+check "the proof leaves the branch checked out" "good" "$(git -C "$fx" symbolic-ref --short HEAD)"
+fix_branch single 'grep -q broken code.txt' ''
+check "a fix in one commit is not a proof" "a fix needs the failing test and the fix as separate commits" \
+  "$(fix_proof "$fixture/fix.yaml" single)"
+fix_branch passing 'true' fixed
+check "a test that passes before the fix is not a proof" \
+  "the test passes before the fix, so it does not reproduce the defect" "$(fix_proof "$fixture/fix.yaml" passing)"
+fix_branch edited 'false' fixed 'true'
+check "a fix that rewrites its own test is not a proof" "the fix edits the test it is judged by: t.sh" \
+  "$(fix_proof "$fixture/fix.yaml" edited)"
+fix_branch still 'grep -q fixed code.txt' 'not yet'
+check "a fix that leaves the test red is not a proof" "the test still fails after the fix" \
+  "$(fix_proof "$fixture/fix.yaml" still)"
+mkdir -p "$fx/sub"
+git -C "$fx" checkout -q -b nested "$fix_base"
+echo 'grep -q fixed ../code.txt' >"$fx/sub/t.sh" && git -C "$fx" add -A && git -C "$fx" commit -qm red
+echo fixed >"$fx/code.txt" && git -C "$fx" add -A && git -C "$fx" commit -qm fix
+printf 'fix_red_check: sh\nfix_red_check_cwd: sub\n' >"$fixture/fix-cwd.yaml"
+check "fix_red_check_cwd runs there with paths relative to it" "ok" "$(fix_proof "$fixture/fix-cwd.yaml" nested)"
+check "a test outside fix_red_check_cwd is not a proof" "a test is outside fix_red_check_cwd: t.sh" \
+  "$(fix_proof "$fixture/fix-cwd.yaml" good)"
+check "no fix_red_check means no FIX" "fix_red_check is not set on origin/main" \
+  "$(fix_proof "$fixture/loop.yaml" good)"
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "loop-selftest: all checks passed under $BASH_VERSION"
