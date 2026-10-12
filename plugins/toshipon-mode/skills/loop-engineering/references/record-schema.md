@@ -147,11 +147,24 @@ cap_merges_per_day: 3
 cap_tick_budget_usd: 8
 cap_min_sample: 200
 
+# FIX の証明に使うテストのコマンド。merge gate が FIX PR の 1 つ目の commit のファイルを後ろに付けて走らせる。
+# 省くと FIX は動かない
+fix_red_check: npx vitest run
+fix_red_check_cwd: cloud/paper-trader
+
 # tick に許可する MCP tool（repo の CLAUDE.md が定める外部の記録面を使うときだけ）。
 # 名前は完全一致で、wildcard は書かない
 mcp_tools:
   - mcp__<server>__<tool>
 ```
+
+`fix_red_check` は FIX（SKILL.md の決定表の行 5）の証明に使う。merge gate は `<branch_prefix>fix-` で始まる
+branch の PR について、1 つ目の commit が変えたファイルを repo のルートからの相対 path で後ろに付けて、
+このコマンドを 2 回走らせる。1 つ目の commit で失敗し、branch の先頭で成功すれば証明が成り立つ。
+コマンドは `fix_red_check_cwd`（省くと repo のルート）で走り、渡す path もそこからの相対にする。テストランナーは
+自分の root からの path しか解決しないことが多いので、`cd` をコマンドに書かずにこのキーを使う（vitest は
+`app/src/...` を `app/` の中で渡すと `No test files found` で終わる）。テストが `fix_red_check_cwd` の外にあれば
+証明は成り立たない。
 
 `avoid_minutes` は他の worker の cron が動く分を外すためにある。マージがその worker の再デプロイを
 起こす repo では、約定や集計の最中にプロセスが入れ替わらないようにする。

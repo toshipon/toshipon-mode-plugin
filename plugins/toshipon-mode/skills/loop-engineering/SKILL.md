@@ -156,10 +156,11 @@ terminal は `validated` `invalidated` `inconclusive` `abandoned` の 4 つ。te
 | 2 | `shipped` の record にデプロイ翌日以降の event がある | **ADVANCE** |
 | 3 | `measuring` の record が horizon に達した | **EVALUATE** |
 | 4 | `measuring` の数 < `cap_concurrent_measuring` かつ、`measuring` 中の metric と重ならない `drafted` がある | **BUILD** |
-| 5 | 行 4 に当たらない（いま BUILD できる `drafted` が無い）かつ、直近 7 日の新規仮説が `cap_new_hypotheses_per_7d` 未満 | **INTERVIEW** |
-| 6 | 上のどれでもない | **WAIT** |
+| 5 | `fix_red_check` が設定されており、直近の journal の `Defects` に、`allowed_paths` の中で直せて fix PR がまだ無く、`measuring` 中の metric を動かさない defect がある | **FIX** |
+| 6 | 行 4 に当たらない（いま BUILD できる `drafted` が無い）かつ、直近 7 日の新規仮説が `cap_new_hypotheses_per_7d` 未満 | **INTERVIEW** |
+| 7 | 上のどれでもない | **WAIT** |
 
-行 5 は「`drafted` が 1 件もない」ではない。`drafted` があっても、どれも `measuring` 中の metric と
+行 6 は「`drafted` が 1 件もない」ではない。`drafted` があっても、どれも `measuring` 中の metric と
 重なっていれば、その窓が閉じるまで（`power.horizon_days`、たいてい 2 週間）BUILD できない。旧い行 5
 はその間 INTERVIEW も止め、ループは何週間も WAIT だけを返した（ある repo の product loop、
 2026-10-08。PH-0001 が measuring、同じ metric の PH-0002 が drafted のまま）。インタビューは計測に
@@ -242,9 +243,39 @@ step 0 で止まる。fail closed が既定である。
 6. 計測の生の JSON を `<records_dir>/measurements/PH-NNNN.json` にコミットする。これが証拠である。
 7. `invalidated` も `inconclusive` も資産である。record を消さない。後継があれば `next` に書く。
 
+### FIX
+
+INTERVIEW が見つけた defect を直す（決定表の行 5）。record も metric も使わない。
+
+defect とは、入力を決めれば結果が決まる correctness の欠陥である。未知のキーを黙って保存する、0 件を成功で
+返す、応答に中身が無い、などがこれに当たる。仮説ではないので、本番の数字が動くのを待つ必要は無く、テスト
+1 本の red と green で直ったと言える。FIX が無かったころは、これらは metric に現れないので record にできず、
+INTERVIEW が同じ面を掘り続けた（ある repo の product loop では 27 tick 連続、2026-10-13）。
+
+1. 直近の journal の `Defects` から、古いものを 1 件選ぶ。`gh pr list --state all --search "head:<branch_prefix>fix-<slug>"`
+   で既に PR があるものは飛ばす。merged は直っており、closed は人間が退けた
+2. 直す path とテストの path がどちらも `allowed_paths` の中にあることを確かめる。外なら FIX しない
+   （journal の `要対応` に、どの path を足せば直せるかを書く）
+3. 修正が `measuring` 中の metric の数え方を変えるなら FIX しない。黙った成功をエラーに変える修正は失敗率を
+   上げるので、失敗率を測っている窓を壊す。窓が閉じるまで待つ
+4. ブランチを `<branch_prefix>fix-<slug>` にする（`git branch -m`）。merge gate はこの名前で FIX を見分ける
+5. **1 つ目の commit はテストだけにする。** defect を再現して落ちるテストを書き、`fix_red_check` に
+   そのファイルを渡して落ちることを確かめてから commit する
+6. **2 つ目以降の commit で直す。** 1 つ目の commit のファイルには触れない。`loop-check.sh` を通す
+7. push して PR を開き、`loop-merge.sh` に渡す。body には defect の slug、観測した入力と結果、期待した結果、
+   どの metric も動かさない理由を書く
+
+merge gate は FIX の branch に対して、1 つ目の commit のファイルを `fix_red_check` に渡して 2 回走らせる。
+1 つ目の commit では失敗し、branch の先頭では成功しなければならない。commit が 1 つしかない、修正がテストを
+書き換えている、修正前からテストが通る、修正後もテストが落ちる、のどれかなら exit 1 で止める。tick の
+自己申告ではなく、gate が red と green を自分で見る。
+
+FIX は record を動かさないが、コードを変えるので ship する。マージは `cap_merges_per_day` を BUILD と
+共有する。1 tick で直すのは 1 件だけである。
+
 ### INTERVIEW
 
-いま BUILD できる `drafted` が無い時に走る（決定表の行 5）。`drafted` が尽きた時だけでなく、
+いま BUILD できる `drafted` も、直せる defect も無い時に走る（決定表の行 6）。`drafted` が尽きた時だけでなく、
 残っている `drafted` がすべて `measuring` 中の metric と重なって待っている時も走る。ここで作るのは
 仮説の候補であって証拠ではない。
 
@@ -268,7 +299,12 @@ step 0 で止まる。fail closed が既定である。
    **surface が読めなければ、そこで止まる。** route がエラーを返す、画面が描画されない、起動
    できないといった場合、それは仮説の材料ではなく defect である。インタビューには観測した事実
    （叩いた route、status、body、ログ）だけを書き、journal の `要対応` に defect を挙げて終わる。
-   壊れた画面についての仮説を書いてはいけない。壊れた surface の上で取った baseline は、その後の
+   壊れた画面についての仮説を書いてはいけない。
+
+   **defect を見つけたら journal の `Defects` に書く。** 1 行 1 件で
+   `<slug>: <tool か route> / 入力 <…> / 観測 <…> / 期待 <…> / 直す path <…>` の形にする。slug は英小文字と
+   `-` だけにし、同じ defect には同じ slug を使う。FIX はここから選ぶ。metric に現れない defect を
+   仮説にしてはいけない。壊れた surface の上で取った baseline は、その後の
    measurement が何と比較されているのか分からなくなる。
 
    決定表に surface の health を見る行は無い。deploy_health は別 worker の監視であって、この
@@ -414,7 +450,7 @@ plugin を更新すると新しいバージョンのディレクトリが増え�
 record テストは同じ規則を見るが、問う相手が違う。gate は「この PR をマージしてよいか」を決め、repo の
 テストは「この record の形が正しいか」を決める。
 
-`loop-merge.sh` の exit code は 0 = マージしてデプロイ確認、1 = checks かデプロイの失敗、
+`loop-merge.sh` の exit code は 0 = マージしてデプロイ確認、1 = checks か FIX の証明かデプロイの失敗、
 3 = 人間が見る必要がある、4 = merge window の外なので後で再試行。
 
 頻度を上げるときは `cap_merges_per_day` を見直す。3 時間ごと（1 日 8 tick）でも、ship するのは
