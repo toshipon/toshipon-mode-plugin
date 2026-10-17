@@ -127,32 +127,64 @@ function handle(input: unknown) {
 
 外部の情報源には、RPC のペイロード、`JSON.parse`、`postMessage`、IPC、ファイルの内容、環境変数、DB の結果などが含まれる。
 
+## Schemas before hand-rolled guards
+
+外部データに対してプロパティごとの type guard を手書きする前に、リポジトリの runtime schema ライブラリと既存のスキーマを探す。validation は 1 つのスキーマに持たせ、TypeScript の型はそこから導出する。スキーマ、重複した interface、guard の 3 つを別々に保守して食い違わせない。
+
+```ts
+import { z } from "zod";
+
+const UserSchema = z.object({
+  id: z.string().uuid(),
+  role: z.enum(["admin", "member"]),
+});
+
+type User = z.infer<typeof UserSchema>;
+
+function parseUser(input: unknown): User {
+  return UserSchema.parse(input);
+}
+```
+
+失敗が想定内の分岐なら `safeParse` を使う。リポジトリが別のスキーマライブラリを使っているなら、それに対応する型推論 helper を使う。guard 1 つのために新しいスキーマ依存を足さない。このルールが優先するのは、コードベースがすでに信頼しているスキーマの仕組みである。
+
 ## No `as` casts
 
 すべての `as` は潜在的なランタイムクラッシュである。型システムがその主張を検証した後にのみキャストする。
 
 ```ts
+import { z } from "zod";
+
 // Don't
 const user = data as User;
 
-// Do. Earn the cast at the boundary.
-function parseUser(data: unknown): User {
-  if (typeof data !== "object" || data === null) {
-    throw new Error("expected object");
-  }
-  if (!("id" in data) || typeof (data as Record<string, unknown>).id !== "string") {
-    throw new Error("expected id");
-  }
-  // ... validate all fields
-  return data as User; // OK, earned cast after full validation
+// Don't
+function isUser(data: unknown): data is User {
+  return typeof data === "object" && data !== null && "id" in data;
 }
+
+// Do
+const userSchema = z.object({ id: z.string(), name: z.string() });
+type User = z.infer<typeof userSchema>;
+
+function parseUser(data: unknown): User {
+  return userSchema.parse(data);
+}
+```
+
+型が先にある場合は、validator にそれが証明する型を注釈する。そうすると、型より少ないことしか証明しない validator をコンパイラが拒否する。下の object から `name` を取り除くと、代入がコンパイルエラーになる。
+
+```ts
+type User = { id: string; name: string };
+
+const userSchema: z.ZodType<User> = z.object({ id: z.string(), name: z.string() });
 ```
 
 既存コードから `as` をリファクタリングして取り除くときは、TypeScript が推論できない理由を突き止める。
 
 - 判別子がない: 追加して discriminated union に切り替える。
 - 元の型が広すぎる（例: `Record<string, unknown>`）: それを絞り込む。
-- 境界に型が付いていない: パース関数やスキーマを追加する。
+- 境界に型が付いていない: その形を所有するスキーマでパースする。スキーマを追加するのは、まだ存在しない場合だけにする。
 - 本質的に表現不可能: branded type か `satisfies` を使う。
 
 ## Narrowing hierarchy

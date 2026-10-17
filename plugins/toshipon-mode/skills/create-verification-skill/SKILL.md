@@ -25,7 +25,7 @@ checkout がそのままではビルドや起動をしない場合は、生成�
 
 `.claude/skills/verify-<app>/SKILL.md` を YAML frontmatter（`name: verify-<app>` と、アプリ・surface・いつ使うかを名指しする `description`。frontmatter がなければ skill は決して登録されない）付きで書き、次のセクションを、interview で実際に見つかったことに根ざして書く（プレースホルダーを残さない）。
 
-- **Launch:** 検証のためにアプリを起動する正確なコマンド、そして準備ができたと分かる方法（log 行、応答するポート、prompt）。teardown も含める。短命な CLI や TUI では、生き続ける server はない。launch とは、バイナリをビルドする（または依存関係をインストールする）ことを一度行い、各 drive をそれぞれ独立した PTY か tmux セッションで開始することを意味する。
+- **Launch:** 検証のためにアプリを起動する正確なコマンド、そして準備ができたと分かる方法（log 行、prompt）。launch は空のデータディレクトリから、migration と seed データも含めて、使える状態まで到達しなければならない。準備ができたとは使える状態のことであり、プロセスが応答しているだけでは足りない。database の health check は、init script がまだ走っている間にも通ることがある。teardown も含める。短命な CLI や TUI では、生き続ける server はない。launch とは、バイナリをビルドする（または依存関係をインストールする）ことを一度行い、各 drive をそれぞれ独立した PTY か tmux セッションで開始することを意味する。
 - **Doctor:** 「このインスタンスは駆動する価値があるか」に答える read-only チェックを 1 つ。プロセスが up しているか、正しいバージョン/ビルドか、ポートを自分が所有しているか、auth が有効か。何かがおかしく見えるときは agent がまずこれを実行する。
 - **Drive:** 例ではなく、このリポジトリの実際の selector やコマンドを使った harness のレシピ。座標やタブ順序より、安定したハンドル（ARIA ラベル、data 属性、prompt 文字列、route パス）を優先する。
 - **Evidence:** 証拠として何を捕捉し、どこに置くか。証明の基準を述べる。内部の setter や test 専用の endpoint ではなく実際のユーザー path を実行する。アクションと結果として生じた状態の両方を捕捉し、最終画面だけでなくする。side effect（書き込まれたファイル、挿入された行、送られたメッセージ）を見えるものと一緒に検証する。mock を使うのは、production の境界がすでに外部システムを隔離している場合だけ。安全な path が dry-run やテストモードの場合は、その名前を信じるのではなく、実際に何がスキップされるかを観測して検証する。dry-run の一部は、それでも network に触れたりブラウザを開いたりする。
@@ -34,11 +34,11 @@ checkout がそのままではビルドや起動をしない場合は、生成�
 
 ## 3. Seed the feature map
 
-`.claude/skills/verify-<app>/features/README.md` と、識別できるユーザー向け feature ごとに 1 ファイル（route、コマンド、メニュー、ドキュメントから、まずは上位 3〜5 個を目安に）を作成する。[`references/feature-map-example/`](references/feature-map-example/) の形式に従い、README の index と feature ごとに 1 ファイルとする。各ファイルは、ユーザーの視点から、その feature が何か、どうたどり着くか、harness でどう操作するか、どんな観測可能な最終状態がそれが動くことを証明するかに答える。4 つの H2 は `Sub-features`、`How to get to it (user POV)`、`Driving it with <harness>`、`Gotchas` である。この map はリポジトリで維持される検証の情報源であり、他にも記載されている入り口があるのに、都合の良い 1 つの入り口だけを駆動する証明は不完全である。
+`.claude/skills/verify-<app>/features/README.md` と、識別できるユーザー向け feature ごとに 1 ファイル（route、コマンド、メニュー、ドキュメントから、まずは上位 3〜5 個を目安に）を作成する。[`references/feature-map-example/`](references/feature-map-example/) の形式に従い、README の index と feature ごとに 1 ファイルとする。各ファイルは、ユーザーの視点から、その feature が何か、どうたどり着くか、harness でどう操作するか、どんな観測可能な最終状態がそれが動くことを証明するかに答える。4 つの H2 は `Sub-features`、`How to get to it (user POV)`、`Driving it with <harness>`、`Gotchas` である。journey に必要な前提を seed データが満たしていない場合、その journey は失敗を報告し、理由をその feature の `Gotchas` に書く。journey を緩めて通してはならない。この map はリポジトリで維持される検証の情報源であり、他にも記載されている入り口があるのに、都合の良い 1 つの入り口だけを駆動する証明は不完全である。
 
 ## 4. Prove the generated skill before handing it over
 
-生成された skill 自身の指示を、一度 end to end で実行する。launch、doctor、マップされた feature を 1 つ drive し（1 つで十分。map があるおかげで、以降の run が残りをカバーできる）、証拠を捕捉し、cleanup する。cleanup の後、その証拠が名指しされた場所に依然として存在することを確認する。証拠を食べてしまう cleanup はこのステップに失敗する。失敗したものは直し、失敗したイテレーションのたびに生成された cleanup も実行して、壊れた試行がプロセスやポートを取り残さないようにする。一度も実行されたことのない生成 skill は draft であって成果物ではない。
+生成された skill 自身の指示を、一度 end to end で実行する。launch、doctor、マップされた feature を 1 つ drive し（1 つで十分。map があるおかげで、以降の run が残りをカバーできる）、証拠を捕捉し、cleanup する。cleanup の後、その証拠が名指しされた場所に依然として存在することを確認する。証拠を食べてしまう cleanup はこのステップに失敗する。失敗したものは直し、失敗したイテレーションのたびに生成された cleanup も実行して、壊れた試行がプロセスやポートを取り残さないようにする。一度も実行されたことのない生成 skill は draft であって成果物ではない。本来の対象の代わり（fresh な VM の代わりに container、remote stack の代わりに local stack）で証明した場合は、その代役が行い、本来の対象では行われない setup step をすべて列挙する。それらの step は、本来の対象での run がカバーするまで未検証のままである。
 
 ## 5. Hand over the maintenance loop
 
