@@ -16,8 +16,9 @@
 ## Verification
 
 - **[Prove It Works](prove-it-works.md)** — プロキシや自己申告、「コンパイルが通った」ではなく、実物を直接確認して検証する。タスク完了後、完了を宣言する前に適用する。
-- **[Fix Root Causes](fix-root-causes.md)** — 症状を覆い隠さず、根本原因まで遡って修正する。デバッグ時に適用する。
+- **[Fix Root Causes](fix-root-causes.md)** — 各症状を、システムが最初に誤った場所まで遡り、そこで修正する。ガードが修正になるのは、それが扱う state が正当な場合だけである。デバッグ時に適用する。
 - **[Sequence Verifiable Units](sequence-verifiable-units.md)** — 検証可能な小さな単位に作業を分割し、各単位を確認してから次に進む。コミットや PR の積み方にも同じ規律を適用する。スイープ・マイグレーション・類似編集の連続作業や、コミット・PR の構成を決める時に適用する。
+- **[Explain the Number](explain-the-number.md)** — 測った数値（高速化、regression、スループット、レイテンシ、eval の結果）を信じる・報告する・それに基づいて動く前に、何がその数値を律速しているかを突き止め、思っている作業以外のものを測っていないことを潰す。
 
 ## Delegation
 
