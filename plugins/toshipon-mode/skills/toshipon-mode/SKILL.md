@@ -12,7 +12,7 @@ description: 非自明なタスクの標準エントリポイント。playbook �
 残りの trigger:
 
 - 非自明な変更、アーキテクチャ判断、または「本当に大丈夫か」という場面 → **how** skill。
-- 「どちらのアプローチが」「どうすべきか」「これはどうあるべきか」という分岐で `AskUserQuestion` を使おうとする直前 → 質問する前に分類する。答えが何かを実行して観測できる事実（挙動・タイミング・レイアウト・出力・パフォーマンス）であれば、それは人間が答えるべきものではない。Prototype playbook（`playbooks/prototype.md`）でスケッチし、結果に判断させる。タスクが read-only の Investigation で、成果物が根拠付きの回答であれば、そのまま Investigation にとどまり証拠から回答する。質問は、実験では決着しない本物のプロダクトや好みの判断のために取っておく。質問は遅い経路である。使い捨ての probe の方が大抵速く答えが出るし、人間には判断ではなく反応できる結果を渡せる。完全な自律を委ねられている場合、その委任が及ぶ判断は自分で下し、実行し、報告する。返答を促す言葉も提案も添えない。委任下でも operator にしか下せない判断には既定値を適用し、その既定値を十分な説明と、それを覆す一語とともに報告する。operator が名指しした gate と、Autonomy の「必ず一時停止する」対象は、引き続き operator を必要とする。
+- 「どちらのアプローチが」「どうすべきか」「これはどうあるべきか」という分岐で `AskUserQuestion` を使おうとする直前 → 質問する前に分類する。答えが何かを実行して観測できる事実（挙動・タイミング・レイアウト・出力・パフォーマンス）であれば、それは人間が答えるべきものではない。Prototype playbook（`playbooks/prototype.md`）でスケッチし、結果に判断させる。タスクが read-only の Investigation で、成果物が根拠付きの回答であれば、そのまま Investigation にとどまり証拠から回答する。質問は、実験では決着しない本物のプロダクトや好みの判断のために取っておく。質問は遅い経路である。使い捨ての probe の方が大抵速く答えが出るし、人間には判断ではなく反応できる結果を渡せる。完全な自律を委ねられている場合、その委任が及ぶ判断は自分で下し、実行し、報告する。返答を促す言葉も提案も添えない。委任下でも operator にしか下せない判断には既定値を適用し、その既定値を十分な説明とともに報告し、operator が代わりに何を指示できるかを平易な言葉で述べる。operator は自分の言葉で答える。打ち返させるための短縮トークンは決して渡さない。operator が名指しした gate と、Autonomy の「必ず一時停止する」対象は、引き続き operator を必要とする。
 - あらゆるコード → まずデータ形状に名前を付け、[model-the-domain](references/principles/model-the-domain.md) に従ってその構造を選ぶ。
 - 関数境界をまたぐコード → `architect` agent（Agent tool、`subagent_type: "architect"`）で、実装前に並列で設計を探索する。`references/common/agents.md` を参照。
 - 並列 fan-out → 独立したスライスは、`references/common/agents.md` に従い 1 メッセージ内で同時実行する Agent 呼び出しとして送る。設計やコードの bakeoff には、base selection と grafting を備えた **arena** を使う。
@@ -20,14 +20,16 @@ description: 非自明なタスクの標準エントリポイント。playbook �
 - 新機能・プロダクト変更・改善 → 設計の前に **hdd:hypothesis-first** skill を使う。Feature playbook はこの gate から始まる。
 - 仮説検証を人間の承認なしで回し続ける仕組み（定期実行、マージからデプロイと計測まで閉じるループ、ペルソナとインタビューで仮説を継ぎ足す運用）→ **loop-engineering** skill。1 tick が 1 判断であり、その skill の決定表が何を実行するかを決める。
 - 非自明な複数ステップ → throughput checkpoint を書く（Feature step 4）。
-- あらゆる prose surface → **unslop** skill。あなたの返信も prose surface であり、**Writing the reply** に従って書く。
+- ユーザーへの返信を含むあらゆる prose surface → **unslop** skill。返信は **Writing the reply** に従って書く。
 - ドキュメント・RFC・readme・PR 説明・commit メッセージ → 構成と文の規律には **unslop** に加えて **technical-writing** skill を使う。commit の形は `${CLAUDE_PLUGIN_ROOT}/skills/commit-rules/SKILL.md` に従う。
 - 要求定義・設計書・仕様書などの成果物ドキュメントを、Confluence の記事、Slack の議論、規制文書（FISC、US-SOX、SOC1 など）、既存システムから起こす → Doc playbooks（Doc discovery、Doc question loop、Doc author）。ドキュメント作業の証拠は出典である。台帳と札の規約は [`references/doc-workspace.md`](references/doc-workspace.md) に従い、出典のない事実は書かずに質問票に起こす。規制の条項番号や統制 ID を記憶から書かない。
 - commit 前 → diff の prose とコメントに **unslop** をかけ、次に `/verification-loop`。
 - 変更の影響範囲の評価 → **blast-radius** skill。
 - UI / CLI / service の出荷 → driver skill。ブラウザと web UI は `claude-in-chrome` か `superset:browser` を使う。CLI・server・desktop app は組み込みの `run` skill を使う。iOS simulator の UI は `e2e-replay` を使う。生成済みの `verify-<app>` skill を持つリポジトリはまずそれを使い、リポジトリに自身を動かす scripted な方法がない場合は **create-verification-skill** で生成する。バグ修正の場合は、まず同じ surface で自分自身で再現する。ユーザーに渡すのは、Bug fix step 1 の限定的な例外の下でのみとする。
+- ベンチマークを走らせる、自分で perf を測る、測った speedup や regression を報告する → その数値を報告したり行動に移したりする前に [`references/benchmark-checklist.md`](references/benchmark-checklist.md) を通し、[explain-the-number](references/principles/explain-the-number.md) を適用する。
 - あらゆる PR ステータス要求（「PR X を確認して」「green にして」「レビューコメントに対応して」）→ 独自の polling loop ではなく `/pr-feedback` と `/check-github-ci` を使う。PR を開いただけでは発動しない。
 - 自動 PR レビュー bot や agentic security review がコメントした → 懐疑的な姿勢を取る。それらは本物のバグも拾うが、非問題や nitpick も報告するので、それぞれを内容で評価し、ノイズはコードを書き換えるのではなく具体的な理由で却下する。fix / dismiss / ask の triage は [`references/review-bot-triage.md`](references/review-bot-triage.md) に従う。
+- operator から同じ訂正を繰り返し受けた → `/toshipon-mode:correct` で、そのミスを次の agent が起こせないようリポジトリの構造に落とす（[encode-lessons-in-structure](references/principles/encode-lessons-in-structure.md)）。
 - タスク途中で skill が壊れている → 独立した PR で直す。作業をブロックしない。黙って回避しない。
 - 長時間・自律的・複数フェーズの作業、またはユーザーが離席して後で確認するタスク全般（「寝る」「戻ったら信じる」「/loop until X」）→ **show-me-your-work** skill による判断の記録を残す。監査可能な記録が必要な場合は commit し、そうでなければ local に留める。
 
@@ -57,7 +59,11 @@ wrapper subagent は存在しない。Agent tool で委譲し、`references/comm
 
 **あらゆる `Agent` 呼び出しの既定。** 結果が次にすぐ必要なものでない場合は `run_in_background: true`、context をそのまま埋め込むのではなくファイルへのポインタを渡す、そして明示的な `model` を指定する。ルーティングされた workflow skill（`how`、`why`、`interrogate`、`arena`）は多様な model によるレビューのために自身でモデルを設定するので、上書きせず skill が指定するものを尊重する。read-only な調査は `subagent_type: "Explore"` に渡す。
 
-**すべての subagent の作業はあなたが責任を持つ。** diff を自分でレビューし、自分の言葉で要約を書く。delegate が言ったことをそのまま右から左に流さない。あなたが読んでいない diff を伴わず「完了」と報告する delegate は、未検証の主張である。interrupt が連鎖した resume は指示を静かに落とすので、「完了」の要約を信じるのではなく、統合したスコープで新しい subagent を起動する。セカンドオピニオンとは、別の model に同じプロンプトを与えることである。一致は高いシグナルである。
+**仕事に model と effort を合わせる。** spawn のたびに、上の役割ごとの `model` を起点にして、その仕事に要る推論量を Agent tool の `effort` で選ぶ。agentic な作業は `effort: "medium"` から始める。最も難しい仕事や繊細な仕事、スコープが曖昧な仕事だけ `"high"` に上げる。定型の機械的な作業は `"low"` に下げる。`"xhigh"` と `"max"` は、eval で品質の改善を示せた場合だけ使う。推論量を減らしたいときは effort を下げる。プロンプトで「考えすぎるな」と書いても thinking は確実には減らない。検証レーンとルーティングされた skill（`interrogate`、`arena`）では、skill が指定した `model` を変えず、`effort` だけをこのルールで選ぶ。そうすれば多様な model によるパネルは多様なまま保たれる。Agent tool が指定した `effort` を受け付けなかったら、別の値を試さず `effort` を省いて既定に戻し、そのことを報告する。
+
+**すべての subagent の作業はあなたが責任を持つ。** diff を自分でレビューし、自分の言葉で要約を書く。delegate が言ったことをそのまま右から左に流さない。あなたが読んでいない diff を伴わず「完了」と報告する delegate は、未検証の主張である。セカンドオピニオンとは、別の model に同じプロンプトを与えることである。一致は高いシグナルである。
+
+**既定では新しい subagent を使う。** 新しい作業は、統合したスコープとともに新しい subagent に渡す。統合したスコープとは、元の brief、その後のすべての指示、前の agent の report とブランチである。fix ラウンド、follow-up、retry、キューの次の項目のどれでも同じである。既存の subagent を resume したり `SendMessage` で続きを送ったりするのは、新しい作業がその agent の中にあって移すのが高くつく状態を厳密に必要とするときだけである。その状態とは、local checkout、未 commit の変更、まだ動かしているプロセス（dev server、simulator、CI の watcher）である。実行中の agent への停止や保留の指示は reuse に当たらない。PR owner のような役割は agent より長く生きる。その agent が返ったら、役割の次のラウンドは新しい agent が持つ。interrupt が連鎖した resume は指示を静かに落とすので、「完了」の要約を信じるのではなく、統合したスコープで新しい subagent を起動する。
 
 大量の出力は subagent 経由にし、main thread には要約だけを残す（[guard-the-context-window](references/principles/guard-the-context-window.md)）。
 
@@ -83,7 +89,7 @@ wrapper subagent は存在しない。Agent tool で委譲し、`references/comm
 - **すべての主張は、同じ文の中に証拠かラベルを持つ。** ラベルは measured（測定済み）、inferred（推論）、guess（推測）のいずれか。予測や観測していない原因は guess である。自分で実行できる確認を人間に渡さない。
 - **`CLAUDE.md` の日本語出力ルールは、返信のユーザー向け部分にそのまま適用される。** どの playbook の返信も、`CLAUDE.md` が求める session-status block で終わる。
 
-すべての playbook はこの書き方で書かれた返信で終わり、PR リンクは `https://github.com/<owner>/<repo>/pull/<number>` の形式にする。以下の playbook ごとの行は、その playbook 固有の内容だけを名指しする。
+すべての playbook はこの書き方で書かれた返信で終わり、PR リンクは `https://github.com/<owner>/<repo>/pull/<number>` の形式にする。各 playbook 自身の **Reply** 行は、その playbook 固有の内容だけを名指しする。
 
 ## Comments
 
@@ -91,23 +97,23 @@ wrapper subagent は存在しない。Agent tool で委譲し、`references/comm
 
 ## Playbooks
 
-todolist に最初に置くのは、マッチした playbook の各ステップを逐語コピーしたものであり、タスク固有の todo やタスクについての推論より前に置く。ステップを書き換えたり、統合したり、要約したりしない。よくある失敗は、playbook を読んでから、その名前付きステップ（design fan-out、throughput checkpoint）を落とした独自プランを書いてしまうことである。やらないと選んだステップは、1 行の `skip: <reason>` を付けてリストに残す。黙ってスキップすることは許されない。
+todolist に最初に置くのは、マッチした playbook の各ステップを逐語コピーしたものであり、タスク固有の todo やタスクについての推論より前に置く。ステップを書き換えたり、統合したり、要約したりしない。よくある失敗は、playbook を読んでから、その名前付きステップ（design fan-out、throughput checkpoint）を落とした独自プランを書いてしまうことである。やらないと選んだステップは、1 行の `skip: <reason>` を付けてリストに残す。黙ってスキップすることは許されない。下の一覧からタスクに合う playbook を選び、その全ステップを `playbooks/<title>.md` で開く。`<title>` はエントリ名を kebab case にしたもので、ハイフンは残し、その他の記号は落とす。エントリが File を名指ししている場合はそちらを開く。
 
 バンドルされた playbook がどれも合わない場合は、開始前に独自の playbook を設計し、他の playbook と同じように自分をそれに従わせる。名前付きステップ、design gate、証拠を示す verification gate、reply contract を与え、それらのステップを他の playbook と同様に todolist へ逐語コピーする。
 
 常設のプロジェクト規模のプログラム（複数日にまたがる、多数の積み重なった PR、1 人の coordinator の下で複数の workspace にまたがる agent の集団）は、この skill ではなく **superset:orchestrate** skill にルーティングする。この skill は 1 つのタスクまたは 1 つのプランを駆動する。`superset:orchestrate` はプログラムを駆動する。
 
-- **Investigation.** Read-only の問い。X はどう動くか、Y はなぜこう作られたか、Z は本当に大丈夫か、X と Y のどちらにすべきか。`playbooks/investigation.md`。
-- **Bug fix.** 報告された不具合を再現し、根本原因を特定し、runtime の証拠とともに修正する。`playbooks/bug-fix.md`。
-- **Perf issue.** 測定された遅さを baseline に対してトレースし改善する。`playbooks/perf-issue.md`。
-- **Feature.** 検証済みの仮説と名前を付けたデータ形状から作られる、新規または変更された挙動。`playbooks/feature.md`。
-- **Refactoring.** 構造や形状に対する挙動を保存した変更（rename、extract、inline、dedupe、move）。`playbooks/refactoring.md`。
-- **Prototype.** 設計や挙動の判断を安く下すための使い捨てスケッチ、または人間に聞く代わりに観測して経験的な分岐を決着させるためのもの（「prototype」「mock it up」「try this layout」「sketch it to decide」）。`playbooks/prototype.md`。
-- **Autonomous run.** 止まらずに完了まで駆動する長時間タスク（「run until done」「/loop until X」）。`playbooks/autonomous-run.md`。
-- **Session pickup.** resume note、トランスクリプト、push されたブランチから、以前の agent の進行中の作業を再開または引き継ぐ。`playbooks/session-pickup.md`。
-- **Pause safely.** 明示的な一時停止、オフラインになる、セッション再起動、context compaction が迫っている場合に、進行中の作業を再開可能なようにきれいに中断する。Session pickup の対になるもの。`playbooks/pause-safely.md`。
-- **Multi-phase or multi-PR plan.** 複数フェーズや積み重ねた PR にまたがる作業。プランそのものが成果物。`playbooks/multi-phase-plan.md`。
-- **Doc discovery.** 要求定義や設計書を書く前に、Confluence、Slack、規制文書、既存システムから前提を集め、`facts.md` と初回の質問票に落とす。成果物は台帳であってドキュメントではない。`playbooks/doc-discovery.md`。
-- **Doc question loop.** 質問票の未決を分類し、owner ごとにまとめて聞き、回答を台帳に戻し、来ないものは仮置きして進める。`/loop` と Session pickup で日をまたいで回す。`playbooks/doc-question-loop.md`。
-- **Doc author.** 台帳から要求定義書や設計書を skeleton 通りに書き、traceability check、adversarial review、skeleton 照合の 3 つの gate を通す。`playbooks/doc-author.md`。
-- **Worktree and simulator cleanup.** マージ済みまたは放棄された git worktree と古い iOS simulator を刈り込んでローカルディスクを回収する（「何がディスクを使っているか」「worktree を掃除して」「容量を空けて」「古い simulator を削除して」）。`playbooks/worktree-cleanup.md`。
+- **Investigation.** Read-only の問い。X はどう動くか、Y はなぜこう作られたか、Z は本当に大丈夫か、X と Y のどちらにすべきか。
+- **Bug fix.** 報告された不具合を再現し、根本原因を特定し、runtime の証拠とともに修正する。
+- **Perf issue.** 測定された遅さを baseline に対してトレースし改善する。
+- **Feature.** 検証済みの仮説と名前を付けたデータ形状から作られる、新規または変更された挙動。
+- **Refactoring.** 構造や形状に対する挙動を保存した変更（rename、extract、inline、dedupe、move）。
+- **Prototype.** 設計や挙動の判断を安く下すための使い捨てスケッチ、または人間に聞く代わりに観測して経験的な分岐を決着させるためのもの（「prototype」「mock it up」「try this layout」「sketch it to decide」）。
+- **Autonomous run.** 止まらずに完了まで駆動する長時間タスク（「run until done」「/loop until X」）。
+- **Session pickup.** resume note、トランスクリプト、push されたブランチから、以前の agent の進行中の作業を再開または引き継ぐ。
+- **Pause safely.** 明示的な一時停止、オフラインになる、セッション再起動、context compaction が迫っている場合に、進行中の作業を再開可能なようにきれいに中断する。Session pickup の対になるもの。
+- **Multi-phase or multi-PR plan.** 複数フェーズや積み重ねた PR にまたがる作業。プランそのものが成果物。File: `playbooks/multi-phase-plan.md`。
+- **Doc discovery.** 要求定義や設計書を書く前に、Confluence、Slack、規制文書、既存システムから前提を集め、`facts.md` と初回の質問票に落とす。成果物は台帳であってドキュメントではない。
+- **Doc question loop.** 質問票の未決を分類し、owner ごとにまとめて聞き、回答を台帳に戻し、来ないものは仮置きして進める。`/loop` と Session pickup で日をまたいで回す。
+- **Doc author.** 台帳から要求定義書や設計書を skeleton 通りに書き、traceability check、adversarial review、skeleton 照合の 3 つの gate を通す。
+- **Worktree and simulator cleanup.** マージ済みまたは放棄された git worktree と古い iOS simulator を刈り込んでローカルディスクを回収する（「何がディスクを使っているか」「worktree を掃除して」「容量を空けて」「古い simulator を削除して」）。File: `playbooks/worktree-cleanup.md`。

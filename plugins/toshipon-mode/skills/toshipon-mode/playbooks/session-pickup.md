@@ -4,7 +4,7 @@
 
 pickup は継承である。以前の agent はすでにコードを読み、repro を実行し、設計の選択をするコストを払った。やり直すと bias check を失い context を燃やす。再導出したい衝動には抗い、読む。
 
-1. 以前の trail を見つける。**Pause safely** が残した resume note、**show-me-your-work** の decision trail、`~/.claude/projects/<encoded-cwd>/*.jsonl` 下のトランスクリプト（`<encoded-cwd>` は workspace の cwd の `/` を `-` に置き換えたもの。他の workspace の境界を越え無関係なプロジェクトの private chat を読んでしまうので、`~/.claude/projects/` 下の他のディレクトリを横断して glob しない）、または push されたブランチ。まずメタデータの概要と最後のメッセージを読み、次に決定ポイントまで遡ってスキャンする。長いトランスクリプトは subagent で parse し、圧縮したタイムラインだけを main thread に保つ（[guard-the-context-window](../references/principles/guard-the-context-window.md)）。
+1. 以前の trail を見つける。**Pause safely** が残した resume note、**show-me-your-work** の decision trail、`~/.claude/projects/<encoded-cwd>/*.jsonl` 下のトランスクリプト（`<encoded-cwd>` は workspace の cwd の `/` を `-` に置き換えたもの。他の workspace の境界を越え無関係なプロジェクトの private chat を読んでしまうので、`~/.claude/projects/` 下の他のディレクトリを横断して glob しない）、または push されたブランチ。まずメタデータの概要と最後のメッセージを読み、次に決定ポイントまで遡ってスキャンする。長いトランスクリプトは subagent で parse し、圧縮したタイムラインだけを main thread に保つ（[guard-the-context-window](../references/principles/guard-the-context-window.md)）。各 subagent の `effort` は、SKILL.md の Delegation 節にある「仕事に model と effort を合わせる」に従い、仕事の難しさに合わせて選ぶ。
 2. 動作状態を再構築する。ブランチと worktree、すでに着地したもの（`git log`、base に対する `git diff`）、未解決の todo、下された判断。以前の trail が権威ある入力である。それを再導出したいという偏りには抗う。
 3. done と pending を diff する。出荷されたものを計画されたものと比較し、resume point を名指しし、以前の repro を再実行したり完了した作業をやり直したりしない。「念のためゼロから検証させて」というパスは、権威あるはずの trail を信用していないことの兆候である。
 4. 残りの作業を一致する playbook にルーティングし、判定を選ぶ。実行を続ける、完成した推奨を出荷する、以前の結論を追認または覆す、失敗した run を postmortem する。pickup playbook はここで終わる。ルーティングされた playbook が残りを持つ。

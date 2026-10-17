@@ -4,7 +4,7 @@
 
 1. 変更が 1、2 ファイルでアプローチが明白な場合は、プランをスキップする。そう述べて止まる。
 2. 書く前に、prototype で未解決の問いを片付ける。レイアウト・タイミング・挙動・API が動くかどうかについての問いには `playbooks/prototype.md` を実行する。ブランチ、SHA、スクリーンショットを Appendix A 用に保存する。実験では決着しないプロダクトや好みの判断についてのみ operator に聞く。選択肢を示す（[never-block-on-the-human](../references/principles/never-block-on-the-human.md)）。
-3. Agent tool、`subagent_type: "Explore"`、Delegation セクションに従った明示的な model で探索する（[guard-the-context-window](../references/principles/guard-the-context-window.md)）。それぞれがファイルへのポインタ、規約、テストコマンド、エントリポイントを返す。中身をそのまま貼り込まない。
+3. Agent tool、`subagent_type: "Explore"`、Delegation セクションに従った明示的な model で探索する（[guard-the-context-window](../references/principles/guard-the-context-window.md)）。各 subagent の `effort` は、SKILL.md の Delegation 節にある「仕事に model と effort を合わせる」に従い、仕事の難しさに合わせて選ぶ。それぞれがファイルへのポインタ、規約、テストコマンド、エントリポイントを返す。中身をそのまま貼り込まない。
 4. 下の skeleton をプランファイルにコピーし、すべてのプレースホルダーを埋める。operator がパスを指定しない限り、リポジトリの `docs/` 配下に書く。見出しとサブブロックの順序をすべて示された通りに保つ。1 セクションが 1 PR。1 つの PR は自身の証拠を持つ 1 つの変更である（[sequence-verifiable-units](../references/principles/sequence-verifiable-units.md)）。**How to read this** で実行経路を名指しする。このセッション自身が一致する playbook の下で PR を駆動するか、多数の workspace にまたがる常設の複数日プログラムなら `superset:orchestrate` に渡す。
 5. **technical-writing** skill に完全に従って書き、その後 **unslop** をかける。本文は 1 つの Diátaxis モード、how-to である。Appendix には説明と参照を置く。2 つのルールを逐語で適用する。「抽象的なメタファーは使わない」「ヘミングウェイのように書く」。各見出しはタスクか発見を述べる。long dash は禁止。文中のコロンも禁止。
 6. 書き終えたプランを skeleton と照合し、見つけた逸脱をすべて直す（[encode-lessons-in-structure](../references/principles/encode-lessons-in-structure.md)）。skeleton のすべての見出しとサブブロックが揃って順序通りにあるか、すべての verification block が verification rule を逐語で開いているか、すべての箱が具体的な証拠を名指ししているか、long dash や文中コロンが残っていないかを目視で確認する。3 つ目のプランで 3 回目もこのチェックを走らせているなら、代わりに script として書く。
@@ -32,14 +32,13 @@
 ### Arm the program
 
 - [ ] operator にこの protocol とこのプランを伝え、止まる。実行は operator の明示的な go があってから始める。
-- [ ] go が出たら、この正確なテキストでセッション内の standing goal を再宣言する。「<プランのパス、順番通りの PR id、verification rule、誰がマージするか、done の条件。>」
 - [ ] プログラム開始時にこれらを trunk から読む。tick ごとに再読する。
   - [ ] `cat ${CLAUDE_PLUGIN_ROOT}/skills/toshipon-mode/SKILL.md`
   - [ ] `cat ${CLAUDE_PLUGIN_ROOT}/skills/toshipon-mode/playbooks/<each playbook the program uses>.md`
   - [ ] `git show origin/master:<driver skill path>`
   - [ ] `cat ${CLAUDE_PLUGIN_ROOT}/skills/toshipon-mode/references/principles/INDEX.md`
-- [ ] Claude Code 組み込みの `/loop` で 30 分ごとの audit tick を仕込む。cadence を記憶任せにしない。
-- [ ] この tick プロンプトを逐語で使う。「trunk から execution playbook と standing goal を再読する。両方に対して operation を監査し、この tick で drift を直す。すべてのアクティブなレーンを probe し、side effect だけで進捗を判断する。行き詰まったレーンは stand down させ、その代替をすぐに dispatch する。それから、以前の status message がまだ報告していない追跡対象の変化をこの監査で見つけたときだけ、チャットで operator に短い status message を送る。変化とは、PR のオープン、code-ready な head、ラウンドの開始や終了、判定、マージ、行き詰まった agent と取った対応、blocker の追加や解消、operator にしか下せない判断などである。そうした変化をすべて名指しし、それ以外は書かない。table、マージ済みの一覧、変わっていない blocker を繰り返さない。監査で何も見つからなければ、返信テキストなしでターンを終える。どちらの場合も、この tick の行を decision trail に記録する。その行は報告した項目か none を名指しする。」
+- [ ] operator の go が出たら、下の tick プロンプトで Claude Code 組み込みの `/loop 1h` として audit tick を仕込む。cadence を記憶任せにしない。
+- [ ] この tick プロンプトを逐語で使う。「trunk から execution playbook を再読する。それに対して operation を監査し、この tick で drift を直す。すべてのアクティブなレーンを probe し、side effect だけで進捗を判断する。行き詰まったレーンは stand down させ、その代替をすぐに dispatch する。それから、以前の status message がまだ報告していない追跡対象の変化をこの監査で見つけたときだけ、チャットで operator に短い status message を送る。変化とは、PR のオープン、code-ready な head、ラウンドの開始や終了、判定、マージ、行き詰まった agent と取った対応、blocker の追加や解消、operator にしか下せない判断などである。そうした変化をすべて名指しし、それ以外は書かない。table、マージ済みの一覧、変わっていない blocker を繰り返さない。監査で何も見つからなければ、返信テキストなしでターンを終える。どちらの場合も、この tick の行を decision trail に記録する。その行は報告した項目か none を名指しする。」
 - [ ] operator の hold または stand-down の指示があれば、すべての owner に zero-writes order を一斉に送る。
 
 ### Spawn owners
@@ -62,8 +61,8 @@
 
 ### Verdict and merge, for every PR
 
-- [ ] code-ready の head SHA と、その後 patch を変える各 push で、並列の verification agent を fan out する。1 つは `/verification-loop` を走らせる gate レーン。live レーンは PR の **Verify, live** block から。perf レーンはその **Verify, perf** block から。それぞれ独自の焦点を持つ 2 つ以上の audit レーンが diff と証拠を読み、PR body を疑ってかかる。判定の前に、merge-ready report の証拠を自分で監査する。
-- [ ] すべてのレーンが `PASS` のときだけ clean とする。findings は owner に戻す。レーンが note として記録した defect も含む。新しい head は新しい fan-out と新しい判定を得る。ただし、次の patch-id ルールの下で有効なままの結果は除く。
+- [ ] 並列の verification agent の完全な fan-out は、code-ready の head で 1 回走らせる。もう一度完全な fan-out を走らせるのは、新しい挙動、再設計、大きな新しい diff のときだけである。rebase、merge conflict の解消、小さな修正には、新しい head で verifier を 1 つだけ走らせる。その verifier は `/verification-loop` を走らせ、前回の判定からの差分を **interrogate** skill にかける。完全な fan-out の中身は次の通り。1 つは `/verification-loop` を走らせる gate レーン。live レーンは PR の **Verify, live** block から。perf レーンはその **Verify, perf** block から。それぞれ独自の焦点を持つ 2 つ以上の audit レーンが diff と証拠を読み、PR body を疑ってかかる。判定の前に、merge-ready report の証拠を自分で監査する。
+- [ ] すべてのレーンが `PASS` のときだけ clean とする。findings は owner に戻す。レーンが note として記録した defect も含む。新しい head は新しい判定を得る。ただし、次の patch-id ルールの下で有効なままの結果は除く。
 - [ ] 判定の後、現在の trunk に rebase する。`git patch-id` は変わらない。patch-id が変わったら新しい head であり、新しい判定が必要である。
 
 ### Boot recipe, for every live lane

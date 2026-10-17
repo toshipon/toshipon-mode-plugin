@@ -30,7 +30,7 @@ Sentry MCP を使う。
    search_issues (自然言語で。例: "errors in PaymentService timeout", "unhandled exceptions in uploadFile")
    ```
 
-   良いクエリの構成要素: 対象が扱う例外クラス名、対象の関数やクラスの名前、対象がチェックするエラーメッセージ文字列、対象のファイルパス。
+   対象が扱う例外クラス名、対象の関数やクラスの名前、対象がチェックするエラーメッセージ文字列、対象のファイルパスからクエリを組み立てる。
 
 3. **リリースと時間ウィンドウで絞り込む。**
 
@@ -39,11 +39,7 @@ Sentry MCP を使う。
    get_issue_tag_values (issue について、バージョン、ユーザー、環境ごとの分布を見る)
    ```
 
-   疑わしい issue について、以下を確認する:
-   - **First seen。** そのエラーはいつ現れ始めたか?
-   - **Last seen。** いつ止まったか? 対象の出荷日と一致するか?
-   - **Affected releases。** どのバージョンで見られたか? どのバージョンで修正されたか?
-   - **Frequency trajectory。** スパイクした後、解決されたか?
+   疑わしい issue について、**first seen** と **last seen**(止まった時期は対象の出荷日と一致するか?)、**affected releases**(どのバージョンで見られ、どれが修正だったか?)、**frequency trajectory**(スパイクした後、解決されたか?)を確認する。
 
 4. **完全なイベントを取得して文脈を得る。**
 
@@ -67,7 +63,7 @@ Sentry MCP を使う。
    analyze_issue_with_seer
    ```
 
-   Seer は AI による根本原因分析を生成する。仮説を生成する道具として有用だが、権威的な証拠ではなく推論として扱う。実際のイベントとスタックトレースが一次証拠であり、Seer のナラティブは二次的なものである。
+   Seer による AI の根本原因分析は仮説を生成する道具である。権威的な証拠ではなく推論として扱う。実際のイベントとスタックトレースが一次証拠である。
 
 ## What good evidence looks like here
 

@@ -6,10 +6,10 @@
 - PR の説明、レビューコメント、議論のスレッド(`gh` 経由)
 - インラインコードコメント、TODO、FIXME、非推奨の注記
 - リポジトリが保持していれば ADR(アーキテクチャ決定記録)
-- テスト。名前とアサーションはしばしば変更を動機づけたエッジケースをエンコードしている
+- テスト。その名前とアサーションはしばしば変更を動機づけたエッジケースをエンコードしている
 - 同じコミットで変更された関連ファイル(co-change シグナル)
-- リポジトリ内の CHANGELOG エントリ、リリースノート
-- コミットメッセージや PR 本文で言及される issue/チケット ID
+- リポジトリ内の CHANGELOG エントリとリリースノート
+- コミットメッセージや PR 本文中の issue/チケット ID
 
 コードに直接結びついているため最も信頼でき、最も網羅的な情報源。リポジトリを通ったものはすべてここにあるはずである。
 
@@ -18,7 +18,7 @@
 シードのコミットリストを拡張する:
 
 ```bash
-# リネームを含むファイルの全履歴
+# リネームを含む履歴
 git log --follow --oneline -- <file>
 
 # pickaxe: この正確なテキストを追加または削除したコミット
@@ -30,23 +30,11 @@ git log -G '<regex>' -- <file>
 # 誰がいつ各行を書いたか
 git blame -L <start>,<end> <file>
 
-# 特定コミットの全 diff
+# 1 コミットの全 diff
 git show <hash>
 
 # このファイルに影響した 2 点間のコミット
 git log <old>..<new> -p -- <file>
-```
-
-実質的な各コミットについて、PR の文脈を取得する:
-
-```bash
-# マージコミットまたはブランチから PR 番号を見つける
-git log -1 --format=%B <hash>
-
-# PR の全文脈: 本文、レビューコメント、紐づく issue
-gh pr view <number> --json title,body,author,createdAt,mergedAt,labels,closingIssuesReferences,comments,reviews,files
-
-# --json の reviews と comments フィールドに本当のシグナルがある
 ```
 
 帯域外のドキュメントを探す:
@@ -58,7 +46,7 @@ rg -l -i 'architecture.decision' --glob '*.md'
 # 対象周辺の TODO と FIXME
 rg -n -C2 '(TODO|FIXME|HACK|XXX|NOTE)' <target_file>
 
-# 関連するテスト。名前がしばしば「なぜ」をエンコードしている
+# 関連するテスト
 rg -l '<symbol>' --glob '*test*'
 ```
 

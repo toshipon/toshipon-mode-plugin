@@ -6,7 +6,7 @@
 
 このプラグインは、Cursor 向けプラグイン [pstack](https://github.com/cursor/plugins/tree/main/pstack)（Lauren Tan 作、MIT License）を参考に作りました。`toshipon-mode` skill は pstack の `poteto-mode` を、principles や `how`、`why`、`unslop`、`interrogate`、`arena` などのサブ skill は pstack の同名 skill を元にしています。日本語に翻訳したうえで、Claude Code の Agent tool やモデル指定（`opus` / `sonnet` / `haiku`）に合わせて書き換えています。
 
-upstream の変更は定期的に確認して取り込んでいます。最後に取り込んだのは pstack 0.15.5（cursor/plugins `12d587d`）です。
+upstream の変更は定期的に確認して取り込んでいます。最後に取り込んだのは pstack 0.15.25（cursor/plugins `ac4e25a`）です。
 
 pstack 以外にも、次のコンポーネントは外部のリポジトリが元になっています。
 
