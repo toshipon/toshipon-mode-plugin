@@ -6,7 +6,7 @@
 
 このプラグインは、Cursor 向けプラグイン [pstack](https://github.com/cursor/plugins/tree/main/pstack)（Lauren Tan 作、MIT License）を参考に作りました。`toshipon-mode` skill は pstack の `poteto-mode` を、principles や `how`、`why`、`unslop`、`interrogate`、`arena` などのサブ skill は pstack の同名 skill を元にしています。日本語に翻訳したうえで、Claude Code の Agent tool やモデル指定（`opus` / `sonnet` / `haiku`）に合わせて書き換えています。
 
-upstream の変更は定期的に確認して取り込んでいます。最後に取り込んだのは pstack 0.15.25（cursor/plugins `ac4e25a`）です。
+upstream の変更は定期的に確認して取り込んでいます。最後に取り込んだのは pstack 0.15.29（cursor/plugins `88d4751`）です。
 
 pstack 以外にも、次のコンポーネントは外部のリポジトリが元になっています。
 
@@ -59,6 +59,8 @@ APM は plugin を skill・command・agent に分解して配置するので、`
 - `commit-rules`: コミット規約と変更管理のガイドラインです。
 - `verification-loop`: PR 前の統合検証（ビルド、型チェック、lint、テスト、セキュリティ）を回します。
 - `create-verification-skill`: 実アプリを起動・操作して証拠を残す、リポジトリ固有の検証 skill（`verify-<app>`）を生成します。
+- `create-formal-verification-skill`: バグの代償が大きくテストが届きにくいコードを形式検証（TLA+ などの model checker、コード上の verifier）し、変更をその性質に照らして確かめるリポジトリ固有の skill を生成します。
+- `maintain-formal-verification-skill`: コードの変更後に形式検証をコードに合わせ直し、各失敗が検証のずれかコードのバグかを判定します。
 - `e2e-replay`: iOS シミュレータと cliclick で UI E2E シナリオを再生し、各ステップのスクリーンショットを残します。runner script（`scripts/e2e/run_scenario.sh`）は利用側のリポジトリで用意します。
 - `typescript-best-practices`: `.ts` / `.tsx` を読み書きするときの TypeScript の規範です。
 - `japanese-writing`: 日本語の文章を Claude が下書きし、Gemini（Antigravity CLI の `agy`）にレビューさせて統合します。同梱の `scripts/gemini-ja.sh` を使います。
@@ -95,4 +97,4 @@ APM でインストールした場合は、公開されている取得元があ�
 
 ## 注意: skill の二重ロードについて
 
-このプラグインが収録している skill と同名の skill が、すでに `~/.claude/skills/` 配下にインストールされているマシンでは、両方が二重にロードされます。該当する skill 名（`toshipon-mode`、`how`、`why`、`unslop`、`technical-writing`、`show-me-your-work`、`arena`、`interrogate`、`blast-radius`、`web-perf`、`tdd`、`commit-rules`、`verification-loop`、`create-verification-skill`、`e2e-replay`、`typescript-best-practices`、`japanese-writing`、`japanese-tech-writing`）が個人設定側にもある場合は、どちらか片方を削除してください。
+このプラグインが収録している skill と同名の skill が、すでに `~/.claude/skills/` 配下にインストールされているマシンでは、両方が二重にロードされます。該当する skill 名（`toshipon-mode`、`how`、`why`、`unslop`、`technical-writing`、`show-me-your-work`、`arena`、`interrogate`、`blast-radius`、`web-perf`、`tdd`、`commit-rules`、`verification-loop`、`create-verification-skill`、`create-formal-verification-skill`、`maintain-formal-verification-skill`、`e2e-replay`、`typescript-best-practices`、`japanese-writing`、`japanese-tech-writing`）が個人設定側にもある場合は、どちらか片方を削除してください。

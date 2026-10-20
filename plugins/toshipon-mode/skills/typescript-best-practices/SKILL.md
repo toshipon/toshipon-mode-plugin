@@ -10,7 +10,7 @@ description: TypeScript のベストプラクティス。.ts / .tsx ファイル
 | Rule | Summary |
 |------|---------|
 | Discriminated unions | `kind` リテラルの判別子でバリアントをモデル化し、ありえない状態を表現できないようにする。オプショナルフィールドの寄せ集めにしない。 |
-| Branded types | プリミティブ型に `& { readonly __brand: "X" }` でブランドを付け、混同できないようにする。生成時に一度だけ検証する。 |
+| Branded types | プリミティブ型に `& { readonly __brand: "X" }` でブランドを付け、混同できないようにする。生成時に一度だけ検証する。ブランドは検証する type guard（`input is AgentId`）から得る。`as` では付けない。 |
 | Constructive modeling | 不正な値をそもそも構築できない形に組み立てる。空でないことを表すなら `[T, ...T[]]`、偶数長を表すなら `[T, T][]`、範囲を表すなら `start` と `duration` の組。ランタイムガードではなく、精緻化型を願うことでもない。 |
 | Simplest total type | すべての操作が全域関数であり続ける限り `T[]` のままにする。緩い型が `!`、キャスト、「起こり得ないはず」の throw を強いる箇所でのみ `NonEmpty<T>` に強化する。 |
 | `unknown` over `any` | 外部データは `unknown` とする。`any` は触れる箇所すべてで型チェックを無効化する。 |
