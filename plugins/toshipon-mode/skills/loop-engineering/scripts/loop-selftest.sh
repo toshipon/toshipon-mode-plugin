@@ -571,6 +571,19 @@ check "a test outside fix_red_check_cwd is not a proof" "a test is outside fix_r
 check "no fix_red_check means no FIX" "fix_red_check is not set on origin/main" \
   "$(fix_proof "$fixture/loop.yaml" good)"
 
+# loop_pr_ref gives the full PR url from the remote with no network, or "#<n>" off GitHub.
+pr_ref_of() {  # pr_ref_of <remote url> <n>
+  local g="$fixture/prref"; rm -rf "$g"; git init -q "$g"
+  [ -z "$1" ] || git -C "$g" remote add origin "$1"
+  ( cd "$g" && loop_pr_ref "$2" )
+}
+check "pr ref from an https remote"      "https://github.com/o/r/pull/7" "$(pr_ref_of https://github.com/o/r.git 7)"
+check "pr ref from an https remote without .git" "https://github.com/o/r/pull/7" "$(pr_ref_of https://github.com/o/r 7)"
+check "pr ref from a git@ remote"        "https://github.com/o/r/pull/8" "$(pr_ref_of git@github.com:o/r.git 8)"
+check "pr ref from an ssh:// remote"     "https://github.com/o/r/pull/9" "$(pr_ref_of ssh://git@github.com/o/r.git 9)"
+check "pr ref off GitHub falls back to #n" "#10" "$(pr_ref_of https://gitlab.example.com/o/r.git 10)"
+check "pr ref with no remote falls back to #n" "#11" "$(pr_ref_of "" 11)"
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "loop-selftest: all checks passed under $BASH_VERSION"

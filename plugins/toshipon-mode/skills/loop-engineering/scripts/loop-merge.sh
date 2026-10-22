@@ -15,12 +15,14 @@ pr="${1:?pr number required}"
 loop_env "${LOOP_REPO:?LOOP_REPO not set}" || exit 1
 cd "$REPO" || exit 1
 pr_url=$(gh pr view "$pr" --json url -q .url 2>/dev/null)
+# Every message that hands this PR to the owner names it by full url, not "#<n>".
+pr_ref="${pr_url:-$(loop_pr_ref "$pr")}"
 log() { echo "[$(date -u +%FT%TZ)] merge #$pr: $*" | tee -a "$LOG_DIR/merge.log"; }
 refuse() {
   log "REFUSED: $*"
   gh pr comment "$pr" --body "loop-merge refused: $*" >/dev/null 2>&1 || true
   gh pr edit "$pr" --add-label needs-human >/dev/null 2>&1 || true
-  loop_notify "$LOOP_ID" "PR #$pr needs a human: $*" alert "$pr_url"
+  loop_notify "$LOOP_ID" "PR $pr_ref needs a human: $*" alert "$pr_url"
   exit 3
 }
 
@@ -139,5 +141,5 @@ if [ -n "$fallback" ] && bash -lc "cd '$REPO/$verify_cwd' && $fallback" >"$LOG_D
   exit 0
 fi
 log "merged but no new version appeared in ${wait_s}s and no fallback succeeded"
-loop_notify "$LOOP_ID" "PR #$pr merged but NOT deployed. A human must deploy." alert "$pr_url"
+loop_notify "$LOOP_ID" "PR $pr_ref merged but NOT deployed. A human must deploy." alert "$pr_url"
 exit 1
