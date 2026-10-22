@@ -98,6 +98,22 @@ loop_deliver() {
   return 0
 }
 
+# loop_pr_ref <pr>
+# What a notification calls a PR it hands to the owner: the full url (the owner opens it from the
+# message), built from origin without the network; "#<pr>" when origin is not GitHub.
+loop_pr_ref() {
+  local remote path
+  remote=$(git remote get-url origin 2>/dev/null) || remote=""
+  case "$remote" in
+    https://github.com/*|http://github.com/*) path="${remote#*github.com/}" ;;
+    git@github.com:*)                         path="${remote#git@github.com:}" ;;
+    ssh://git@github.com/*)                   path="${remote#ssh://git@github.com/}" ;;
+    *) echo "#$1"; return 0 ;;
+  esac
+  path="${path%/}"; path="${path%.git}"
+  echo "https://github.com/$path/pull/$1"
+}
+
 loop_notify() {  # loop_notify <title> <message> [alert|milestone] [url]
   osascript -e "display notification \"${2//\"/\\\"}\" with title \"${1//\"/\\\"}\"" >/dev/null 2>&1 || true
   echo "[$(date -u +%FT%TZ)] $1: $2" >>"$LOG_DIR/notify.log"

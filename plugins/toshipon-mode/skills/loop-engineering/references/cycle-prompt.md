@@ -79,7 +79,8 @@ commit は 1 つ目のファイルに触れない。merge gate が両端でテ�
 
    - exit 0 = マージとデプロイを確認した。stdout の `deploy_version=` を record の
      `ship.deploy_version` に書く。record を `shipped` にする
-   - exit 3 = 人間のレビューが必要。record は `building` のまま残す
+   - exit 3 = 人間のレビューが必要。record は `building` のまま残す。journal の `要対応` には
+     PR の完全な URL（`https://github.com/<owner>/<repo>/pull/<n>`）を書く。`#<n>` だけにしない
    - exit 4 = merge window の外。record は `building` で残し、次の tick に任せる
    - exit 1 = checks か FIX の証明かデプロイが失敗した。原因を journal に書いて止まる
 
@@ -108,7 +109,9 @@ record の state が動いたか、コードを変えたときだけ `{{RECORDS_
 - `- **行動:**` 1 行。決定表のどの行を実行したか、対象の record id
 - `- **計測:**` 1 行。metric、baseline と measurement の値、n。測っていなければ「なし」と理由
 - `- **次:**` 1 行。次の tick が取る行動の予測
-- `- **要対応:**` 1 行。人間にしかできない作業がある時だけ。無ければ bullet ごと省く
+- `- **要対応:**` 1 行。人間にしかできない作業がある時だけ。無ければ bullet ごと省く。PR を owner に
+  回す時（needs a human / merge か close の判断 / merged but not deployed）は、PR の完全な URL
+  （`https://github.com/<owner>/<repo>/pull/<n>`）を本文に書く。`#<n>` だけ、url 欄だけにしない
 
 後半は後で読む記録である。通知には出ないので、証拠が必要とする長さで書く。ラベルは逐語で英語。
 

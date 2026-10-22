@@ -196,7 +196,8 @@ step 0 で止まる。fail closed が既定である。
 前の tick が途中で死んだ後始末である。`ship.pr` を `gh pr view` で見る。
 
 - merged で新しい deploy version がある → `shipped` にし、`ship` を埋める
-- merged だがデプロイが確認できない → journal に書いて止まる。人間に回す
+- merged だがデプロイが確認できない → journal に書いて止まる。人間に回す。PR を owner に回す
+  通知と journal の `要対応` には、PR の完全な URL を本文に書く（`#<n>` だけにしない）
 - closed / 存在しない → `drafted` に戻し、`ship` を消す
 - open → 何もせず journal に書いて終わる
 
