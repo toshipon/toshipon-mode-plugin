@@ -228,6 +228,33 @@ done
 2. 置き換えたら、**規則で抽出した集合と元の列挙を突き合わせて差分を出す**（漏れが実在した事実は返信の根拠になる）
 3. 規則に置き換えられないときだけ列挙を直し、返信に「次に増えたときの更新箇所」を書く
 
+#### ゲート 4: 直した語・ID・値は、リポジトリ全体で横展開してから返信する
+
+指摘された箇所だけを直すと、同じ誤りが兄弟の文書・別の章・図のラベルに残り、次の PR で同じ指摘が来る。返信を書く前に、直した文字列（誤っていた節番号・ID・用語・値）でリポジトリ全体を検索する。
+
+```bash
+# 直す前の文字列で全体を引く。0 件になるまで直すか、残す理由を返信に書く
+git grep -n -F '<直す前の文字列>' -- . ':!*.png' ':!*.svg'
+```
+
+- 言い換えを取りこぼさないよう、ID は数字部分でも引く（ゲート 1 の (3) と同じ）
+- 返信には「全体を検索して N 箇所を直した」と件数を書く。0 件だった場合も書く
+
+#### ゲート 5: 「別 PR で直す」と返すなら、その場で追跡先に起こす
+
+返信で後回しにした項目は、次の PR を書くころには忘れている。「別 PR で対応します」と書くときは、同じターンで追跡先を作る。
+
+1. この PR の本文にチェックリスト（`- [ ] <指摘の要旨>（<コメントへのリンク>）→ <直す PR か issue>`）を足すか、issue を起こす
+2. 返信にはその追跡先のリンクを書く
+3. マージを提案する前に、未解決のスレッドと未消化のチェックリストが 0 であることを確かめる
+
+```bash
+gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{url body}}}}}}}' \
+  -f o=<owner> -f r=<repo> -F n=<number> \
+  --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved|not) | .comments.nodes[0].url'
+gh pr view <number> --json body --jq .body | grep -n -- '- \[ \]'
+```
+
 ### 注意事項
 
 - **優先度遵守**: Critical → High → Medium → Low の順で対応
