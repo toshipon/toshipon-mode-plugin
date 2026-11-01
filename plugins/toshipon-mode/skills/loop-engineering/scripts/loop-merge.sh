@@ -5,7 +5,7 @@
 # Exit codes
 #   0  merged, and the new version is live
 #   1  a check failed, or the merge landed but no new version appeared
-#   3  a human must look at it (path outside the allowlist, daily cap, unhealthy system)
+#   3  a human must look at it (owner PR, path outside the allowlist, daily cap, unhealthy system)
 #   4  try again later (merge window)
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -33,6 +33,13 @@ policy="$STATE_DIR/loop.yaml.main"
 git show "origin/main:${LOOP_YAML#"$REPO"/}" >"$policy" 2>/dev/null \
   || { log "loop.yaml is missing on origin/main"; exit 1; }
 
+# Owner PRs are merged only by a human. Refusing them here is also what lets the daily cap below
+# skip them: the loop cannot rename its own branch to owner-* and merge past the cap.
+head=$(gh pr view "$pr" --json headRefName -q .headRefName 2>/dev/null)
+case "$head" in
+  "${BRANCH_PREFIX}owner-"*) refuse "owner PR ($head): only a human merges it" ;;
+esac
+
 allowed=()
 while IFS= read -r line; do allowed+=("$line"); done < <(loop_cfg_list "$policy" allowed_paths)
 [ "${#allowed[@]}" -eq 0 ] && { log "allowed_paths is empty on origin/main"; exit 1; }
@@ -47,10 +54,11 @@ for f in "${changed[@]}"; do
 done
 [ "${#outside[@]}" -gt 0 ] && refuse "outside allowed_paths: ${outside[*]}"
 
+# Owner PRs (<branch_prefix>owner-*) are merged by a human, so they do not use up the loop's cap.
 cap_merges=$(loop_cfg "$policy" cap_merges_per_day 3)
 today=$(date -u +%Y-%m-%d)
 merged_today=$(gh pr list --state merged --limit 60 --json headRefName,mergedAt \
-  -q "[.[] | select(.headRefName | startswith(\"$BRANCH_PREFIX\")) | select(.mergedAt | startswith(\"$today\"))] | length" \
+  -q "[.[] | select(.headRefName | startswith(\"$BRANCH_PREFIX\")) | select(.headRefName | startswith(\"${BRANCH_PREFIX}owner-\") | not) | select(.mergedAt | startswith(\"$today\"))] | length" \
   2>/dev/null || echo 0)
 [ "${merged_today:-0}" -ge "$cap_merges" ] && refuse "daily merge cap reached ($merged_today/$cap_merges)"
 
