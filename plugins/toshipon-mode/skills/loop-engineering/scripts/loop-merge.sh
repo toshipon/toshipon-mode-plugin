@@ -47,10 +47,11 @@ for f in "${changed[@]}"; do
 done
 [ "${#outside[@]}" -gt 0 ] && refuse "outside allowed_paths: ${outside[*]}"
 
+# Owner PRs (<branch_prefix>owner-*) are merged by a human, so they do not use up the loop's cap.
 cap_merges=$(loop_cfg "$policy" cap_merges_per_day 3)
 today=$(date -u +%Y-%m-%d)
 merged_today=$(gh pr list --state merged --limit 60 --json headRefName,mergedAt \
-  -q "[.[] | select(.headRefName | startswith(\"$BRANCH_PREFIX\")) | select(.mergedAt | startswith(\"$today\"))] | length" \
+  -q "[.[] | select(.headRefName | startswith(\"$BRANCH_PREFIX\")) | select(.headRefName | startswith(\"${BRANCH_PREFIX}owner-\") | not) | select(.mergedAt | startswith(\"$today\"))] | length" \
   2>/dev/null || echo 0)
 [ "${merged_today:-0}" -ge "$cap_merges" ] && refuse "daily merge cap reached ($merged_today/$cap_merges)"
 
