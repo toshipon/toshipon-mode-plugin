@@ -22,7 +22,8 @@ from harness.claims import (  # noqa: E402
     validate_claims,
 )
 from harness.intake import collect, load_context  # noqa: E402
-from harness.runner import demo_backend, run_loop  # noqa: E402
+from harness.relations import relate_claims  # noqa: E402
+from harness.runner import claude_backend, demo_backend, run_loop  # noqa: E402
 from harness.workspace import load_workspace  # noqa: E402
 
 
@@ -500,6 +501,100 @@ class ContextTests(unittest.TestCase):
         proposed["claims"][1]["scope"] = "AZ failure"
         self.extract(proposed)
         self.assertEqual(assess_context(self.ws)["conflicts"], [])
+
+    def test_relate_lists_differently_named_claims_without_changing_assess(self):
+        self.extract()
+        before = assess_context(self.ws)
+        output = {
+            "relations": [
+                {
+                    "claim_ids": ["C3", "C1"],
+                    "relation": "possible_conflict",
+                    "reason": "単一 AZ の DB で Region 障害の RTO 30 分を満たす根拠が無い。",
+                },
+                {
+                    "claim_ids": ["C1", "C2"],
+                    "relation": "possible_conflict",
+                    "reason": "assess が同じ group として比較済み。",
+                },
+            ]
+        }
+        result = relate_claims(
+            self.ws, lambda role, payload, schema: copy.deepcopy(output), self.root / "rel"
+        )
+        self.assertEqual([r["claim_ids"] for r in result["relations"]], [["C1", "C3"]])
+        self.assertEqual(result["relations"][0]["status"], "candidate")
+        self.assertEqual(result["relations"][0]["source_ids"], ["S1", "S3"])
+        self.assertIn("食い違いの候補", (self.root / "rel/relations.md").read_text())
+        self.assertEqual(assess_context(self.ws), before)
+
+    def test_relate_payload_carries_quotes_but_no_review_fields(self):
+        self.extract()
+        seen = {}
+
+        def backend(role, payload, schema):
+            seen.update(role=role, payload=payload)
+            return {"relations": []}
+
+        relate_claims(self.ws, backend, self.root / "rel")
+        self.assertEqual(seen["role"], "relator")
+        item = seen["payload"]["claims"][0]
+        self.assertNotIn("approval", item)
+        self.assertEqual(item["sources"][0]["source_id"], "S1")
+        self.assertIn("候補はありません", (self.root / "rel/relations.md").read_text())
+
+    def test_relate_rejects_unknown_claims_and_reused_output(self):
+        self.extract()
+        bad = {"relations": [{"claim_ids": ["C1", "C9"], "relation": "overlap", "reason": "x"}]}
+        with self.assertRaisesRegex(ValueError, "unknown claims"):
+            relate_claims(self.ws, lambda *a: copy.deepcopy(bad), self.root / "rel")
+        used = self.root / "used"
+        used.mkdir()
+        (used / "keep.txt").write_text("x")
+        with self.assertRaisesRegex(ValueError, "new or empty"):
+            relate_claims(self.ws, lambda *a: {"relations": []}, used)
+        single = {"relations": [{"claim_ids": ["C1"], "relation": "overlap", "reason": "x"}]}
+        with self.assertRaisesRegex(ValueError, "relations schema"):
+            relate_claims(self.ws, lambda *a: copy.deepcopy(single), self.root / "rel2")
+
+    def test_claude_timeout_is_configurable_and_bounded(self):
+        ok = subprocess.CompletedProcess(
+            [], 0, '{"subtype":"success","structured_output":{"relations":[]}}', ""
+        )
+        with patch("harness.runner.subprocess.run", return_value=ok) as call:
+            claude_backend("relator", {}, {"type": "object"}, timeout=900)
+            self.assertEqual(call.call_args.kwargs["timeout"], 900)
+            claude_backend("extractor", {}, {"type": "object"})
+            self.assertEqual(call.call_args.kwargs["timeout"], 180)
+        for value in (10, 7200, True):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "Timeout"):
+                claude_backend("extractor", {}, {}, timeout=value)
+
+    def test_cli_timeout_option_reaches_backend_and_rejects_out_of_range(self):
+        from contextlib import redirect_stderr, redirect_stdout
+
+        from harness.__main__ import main
+
+        def cli(args):
+            with (
+                patch.object(sys, "argv", ["nfr-harness", *args]),
+                redirect_stdout(io.StringIO()),
+                redirect_stderr(io.StringIO()),
+            ):
+                try:
+                    return main()
+                except SystemExit as error:
+                    return error.code
+
+        self.assertEqual(cli(["extract", "--workspace", str(self.ws), "--timeout-seconds", "5"]), 2)
+        with patch(
+            "harness.runner.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("claude", 600),
+        ) as call:
+            code = cli(["extract", "--workspace", str(self.ws), "--timeout-seconds", "600"])
+        self.assertEqual(code, 2)
+        self.assertEqual(call.call_args.kwargs["timeout"], 600)
+        self.assertFalse((self.ws / "claims.json").exists())
 
     def test_context_cli_flow_without_model(self):
         from contextlib import redirect_stderr, redirect_stdout

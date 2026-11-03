@@ -12,7 +12,16 @@ from jsonschema.exceptions import ValidationError
 from .claims import extract_claims, prepare_input, review_claim
 from .context_cli import assess, write_impact
 from .intake import collect
-from .runner import claude_backend, demo_backend, evaluate_candidate, run_loop
+from .relations import relate_claims
+from .runner import (
+    DEFAULT_TIMEOUT_SECONDS,
+    MAX_TIMEOUT_SECONDS,
+    MIN_TIMEOUT_SECONDS,
+    claude_backend,
+    demo_backend,
+    evaluate_candidate,
+    run_loop,
+)
 
 
 def load(path):
@@ -32,6 +41,29 @@ def load(path):
     )
 
 
+def timeout_seconds(text):
+    value = int(text)
+    if not MIN_TIMEOUT_SECONDS <= value <= MAX_TIMEOUT_SECONDS:
+        raise argparse.ArgumentTypeError(
+            f"must be {MIN_TIMEOUT_SECONDS}-{MAX_TIMEOUT_SECONDS} seconds"
+        )
+    return value
+
+
+def model_options(child):
+    child.add_argument("--auth-mode", choices=["api-key", "subscription"], default="api-key")
+    child.add_argument(
+        "--timeout-seconds",
+        type=timeout_seconds,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help="Timeout for each Claude CLI call. Large source sets need more than the default.",
+    )
+
+
+def model_backend(args):
+    return partial(claude_backend, auth_mode=args.auth_mode, timeout=args.timeout_seconds)
+
+
 def main():
     parser = argparse.ArgumentParser(description="NFR / AWS document quality harness")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -46,15 +78,13 @@ def main():
         else:
             child.add_argument("--max-iterations", type=int, default=3)
             if command == "run":
-                child.add_argument(
-                    "--auth-mode", choices=["api-key", "subscription"], default="api-key"
-                )
+                model_options(child)
     child = sub.add_parser("collect")
     child.add_argument("--manifest", required=True)
     child.add_argument("--out", required=True)
     child = sub.add_parser("extract")
     child.add_argument("--workspace", required=True)
-    child.add_argument("--auth-mode", choices=["api-key", "subscription"], default="api-key")
+    model_options(child)
     child.add_argument(
         "--proposals",
         help="Validate candidate claims from a local extraction instead of calling Claude.",
@@ -70,6 +100,14 @@ def main():
     child = sub.add_parser("assess")
     child.add_argument("--workspace", required=True)
     child.add_argument("--out", required=True)
+    child = sub.add_parser("relate")
+    child.add_argument("--workspace", required=True)
+    child.add_argument("--out", required=True)
+    model_options(child)
+    child.add_argument(
+        "--proposals",
+        help="Validate candidate relations from a local review instead of calling Claude.",
+    )
     child = sub.add_parser("prepare")
     child.add_argument("--workspace", required=True)
     child.add_argument("--evidence", required=True)
@@ -87,7 +125,7 @@ def main():
             print(f"Collected {len(result['sources'])} source snapshots. Claims remain unreviewed.")
             return 0
         if args.command == "extract":
-            backend = partial(claude_backend, auth_mode=args.auth_mode)
+            backend = model_backend(args)
             if args.proposals:
                 proposals = load(args.proposals)
 
@@ -117,6 +155,19 @@ def main():
                 else "FAIL (see context-report.json)"
             )
             return 0 if result["passed"] else 1
+        if args.command == "relate":
+            backend = model_backend(args)
+            if args.proposals:
+                proposals = load(args.proposals)
+
+                def backend(role, payload, output_schema):
+                    return proposals
+
+            result = relate_claims(args.workspace, backend, args.out)
+            print(
+                f"Listed {len(result['relations'])} relation candidates. They do not change assess."
+            )
+            return 0
         if args.command == "prepare":
             result = prepare_input(args.workspace, args.evidence, args.out)
             print(f"Prepared {len(result['requirements'])} explicitly approved requirements.")
@@ -144,11 +195,7 @@ def main():
                 input_path=args.input,
             )
         else:
-            backend = (
-                demo_backend
-                if args.command == "demo"
-                else partial(claude_backend, auth_mode=args.auth_mode)
-            )
+            backend = demo_backend if args.command == "demo" else model_backend(args)
             passed = run_loop(
                 data,
                 args.out,
@@ -160,7 +207,11 @@ def main():
         print("PASS (document quality gate)" if passed else "FAIL (see evaluation.json)")
         return 0 if passed else 1
     except subprocess.TimeoutExpired:
-        print("External model timed out; extraction did not approve any claims.", file=sys.stderr)
+        print(
+            "External model timed out; nothing was approved. Retry with a larger --timeout-seconds "
+            "or fewer sources.",
+            file=sys.stderr,
+        )
         return 2
     except (OSError, ValueError, RuntimeError, ValidationError) as error:
         print(f"Input/configuration error: {error}", file=sys.stderr)

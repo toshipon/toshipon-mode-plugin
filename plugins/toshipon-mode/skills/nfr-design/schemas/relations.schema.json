@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "relations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claim_ids": {
+            "type": "array",
+            "items": {"type": "string", "pattern": "^C[0-9]+$"},
+            "minItems": 2,
+            "maxItems": 8,
+            "uniqueItems": true
+          },
+          "relation": {"enum": ["possible_conflict", "depends_on_unresolved", "overlap"]},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 2000}
+        },
+        "required": ["claim_ids", "relation", "reason"],
+        "additionalProperties": false
+      },
+      "maxItems": 256
+    }
+  },
+  "required": ["relations"],
+  "additionalProperties": false
+}

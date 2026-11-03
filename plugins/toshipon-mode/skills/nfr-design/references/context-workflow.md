@@ -70,6 +70,20 @@ adapter=aws-cli では、設定済みの AWS CLI 認証と manifest の Region �
 
 AWS の配列順を正規化し、内容の hash を version とします。取得時刻だけが変わっても構成変更として扱いません。取得は 60 秒で timeout し、失敗や大きすぎる結果を黙って空の inventory にしません。
 
+## 名前の違う主張を並べる
+
+assess の食い違い検査は、subject・metric・scope・period が完全に一致する主張どうしだけを比べます。抽出のたびに名前の付け方が揺れるので、同じ制約を扱う主張が別の group に分かれ、食い違いを見落とします。
+
+```bash
+python "$NFR_SKILL/scripts/nfr-harness.py" relate \
+  --workspace ./docs/order-context-002 --out ./docs/order-context-002/relate-001 \
+  --auth-mode subscription --timeout-seconds 600
+```
+
+relate は claims.json の主張と引用だけを Claude に渡し、一緒に読むべき組を relations.json と relations.md に書きます。種類は食い違いの候補（possible_conflict）、未決事項への依存（depends_on_unresolved）、同じ対象の別表現（overlap）の 3 つです。存在しない C ID を返した応答は拒否します。assess が比べ済みの同じ group だけの組は除きます。
+
+候補はモデルの提案です。承認・却下・置換の判断は行わず、claims.json も assess の合否も変えません。候補を読んで食い違いだと判断したら、review で却下や supersedes を記録するか、質問票に起こします。対話で作った候補は --proposals で同じ検査に通せます。
+
 ## 判断を記録する
 
 review は人が値と範囲を確認した後に実行します。reviewer、reason、確認時点、要件 ID、置換した内容、原文と版の fingerprint を履歴へ残します。却下は --status rejected で記録します。採用済みの REQ ID は振り直せません。

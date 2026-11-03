@@ -8,6 +8,8 @@
 
 `collect → extract → assess → 人の review → prepare → run` で、原文から承認済み要件を経て設計へ進めます。出典の版・取得時点・owner・hash と、引用に対応する現状・要件・提案・決定を保持します。議事録と記事の値が食い違う場合は、新しい方を勝手に採用せず判断を求めます。
 
+assess が比べるのは subject・metric・scope・period がすべて一致する主張だけです。名前が違っても同じ制約を扱う主張（例えば「この値は Parameter Store に置く」と「検証に使う値は Parameter Store に置かない」）は、`relate` で関連候補として並べます。候補はモデルの提案であり、assess の合否を変えません。
+
 原文の変更は `diff` で要件・設計判断・検証計画の見直し候補に結び付けます。現行構成と目標を区別し、context を使う workspace では承認と hash の検査を省略できません。原文 snapshot は独立監査にも渡し、抽出漏れと解釈のズレを確認します。
 
 **手順・サンプル・接続方法は [文脈の操作手順](references/context-workflow.md) を参照してください。** file adapter、Confluence Cloud の参照専用 API、AWS RDS / EC2 の参照専用 CLI に対応します。実 Confluence / AWS の認証を伴う接続は、この PR の検証では行っていません。
@@ -48,7 +50,7 @@ API key を使う場合は環境変数 `ANTHROPIC_API_KEY` を設定し、`--aut
 
 subscription は `--safe-mode`、api-key は `--bare` を使います。両方で `--tools ''`、`--disable-slash-commands`、`--strict-mcp-config` と空の MCP 設定、`--no-session-persistence` を指定します。既存の hooks、Skills、外部ツールに依存せず、入力の中の命令を実行しません。権限確認の bypass は使用しません。
 
-各 CLI 起動の timeout は 180 秒です。1 反復あたり最大 2 回の CLI 起動で、既定では最大 6 回です。明示指定できる反復数は 1〜10 回です。費用・利用枠の消費はモデルと入出力量に依存し、timeout でも消費される可能性があります。
+各 CLI 起動の timeout は既定で 180 秒です。`--timeout-seconds`（30〜3600）で `run`、`extract`、`relate` ごとに変えられます。原文の合計が 150 KB を超えると extract は 180 秒を超えることがあります。1 反復あたり最大 2 回の CLI 起動で、既定では最大 6 回です。明示指定できる反復数は 1〜10 回です。費用・利用枠の消費はモデルと入出力量に依存し、timeout でも消費される可能性があります。
 
 Claude Code 2.1.317 で CLI フラグと実接続を検証しています。古い CLI でフラグがなければ更新してください。ローカル Schema は Draft 2020-12 です。Claude CLI の Schema 転送では互換性のためトップレベルの `$schema` 宣言だけを除き、ローカルの厳密な検証は維持します。
 
