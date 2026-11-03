@@ -45,6 +45,7 @@ APM は plugin を skill・command・agent に分解して配置するので、`
 
 ### Skills
 
+- `nfr-design`: 非機能要件定義書と AWS 方式設計書を、既存台帳・JSON Schema・Python 評価器・独立監査で生成、検証します。使い方は [専用 README](plugins/toshipon-mode/skills/nfr-design/README.md) を参照してください。
 - `toshipon-mode`: 非自明なタスクの標準エントリポイント。playbook を逐語コピーして todolist 化し、principles を適用し、証拠で検証してから完了を宣言します。
 - `how`: サブエージェントを並列起動してコードベースを調査し、サブシステムの動作を解説します。
 - `why`: 利用可能なツールを横断的に調査し、コードがそう作られた背景を根拠付きで解明します。
@@ -75,6 +76,7 @@ APM は plugin を skill・command・agent に分解して配置するので、`
 
 ### Agent
 
+- `nfr-auditor`: 非機能要件と AWS 方式設計の独立監査 agent です。
 - `architect`: システムアーキテクト agent です。実装前に並列で設計を探索する用途に使います。
 
 ### Scripts
@@ -97,4 +99,12 @@ APM でインストールした場合は、公開されている取得元があ�
 
 ## 注意: skill の二重ロードについて
 
-このプラグインが収録している skill と同名の skill が、すでに `~/.claude/skills/` 配下にインストールされているマシンでは、両方が二重にロードされます。該当する skill 名（`toshipon-mode`、`how`、`why`、`unslop`、`technical-writing`、`show-me-your-work`、`arena`、`interrogate`、`blast-radius`、`web-perf`、`tdd`、`commit-rules`、`verification-loop`、`create-verification-skill`、`create-formal-verification-skill`、`maintain-formal-verification-skill`、`e2e-replay`、`typescript-best-practices`、`japanese-writing`、`japanese-tech-writing`）が個人設定側にもある場合は、どちらか片方を削除してください。
+このプラグインが収録している skill と同名の skill が、すでに `~/.claude/skills/` 配下にインストールされているマシンでは、両方が二重にロードされます。該当する skill 名（`nfr-design`、`toshipon-mode`、`how`、`why`、`unslop`、`technical-writing`、`show-me-your-work`、`arena`、`interrogate`、`blast-radius`、`web-perf`、`tdd`、`commit-rules`、`verification-loop`、`create-verification-skill`、`create-formal-verification-skill`、`maintain-formal-verification-skill`、`e2e-replay`、`typescript-best-practices`、`japanese-writing`、`japanese-tech-writing`）が個人設定側にもある場合は、どちらか片方を削除してください。
+
+## 非機能要件と AWS 方式設計
+
+`/toshipon-mode:nfr-design <workspace>` で既存の Doc workflow に非機能設計の検証を追加できます。Python 3.10 以上と `jsonschema` が必要です。専用 venv を利用側に用意し、plugin cache は変更しません。認証不要のデモ、Claude Code の API key / subscription login による生成、独立監査、既定 3 回の反復に対応します。
+
+実行手順、データ契約、テストは [nfr-design README](plugins/toshipon-mode/skills/nfr-design/README.md) にあります。生成物は新しい run ディレクトリに保存し、既存の台帳や文書を上書きしません。文書品質の通過は業務承認や AWS 上の実測達成とは別です。既存 `loop-engineering` のマージ・デプロイループは起動しません。
+
+この Skill の launcher は plugin の同梱パスを使います。まず Claude Code の `/plugin` 配布を対象とし、APM が runtime・Schema・Agent を同じ配置で保持しない構成は未検証です。

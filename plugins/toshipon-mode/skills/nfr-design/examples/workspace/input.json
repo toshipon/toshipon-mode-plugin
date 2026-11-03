@@ -1,0 +1,94 @@
+{
+  "project": "受注 API",
+  "region": "ap-northeast-1",
+  "budget_monthly_usd": 1500,
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "category": "availability",
+      "target": 99.95,
+      "unit": "percent",
+      "description": "月間の正常応答率。計画停止を含む",
+      "metric": "availability_percent",
+      "source_refs": [
+        "S1"
+      ]
+    },
+    {
+      "id": "REQ-002",
+      "category": "performance",
+      "target": 300,
+      "unit": "ms",
+      "description": "500 RPS、30 分継続時の p95 応答時間上限",
+      "metric": "p95_latency_ms",
+      "source_refs": [
+        "S1"
+      ]
+    },
+    {
+      "id": "REQ-003",
+      "category": "recovery",
+      "target": 60,
+      "unit": "minutes",
+      "description": "リージョン障害の復旧時間上限",
+      "metric": "rto_minutes",
+      "source_refs": [
+        "S1"
+      ]
+    },
+    {
+      "id": "REQ-004",
+      "category": "recovery",
+      "target": 15,
+      "unit": "minutes",
+      "description": "リージョン障害時のデータ損失時間上限",
+      "metric": "rpo_minutes",
+      "source_refs": [
+        "S1"
+      ]
+    },
+    {
+      "id": "REQ-005",
+      "category": "security",
+      "target": 100,
+      "unit": "percent",
+      "description": "保管データ暗号化率",
+      "metric": "encryption_percent",
+      "source_refs": [
+        "S1"
+      ]
+    },
+    {
+      "id": "REQ-006",
+      "category": "operations",
+      "target": 5,
+      "unit": "minutes",
+      "description": "障害検知から通知までの上限",
+      "metric": "detection_minutes",
+      "source_refs": [
+        "S1"
+      ]
+    },
+    {
+      "id": "REQ-007",
+      "category": "cost",
+      "target": 1500,
+      "unit": "USD/month",
+      "description": "月額予算上限。概算、税別",
+      "metric": "monthly_cost_usd",
+      "source_refs": [
+        "S1"
+      ]
+    }
+  ],
+  "technical_evidence": [
+    {
+      "id": "E1",
+      "url": "https://docs.aws.amazon.com/wellarchitected/latest/framework/rel-13.html",
+      "claim": "DEMO fixture。RTO/RPO を定義し、復旧戦略を選び検証します。各設計判断の実現性は確認していません。",
+      "status": "verified",
+      "verified_by": "DEMO fixture only, not a real reviewer",
+      "checked_at": "2026-11-03"
+    }
+  ]
+}

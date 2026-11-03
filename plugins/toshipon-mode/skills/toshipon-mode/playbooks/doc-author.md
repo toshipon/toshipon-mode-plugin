@@ -4,6 +4,8 @@
 
 台帳と規約は [`references/doc-workspace.md`](../references/doc-workspace.md) にある。
 
+非機能要件定義書と AWS 方式設計書を対で生成・検証する場合は **nfr-design** skill を使う。既存台帳から `input.json` を固定し、新しい run ディレクトリで生成する。NFR 評価器と既存 `doc-check.sh` の両方を通す。文書品質の通過と業務承認・実測達成を分ける。その他の文書は以下の手順を使う。
+
 1. skeleton を選ぶ。要求定義は `references/skeletons/requirements.md`、設計書は `references/skeletons/design.md`。他の種類（運用手順、監査対応資料）が要る場合は、他の playbook が独自 playbook を設計するのと同じように skeleton を先に設計する。**How to read this**、札の規約、`## 未決事項`、`## Appendix A. 出典一覧` を必ず持たせ、`references/skeletons/` への追加候補として reply で提示する。Diátaxis のモードを skeleton の **How to read this** の通りに守る。要求定義は reference、設計書は explanation と reference。
 2. 台帳が足りているかを確認する。skeleton の節を上から順に見て、`facts.md` に対応する事実があるかを問う。骨格を阻む `open` か `asked` の質問があれば Doc question loop に戻るか、推奨回答で仮置き（`assumed`）して進める。仮置きは `decisions.tsv` に残す。
 3. 下書きする。skeleton をコピーし、見出しの順序を保ったまま埋める。すべての記述に札を付ける。要求は `- REQ-001. <要求> [S<n>]` の形、外部要件は表で `EXT-` と `REQ-` を対応付ける。**technical-writing** skill に完全に従い、その後 **unslop** をかける。long dash は禁止。文中のコロンも禁止。各見出しは記述する対象か発見を述べる。
