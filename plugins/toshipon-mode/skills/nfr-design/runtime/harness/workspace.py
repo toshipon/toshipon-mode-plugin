@@ -3,9 +3,12 @@
 import csv
 import hashlib
 import io
+import json
 import re
 from datetime import date
 from pathlib import Path
+
+from .context_bridge import attach_context, render_assessment
 
 LEDGERS = ("sources.tsv", "facts.md", "questions.tsv", "decisions.tsv")
 SOURCE_FIELDS = ("id", "kind", "locator", "title", "retrieved", "note")
@@ -140,12 +143,19 @@ def load_workspace(workspace, input_data):
                         "description": f"{question['id']} is {question['status']} and blocks {blocks}.",
                     }
                 )
+    extra = attach_context(workspace, input_data, sources)
+    if "context_report" in extra:
+        findings.extend(extra["context_report"]["findings"])
     return {
+        **extra,
         "findings": findings,
         "sources": sources,
         "questions": applicable,
         "facts": contents["facts.md"].decode("utf-8"),
-        "hashes": {name: hashlib.sha256(value).hexdigest() for name, value in contents.items()},
+        "hashes": {
+            **{name: hashlib.sha256(value).hexdigest() for name, value in contents.items()},
+            **extra.get("context_hashes", {}),
+        },
     }
 
 
@@ -158,7 +168,7 @@ def assert_unchanged(workspace, hashes, input_path=None, input_digest=None):
         raise WorkspaceError("Input snapshot changed during evaluation.")
 
 
-def prepare_output(workspace, out):
+def prepare_output(workspace, out, context=None):
     workspace = Path(workspace).resolve()
     raw = Path(out).absolute()
     if raw.is_symlink() or raw.resolve().parent != workspace:
@@ -169,4 +179,25 @@ def prepare_output(workspace, out):
     out.mkdir(parents=False, exist_ok=True)
     for name in LEDGERS:
         (out / name).write_bytes((workspace / name).read_bytes())
+    if context:
+        for name in context.get("context_hashes", {}):
+            path = out / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes((workspace / name).read_bytes())
+        if "context_report" in context:
+            (out / "context-report.json").write_text(
+                json.dumps(context["context_report"], ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (out / "context-report.md").write_text(
+                render_assessment(
+                    context["context_report"],
+                    context.get("context_sources"),
+                    context.get("context_claims"),
+                ),
+                encoding="utf-8",
+            )
+            (out / ".gitignore").write_text(
+                "sources/\nclaims.json\ncontext-report.*\n", encoding="utf-8"
+            )
     return out

@@ -53,6 +53,15 @@
             },
             "minItems": 1,
             "uniqueItems": true
+          },
+          "context_refs": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^C[0-9]+$"
+            }
           }
         },
         "required": [

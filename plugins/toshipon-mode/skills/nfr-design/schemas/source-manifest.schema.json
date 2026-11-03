@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\r\\n\\t]+$"
+    },
+    "region": {
+      "type": "string",
+      "pattern": "^[a-z]{2}(?:-[a-z0-9]+)+-[0-9]+$"
+    },
+    "budget_monthly_usd": {
+      "type": "number",
+      "minimum": 0
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^S[0-9]+$"
+          },
+          "kind": {
+            "enum": [
+              "meeting",
+              "confluence",
+              "aws",
+              "file"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\r\\n\\t]+$"
+          },
+          "adapter": {
+            "enum": [
+              "file",
+              "confluence",
+              "aws-cli"
+            ]
+          },
+          "locator": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\r\\n\\t]+$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\r\\n\\t]+$"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\r\\n\\t]+$"
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\r\\n\\t]+$"
+          },
+          "site": {
+            "type": "string",
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.atlassian\\.net$"
+          },
+          "page_id": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          },
+          "service": {
+            "enum": [
+              "rds",
+              "ec2"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "adapter",
+          "locator",
+          "owner"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "adapter": {
+                  "const": "file"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "path",
+                "version"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "adapter": {
+                  "const": "confluence"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "kind": {
+                  "const": "confluence"
+                }
+              },
+              "required": [
+                "site",
+                "page_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "adapter": {
+                  "const": "aws-cli"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "kind": {
+                  "const": "aws"
+                }
+              },
+              "required": [
+                "service"
+              ]
+            }
+          }
+        ]
+      },
+      "maxItems": 32
+    }
+  },
+  "required": [
+    "project",
+    "region",
+    "budget_monthly_usd",
+    "sources"
+  ],
+  "additionalProperties": false
+}

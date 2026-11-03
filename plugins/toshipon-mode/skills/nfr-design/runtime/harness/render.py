@@ -78,6 +78,10 @@ def render(input_data, design, report, out, context):
     shared = "\n## 前提\n\n"
     for assumption in design["assumptions"]:
         shared += f"- {text(assumption)}\n"
+    if input_data.get("context_binding"):
+        shared += "\n## 文脈との対応\n\n出典の版、引用、承認者、置換判断は [文脈の整合性と承認](context-report.md) に記録しています。\n\n"
+        for requirement in input_data["requirements"]:
+            shared += f"- {requirement['id']} は {', '.join(requirement['context_refs'])} に対応します {tags(requirement)}\n"
     shared += "\n## 未決事項\n\n"
     unresolved = False
     for question in context["questions"]:

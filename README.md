@@ -45,7 +45,7 @@ APM は plugin を skill・command・agent に分解して配置するので、`
 
 ### Skills
 
-- `nfr-design`: 非機能要件定義書と AWS 方式設計書を、既存台帳・JSON Schema・Python 評価器・独立監査で生成、検証します。使い方は [専用 README](plugins/toshipon-mode/skills/nfr-design/README.md) を参照してください。
+- `nfr-design`: 議事録・Confluence・現行 AWS 構成から前提と要件を整理し、矛盾・承認・変更の影響を追跡します。承認済み要件から非機能要件定義書と AWS 方式設計書を生成、検証します。使い方は [専用 README](plugins/toshipon-mode/skills/nfr-design/README.md) を参照してください。
 - `toshipon-mode`: 非自明なタスクの標準エントリポイント。playbook を逐語コピーして todolist 化し、principles を適用し、証拠で検証してから完了を宣言します。
 - `how`: サブエージェントを並列起動してコードベースを調査し、サブシステムの動作を解説します。
 - `why`: 利用可能なツールを横断的に調査し、コードがそう作られた背景を根拠付きで解明します。
@@ -103,7 +103,7 @@ APM でインストールした場合は、公開されている取得元があ�
 
 ## 非機能要件と AWS 方式設計
 
-`/toshipon-mode:nfr-design <workspace>` で既存の Doc workflow に非機能設計の検証を追加できます。Python 3.10 以上と `jsonschema` が必要です。専用 venv を利用側に用意し、plugin cache は変更しません。認証不要のデモ、Claude Code の API key / subscription login による生成、独立監査、既定 3 回の反復に対応します。
+`/toshipon-mode:nfr-design <workspace>` で、議事録・Confluence・現行構成を版と引用付きで取り込み、既存の Doc workflow に非機能設計の検証を追加できます。出典の食い違いは自動で決着させず、人が確認した要件だけを設計へ渡します。`diff` は出典変更による要件・設計・検証の見直し候補を出します。Python 3.10 以上と `jsonschema` が必要です。専用 venv を利用側に用意し、plugin cache は変更しません。認証不要のデモ、Claude Code の API key / subscription login による生成、独立監査、既定 3 回の反復に対応します。
 
 実行手順、データ契約、テストは [nfr-design README](plugins/toshipon-mode/skills/nfr-design/README.md) にあります。生成物は新しい run ディレクトリに保存し、既存の台帳や文書を上書きしません。文書品質の通過は業務承認や AWS 上の実測達成とは別です。既存 `loop-engineering` のマージ・デプロイループは起動しません。
 

@@ -22,7 +22,7 @@ description: 非自明なタスクの標準エントリポイント。playbook �
 - 非自明な複数ステップ → throughput checkpoint を書く（Feature step 4）。
 - ユーザーへの返信を含むあらゆる prose surface → **unslop** skill。返信は **Writing the reply** に従って書く。
 - ドキュメント・RFC・readme・PR 説明・commit メッセージ → 構成と文の規律には **unslop** に加えて **technical-writing** skill を使う。commit の形は `${CLAUDE_PLUGIN_ROOT}/skills/commit-rules/SKILL.md` に従う。
-- 非機能要件定義書・AWS 方式設計書の生成と検証 → **nfr-design** skill。既存の Doc workspace を使い、要件の snapshot と設計 JSON を Schema・Python 評価器・独立監査で検証する。通常の Doc playbooks は維持し、文書の反復で `loop-engineering` のマージ・デプロイは起動しない。
+- 議事録・Confluence・現行構成の文脈から非機能要件と設計のブレを検出する、または非機能要件定義書・AWS 方式設計書の生成と検証 → **nfr-design** skill。既存の Doc workspace を使い、要件の snapshot と設計 JSON を Schema・Python 評価器・独立監査で検証する。通常の Doc playbooks は維持し、文書の反復で `loop-engineering` のマージ・デプロイは起動しない。
 - 要求定義・設計書・仕様書などの成果物ドキュメントを、Confluence の記事、Slack の議論、規制文書（FISC、US-SOX、SOC1 など）、既存システムから起こす → Doc playbooks（Doc discovery、Doc question loop、Doc author）。ドキュメント作業の証拠は出典である。台帳と札の規約は [`references/doc-workspace.md`](references/doc-workspace.md) に従い、出典のない事実は書かずに質問票に起こす。規制の条項番号や統制 ID を記憶から書かない。
 - commit 前 → diff の prose とコメントに **unslop** をかけ、次に `/verification-loop`。
 - 変更の影響範囲の評価 → **blast-radius** skill。

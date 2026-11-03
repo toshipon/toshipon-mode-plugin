@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^C[0-9]+$"
+          },
+          "kind": {
+            "enum": [
+              "observed",
+              "requirement",
+              "proposal",
+              "decision",
+              "unknown"
+            ]
+          },
+          "subject": {
+            "type": "string",
+            "minLength": 1
+          },
+          "metric": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": [
+              "number",
+              "string",
+              "boolean"
+            ]
+          },
+          "unit": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1
+          },
+          "period": {
+            "type": "string",
+            "minLength": 1
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_refs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_id": {
+                  "type": "string",
+                  "pattern": "^S[0-9]+$"
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 16000
+                },
+                "content_sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "source_id",
+                "quote",
+                "content_sha256"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "approval": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "enum": [
+                  "unreviewed",
+                  "approved",
+                  "rejected"
+                ]
+              },
+              "reviewer": {
+                "type": "string"
+              },
+              "reviewed_at": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "reviewer",
+              "reviewed_at",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "requirement_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^REQ-[0-9]{3,}$"
+          },
+          "supersedes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^C[0-9]+$"
+            },
+            "uniqueItems": true
+          },
+          "review_history": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "enum": [
+                    "approved",
+                    "rejected"
+                  ]
+                },
+                "reviewer": {
+                  "type": "string"
+                },
+                "reviewed_at": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "requirement_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^REQ-[0-9]{3,}$"
+                },
+                "supersedes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^C[0-9]+$"
+                  },
+                  "uniqueItems": true
+                },
+                "claim_sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "source_fingerprints": {
+                  "type": "object",
+                  "patternProperties": {
+                    "^S[0-9]+$": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "locator": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "owner": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "content_sha256": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "title": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "locator",
+                        "owner",
+                        "content_sha256",
+                        "kind",
+                        "title"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false,
+                  "minProperties": 1
+                }
+              },
+              "required": [
+                "status",
+                "reviewer",
+                "reviewed_at",
+                "reason",
+                "requirement_id",
+                "supersedes",
+                "claim_sha256",
+                "source_fingerprints"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "subject",
+          "metric",
+          "value",
+          "unit",
+          "scope",
+          "period",
+          "summary",
+          "source_refs",
+          "approval",
+          "requirement_id",
+          "supersedes",
+          "review_history"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 256
+    }
+  },
+  "required": [
+    "schema_version",
+    "claims"
+  ],
+  "additionalProperties": false
+}

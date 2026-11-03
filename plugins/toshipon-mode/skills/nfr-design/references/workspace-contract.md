@@ -43,3 +43,10 @@ technical_evidence は id、url、claim、status、verified_by、checked_at を�
 requirements.md は reference として要求と出典を記載します。design.md は構成と決定・代替案を記載し、各行を REQ と根拠へ対応させます。verification.md は方法、合否条件、評価の限界を記載します。3 文書とも How to read this、前提、未決事項、Appendix A. 出典一覧を持ちます。
 
 既存 doc-check は出典札と REQ の対応を検査します。NFR 評価器は、これに数値・Schema・根拠 registry の検査を加えます。両方を通しても実測達成や業務承認は意味しません。
+
+
+## Versioned context
+
+context.json がある workspace は sources/ の snapshot と claims.json を併用する。input.context_binding に context と claims の SHA-256、要件.context_refs に承認された C ID を持つ。原文の hash、引用、承認の内容・出典版、active な全要件の完全一致を検査する。context.json / claims.json の片方だけを削除したり、input の context_binding だけを取り除いて、この gate を省略することはできない。
+
+生成・監査へは原文と抽出内容の両方を渡す。生成者には review を実行するツールを与えない。CLI の review は人の明示的な判断に使用し、ローカル記録の本人性は保証しない。詳細は context-workflow.md の契約に従う。

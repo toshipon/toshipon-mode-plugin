@@ -1,0 +1,10 @@
+[
+  {
+    "id": "E1",
+    "url": "https://docs.aws.amazon.com/wellarchitected/latest/framework/rel-13.html",
+    "claim": "DEMO fixture。復旧目標と検証方針の例。実設計の確認記録ではありません。",
+    "status": "verified",
+    "verified_by": "DEMO fixture only",
+    "checked_at": "2026-11-03"
+  }
+]

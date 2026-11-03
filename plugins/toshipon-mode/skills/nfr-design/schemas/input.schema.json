@@ -61,6 +61,15 @@
             },
             "minItems": 1,
             "uniqueItems": true
+          },
+          "context_refs": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^C[0-9]+$"
+            }
           }
         },
         "required": [
@@ -121,6 +130,24 @@
         ],
         "additionalProperties": false
       }
+    },
+    "context_binding": {
+      "type": "object",
+      "properties": {
+        "context_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "claims_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "context_sha256",
+        "claims_sha256"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

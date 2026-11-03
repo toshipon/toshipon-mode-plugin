@@ -4,6 +4,14 @@
 
 文書品質の通過、業務承認、実際の性能や復旧目標の達成は別です。AWS の変更、外部へのメッセージ送信、PR のマージ、デプロイは行いません。
 
+## 議事録・Confluence・現行構成から始める
+
+`collect → extract → assess → 人の review → prepare → run` で、原文から承認済み要件を経て設計へ進めます。出典の版・取得時点・owner・hash と、引用に対応する現状・要件・提案・決定を保持します。議事録と記事の値が食い違う場合は、新しい方を勝手に採用せず判断を求めます。
+
+原文の変更は `diff` で要件・設計判断・検証計画の見直し候補に結び付けます。現行構成と目標を区別し、context を使う workspace では承認と hash の検査を省略できません。原文 snapshot は独立監査にも渡し、抽出漏れと解釈のズレを確認します。
+
+**手順・サンプル・接続方法は [文脈の操作手順](references/context-workflow.md) を参照してください。** file adapter、Confluence Cloud の参照専用 API、AWS RDS / EC2 の参照専用 CLI に対応します。実 Confluence / AWS の認証を伴う接続は、この PR の検証では行っていません。
+
 ## 対話で使う
 
 Claude Code に plugin を入れ、`/toshipon-mode:nfr-design <workspace>` を呼びます。既存の Doc discovery / Doc question loop が台帳を用意し、architect が設計案を検討し、nfr-auditor が監査します。自動実行では Python が同等の設計・監査の役割を明示的に指定し、native subagent を再帰起動しません。
