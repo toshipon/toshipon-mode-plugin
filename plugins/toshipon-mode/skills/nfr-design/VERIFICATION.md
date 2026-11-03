@@ -23,4 +23,4 @@ plugin validator は既存 plugin に icon がないという配布用の警告�
 
 認証不要のテストは初回失敗から修正版の合格までを確認しています。実 Claude の検査は 1 反復で止め、合成入力を正しく不合格にできることを確認しました。API key 認証、APM 配置、本番 AWS 上の負荷試験・復旧訓練は未実施です。
 
-CI は Python 3.10 / 3.13 で同じ自動テスト、型・lint・coverage、既存 loop-selftest を実行します。Claude への有料リクエストや認証情報は CI に必要ありません。
+CI は Linux の Python 3.10 / 3.13 で同じ自動テスト、型・lint・coverage を実行します。既存 loop-selftest は冒頭の規約どおり macOS の /bin/bash 3.2 を対象とするため、macOS 専用ジョブで検証します。最初の CI では、この既存テストを Linux で実行して通知関連の 5 検査が失敗したため、実行環境を分けました。Claude への有料リクエストや認証情報は CI に必要ありません。

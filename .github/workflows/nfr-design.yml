@@ -11,6 +11,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       matrix:
         python: ['3.10', '3.13']
@@ -29,4 +30,11 @@ jobs:
         working-directory: plugins/toshipon-mode/skills/nfr-design
       - run: python -m coverage run --source="$NFR_SKILL/runtime/harness" -m unittest discover -s "$NFR_SKILL/tests" -v
       - run: python -m coverage report --fail-under=80
+
+  legacy-loop:
+    # This suite explicitly targets the /bin/bash 3.2 used by launchd on macOS.
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: /bin/bash plugins/toshipon-mode/skills/loop-engineering/scripts/loop-selftest.sh
