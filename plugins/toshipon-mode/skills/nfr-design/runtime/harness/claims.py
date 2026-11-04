@@ -12,6 +12,7 @@ import math
 import os
 import tempfile
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,6 +23,12 @@ from .evaluator import METRICS
 
 ROOT = Path(__file__).resolve().parents[2]
 MAX_EXTRACTION_BYTES = 1024 * 1024
+MIN_BATCH_BYTES = 16 * 1024
+MAX_EXTRACT_JOBS = 8
+MAX_CLAIMS = 256
+REJECTED_NAME = "extraction-rejected.json"
+# A wrong quote, hash or source ID condemns one model-written claim, not the source context.
+DROPPABLE_FINDINGS = {"CLAIM_QUOTE", "CLAIM_STALE", "CLAIM_SOURCE"}
 EXTRACTED_FIELDS = (
     "id",
     "kind",
@@ -294,10 +301,48 @@ def validate_claims(workspace, claims_data, context=None):
     return findings
 
 
-def extract_claims(workspace, backend):
-    """Extract source-backed candidates; never accept model-supplied review fields."""
+def _detail(message, findings, limit=5):
+    lines = [f"{f['id']}: {f['description']}" for f in findings[:limit]]
+    if len(findings) > limit:
+        lines.append(f"and {len(findings) - limit} more")
+    return message + " " + "; ".join(lines)
+
+
+def _batches(sources, batch_bytes):
+    if batch_bytes is None:
+        return [sources]
+    batches, current, size = [], [], 0
+    for source in sources:
+        length = len(source["text"].encode("utf-8"))
+        if current and size + length > batch_bytes:
+            batches.append(current)
+            current, size = [], 0
+        current.append(source)
+        size += length
+    if current:
+        batches.append(current)
+    return batches
+
+
+def _bounded(value, low, high):
+    return not isinstance(value, bool) and isinstance(value, int) and low <= value <= high
+
+
+def extract_claims(workspace, backend, batch_bytes=None, jobs=1):
+    """Extract source-backed candidates; never accept model-supplied review fields.
+
+    batch_bytes splits whole sources into separate model calls so that a large context
+    neither times out nor loses every claim to one bad quotation. Claims whose quote,
+    hash or source ID does not match a snapshot are dropped and recorded beside
+    claims.json; they never enter claims.json.
+    """
+    if batch_bytes is not None and not _bounded(batch_bytes, MIN_BATCH_BYTES, MAX_EXTRACTION_BYTES):
+        raise ClaimsError(f"batch_bytes must be {MIN_BATCH_BYTES}-{MAX_EXTRACTION_BYTES}.")
+    if not _bounded(jobs, 1, MAX_EXTRACT_JOBS):
+        raise ClaimsError(f"jobs must be 1-{MAX_EXTRACT_JOBS}.")
     path = _claims_path(workspace)
-    if path.exists():
+    rejected_path = Path(workspace) / REJECTED_NAME
+    if path.exists() or rejected_path.exists() or rejected_path.is_symlink():
         raise ClaimsError("claims.json already exists; use a new collected workspace.")
     context = _context(workspace)
     hashes = {"context.json": _digest(Path(workspace) / "context.json")}
@@ -314,37 +359,80 @@ def extract_claims(workspace, backend):
                 "Source context exceeds the 1 MiB extraction limit; split the workspace."
             )
         sources.append(record)
-    output = backend("extractor", {"sources": sources}, _schema("extraction"))
-    try:
-        Draft202012Validator(_schema("extraction")).validate(output)
-    except ValidationError as error:
-        raise ClaimsError("Extractor output does not match the candidate-only schema.") from error
+    batches = _batches(sources, batch_bytes)
+
+    def call(batch):
+        output = backend("extractor", {"sources": batch}, _schema("extraction"))
+        try:
+            Draft202012Validator(_schema("extraction")).validate(output)
+        except ValidationError as error:
+            raise ClaimsError(
+                "Extractor output does not match the candidate-only schema."
+            ) from error
+        return output
+
+    if jobs == 1 or len(batches) == 1:
+        outputs = [call(batch) for batch in batches]
+    else:
+        with ThreadPoolExecutor(max_workers=min(jobs, len(batches))) as pool:
+            futures = [pool.submit(call, batch) for batch in batches]
+            try:
+                outputs = [future.result() for future in futures]
+            except BaseException:
+                for future in futures:
+                    future.cancel()
+                raise
     for rel, expected in hashes.items():
         if _digest(Path(workspace) / rel) != expected:
             raise ClaimsError("Source context changed during extraction.")
     result = {"schema_version": 1, "claims": []}
-    for claim in output["claims"]:
-        candidate = copy.deepcopy(claim)
-        candidate.update(
-            {
-                "approval": {
-                    "status": "unreviewed",
-                    "reviewer": "",
-                    "reviewed_at": "",
-                    "reason": "",
-                },
-                "requirement_id": None,
-                "supersedes": [],
-                "review_history": [],
-            }
+    for output in outputs:
+        for claim in output["claims"]:
+            candidate = copy.deepcopy(claim)
+            if len(batches) > 1:
+                candidate["id"] = f"C{len(result['claims']) + 1}"
+            candidate.update(
+                {
+                    "approval": {
+                        "status": "unreviewed",
+                        "reviewer": "",
+                        "reviewed_at": "",
+                        "reason": "",
+                    },
+                    "requirement_id": None,
+                    "supersedes": [],
+                    "review_history": [],
+                }
+            )
+            result["claims"].append(candidate)
+    if len(result["claims"]) > MAX_CLAIMS:
+        raise ClaimsError(
+            f"Extraction returned more than {MAX_CLAIMS} claims; split the workspace."
         )
-        result["claims"].append(candidate)
     _context(workspace)
     findings = validate_claims(workspace, result, context)
-    if findings:
+    fatal = [f for f in findings if f["id"] not in DROPPABLE_FINDINGS or not f.get("claim_ids")]
+    if fatal:
+        raise ClaimsError(_detail("Extracted claims failed structure validation:", fatal))
+    reasons = defaultdict(list)
+    for finding in findings:
+        for cid in finding["claim_ids"]:
+            reasons[cid].append(f"{finding['id']}: {finding['description']}")
+    rejected = [
+        {"claim": claim, "findings": reasons[claim["id"]]}
+        for claim in result["claims"]
+        if claim["id"] in reasons
+    ]
+    result["claims"] = [c for c in result["claims"] if c["id"] not in reasons]
+    if not result["claims"]:
+        raise ClaimsError(_detail("No extracted claim matched its source:", findings))
+    if validate_claims(workspace, result, context):
         raise ClaimsError("Extracted claims failed source quotation or structure validation.")
     with path.open("xb") as stream:
         stream.write(_bytes(result))
+    if rejected:
+        with rejected_path.open("xb") as stream:
+            stream.write(_bytes({"schema_version": 1, "rejected": rejected}))
     return result
 
 

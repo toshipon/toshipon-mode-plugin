@@ -167,16 +167,91 @@ class ContextTests(unittest.TestCase):
             load_context(self.ws)
 
     def test_extractor_cannot_approve_or_fabricate_quote(self):
-        for mutation in [
-            lambda c: c.update(approval={"status": "approved"}),
-            lambda c: c["source_refs"][0].update(quote="not in source"),
-        ]:
-            with self.subTest(mutation=mutation):
-                proposed = self.proposals()
-                mutation(proposed["claims"][0])
-                with self.assertRaises(ValueError):
-                    self.extract(proposed)
-                self.assertFalse((self.ws / "claims.json").exists())
+        proposed = self.proposals()
+        proposed["claims"][0].update(approval={"status": "approved"})
+        with self.assertRaises(ValueError):
+            self.extract(proposed)
+        self.assertFalse((self.ws / "claims.json").exists())
+        proposed = self.proposals()
+        for claim in proposed["claims"]:
+            claim["source_refs"][0].update(quote="not in source")
+        with self.assertRaisesRegex(ValueError, "CLAIM_QUOTE: C1"):
+            self.extract(proposed)
+        self.assertFalse((self.ws / "claims.json").exists())
+        self.assertFalse((self.ws / "extraction-rejected.json").exists())
+
+    def test_unmatched_quote_or_hash_drops_only_that_claim_and_records_it(self):
+        proposed = self.proposals()
+        proposed["claims"][0]["source_refs"][0].update(quote="not in source")
+        proposed["claims"][2]["source_refs"][0].update(content_sha256="0" * 64)
+        result = self.extract(proposed)
+        self.assertEqual([c["id"] for c in result["claims"]], ["C2"])
+        self.assertEqual(json.loads((self.ws / "claims.json").read_text()), result)
+        rejected = json.loads((self.ws / "extraction-rejected.json").read_text())["rejected"]
+        self.assertEqual([r["claim"]["id"] for r in rejected], ["C1", "C3"])
+        self.assertTrue(rejected[0]["findings"][0].startswith("CLAIM_QUOTE"))
+        self.assertTrue(rejected[1]["findings"][0].startswith("CLAIM_STALE"))
+        self.assertTrue(all(r["claim"]["approval"]["status"] == "unreviewed" for r in rejected))
+
+    def test_tampered_snapshot_is_never_dropped_as_a_bad_claim(self):
+        snapshot = self.ws / self.context["sources"][0]["snapshot_path"]
+
+        def backend(role, payload, schema):
+            snapshot.write_text("altered")
+            return self.proposals()
+
+        with self.assertRaisesRegex(ValueError, "changed during extraction"):
+            extract_claims(self.ws, backend)
+        self.assertFalse((self.ws / "claims.json").exists())
+
+    def test_batched_extraction_splits_whole_sources_and_renumbers(self):
+        (self.root / "big.md").write_text("大" * 7000)
+        self.manifest["sources"].append(
+            {**self.manifest["sources"][3], "id": "S5", "title": "big.md", "path": "big.md"}
+        )
+        self.manifest_path.write_text(json.dumps(self.manifest))
+        ws = self.root / "batched"
+        context = collect(self.manifest_path, ws)
+        by_id = {s["id"]: s for s in context["sources"]}
+        calls = []
+
+        def backend(role, payload, schema):
+            ids = [s["id"] for s in payload["sources"]]
+            calls.append(ids)
+            claims = []
+            for sid in ids:
+                text = (ws / by_id[sid]["snapshot_path"]).read_text()
+                claims.append(
+                    {
+                        "id": "C1",
+                        "kind": "unknown",
+                        "subject": sid,
+                        "metric": "note",
+                        "value": "x",
+                        "unit": "text",
+                        "scope": "unknown",
+                        "period": "unknown",
+                        "summary": sid,
+                        "source_refs": [
+                            {
+                                "source_id": sid,
+                                "quote": text[:5],
+                                "content_sha256": by_id[sid]["content_sha256"],
+                            }
+                        ],
+                    }
+                )
+            return {"claims": claims}
+
+        result = extract_claims(ws, backend, batch_bytes=16 * 1024, jobs=2)
+        self.assertEqual(sorted(sum(calls, [])), ["S1", "S2", "S3", "S4", "S5"])
+        self.assertIn(["S5"], calls)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([c["id"] for c in result["claims"]], ["C1", "C2", "C3", "C4", "C5"])
+        self.assertEqual(validate_claims(ws, result), [])
+        for bad in [{"batch_bytes": 1000}, {"jobs": 0}, {"jobs": True}]:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                extract_claims(self.ws, backend, **bad)
 
     def test_extraction_defaults_to_unreviewed(self):
         result = self.extract()
@@ -595,6 +670,17 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(call.call_args.kwargs["timeout"], 600)
         self.assertFalse((self.ws / "claims.json").exists())
+        self.assertEqual(cli(["extract", "--workspace", str(self.ws), "--batch-bytes", "100"]), 2)
+        self.assertEqual(cli(["extract", "--workspace", str(self.ws), "--jobs", "9"]), 2)
+        proposed = self.proposals()
+        proposed["claims"][0]["source_refs"][0].update(quote="not in source")
+        proposals = self.root / "proposals.json"
+        proposals.write_text(json.dumps(proposed))
+        code = cli(
+            ["extract", "--workspace", str(self.ws), "--proposals", str(proposals), "--jobs", "2"]
+        )
+        self.assertEqual(code, 0)
+        self.assertTrue((self.ws / "extraction-rejected.json").is_file())
 
     def test_context_cli_flow_without_model(self):
         from contextlib import redirect_stderr, redirect_stdout

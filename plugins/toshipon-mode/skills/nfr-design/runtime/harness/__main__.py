@@ -9,7 +9,15 @@ from pathlib import Path
 
 from jsonschema.exceptions import ValidationError
 
-from .claims import extract_claims, prepare_input, review_claim
+from .claims import (
+    MAX_EXTRACT_JOBS,
+    MAX_EXTRACTION_BYTES,
+    MIN_BATCH_BYTES,
+    REJECTED_NAME,
+    extract_claims,
+    prepare_input,
+    review_claim,
+)
 from .context_cli import assess, write_impact
 from .intake import collect
 from .relations import relate_claims
@@ -41,13 +49,17 @@ def load(path):
     )
 
 
-def timeout_seconds(text):
-    value = int(text)
-    if not MIN_TIMEOUT_SECONDS <= value <= MAX_TIMEOUT_SECONDS:
-        raise argparse.ArgumentTypeError(
-            f"must be {MIN_TIMEOUT_SECONDS}-{MAX_TIMEOUT_SECONDS} seconds"
-        )
-    return value
+def bounded_int(low, high, unit=""):
+    def parse(text):
+        value = int(text)
+        if not low <= value <= high:
+            raise argparse.ArgumentTypeError(f"must be {low}-{high}{unit}")
+        return value
+
+    return parse
+
+
+timeout_seconds = bounded_int(MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, " seconds")
 
 
 def model_options(child):
@@ -85,6 +97,17 @@ def main():
     child = sub.add_parser("extract")
     child.add_argument("--workspace", required=True)
     model_options(child)
+    child.add_argument(
+        "--batch-bytes",
+        type=bounded_int(MIN_BATCH_BYTES, MAX_EXTRACTION_BYTES, " bytes"),
+        help="Split whole sources into model calls of at most this many bytes.",
+    )
+    child.add_argument(
+        "--jobs",
+        type=bounded_int(1, MAX_EXTRACT_JOBS),
+        default=1,
+        help="Number of batches extracted in parallel.",
+    )
     child.add_argument(
         "--proposals",
         help="Validate candidate claims from a local extraction instead of calling Claude.",
@@ -132,8 +155,18 @@ def main():
                 def backend(role, payload, output_schema):
                     return proposals
 
-            result = extract_claims(args.workspace, backend)
+            result = extract_claims(
+                args.workspace, backend, batch_bytes=args.batch_bytes, jobs=args.jobs
+            )
             print(f"Extracted {len(result['claims'])} claims. Explicit review is required.")
+            rejected_path = Path(args.workspace) / REJECTED_NAME
+            if rejected_path.exists():
+                count = len(load(rejected_path)["rejected"])
+                print(
+                    f"Dropped {count} claims whose quotation, hash or source did not match; "
+                    f"see {rejected_path}.",
+                    file=sys.stderr,
+                )
             return 0
         if args.command == "review":
             review_claim(

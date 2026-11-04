@@ -50,7 +50,7 @@ API key を使う場合は環境変数 `ANTHROPIC_API_KEY` を設定し、`--aut
 
 subscription は `--safe-mode`、api-key は `--bare` を使います。両方で `--tools ''`、`--disable-slash-commands`、`--strict-mcp-config` と空の MCP 設定、`--no-session-persistence` を指定します。既存の hooks、Skills、外部ツールに依存せず、入力の中の命令を実行しません。権限確認の bypass は使用しません。
 
-各 CLI 起動の timeout は既定で 180 秒です。`--timeout-seconds`（30〜3600）で `run`、`extract`、`relate` ごとに変えられます。原文の合計が 150 KB を超えると extract は 180 秒を超えることがあります。1 反復あたり最大 2 回の CLI 起動で、既定では最大 6 回です。明示指定できる反復数は 1〜10 回です。費用・利用枠の消費はモデルと入出力量に依存し、timeout でも消費される可能性があります。
+各 CLI 起動の timeout は既定で 180 秒です。`--timeout-seconds`（30〜3600）で `run`、`extract`、`relate` ごとに変えられます。原文の合計が 150 KB を超えると extract は 180 秒を超えることがあります。原文がおよそ 300 KB を超える場合は、extract に `--batch-bytes`（16 KiB〜1 MiB）を付けて出典ごとに呼び出しを分け、`--jobs`（1〜8）で並列に実行します。1 反復あたり最大 2 回の CLI 起動で、既定では最大 6 回です。明示指定できる反復数は 1〜10 回です。費用・利用枠の消費はモデルと入出力量に依存し、timeout でも消費される可能性があります。
 
 Claude Code 2.1.317 で CLI フラグと実接続を検証しています。古い CLI でフラグがなければ更新してください。ローカル Schema は Draft 2020-12 です。Claude CLI の Schema 転送では互換性のためトップレベルの `$schema` 宣言だけを除き、ローカルの厳密な検証は維持します。
 

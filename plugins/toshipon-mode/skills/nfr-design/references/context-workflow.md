@@ -50,6 +50,10 @@ python "$NFR_SKILL/scripts/nfr-harness.py" assess --workspace ./docs/order-conte
 
 extract は Claude に原文を渡し、observed / requirement / proposal / decision / unknown として抽出します。値のない scope や period は推測せず unknown にします。抽出した引用は snapshot の部分文字列として検査します。モデルは approval、要件 ID、置換判断を返せません。対話で作った候補 JSON を --proposals で取り込む場合も同じ検査を通します。
 
+引用・hash・出典 ID が snapshot と合わない主張は、その主張だけを claims.json に入れずに除き、理由と一緒に `extraction-rejected.json` に残します。件数は標準エラーに出ます。全件が合わないとき、snapshot が抽出中に変わったとき、構造が壊れているときは、何も書かずに停止します。除いた主張に大事な内容があれば、原文を確かめて候補 JSON を直し、新しい workspace に --proposals で取り込みます。
+
+原文が大きいと、1 回の呼び出しが timeout しやすく、引用の誤りも起きやすくなります。`--batch-bytes 250000 --jobs 4` のように指定すると、出典を分割せずにまとめて複数の呼び出しに分け、並列に抽出します。主張 ID は通し番号に振り直します。呼び出しをまたぐと subject や metric の名前がそろいにくく、assess で比べられる組が減るので、relate を併用してください。
+
 引用が存在することだけで解釈の正しさは証明できません。subject・metric・scope・period の正規化、原文と値の関係、抽出漏れは人と独立監査が確認します。unknown の対象・範囲・測定期間は、値だけを承認しても prepare を通りません。担当者の回答を得て、未承認の抽出内容を引用と整合するよう修正してから確認します。設計者と監査者には原文 snapshot と抽出内容の両方を渡します。
 
 初期の制限は出典 32 件、1 出典 2 MiB、抽出・設計監査に渡す原文合計 1 MiB、主張 256 件、1 引用 16,000 文字です。超過すると黙って切り捨てず停止するため、案件や資料の範囲を絞ってください。
