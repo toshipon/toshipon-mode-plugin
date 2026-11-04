@@ -1,0 +1,58 @@
+{
+  "claims": [
+    {
+      "id": "C1",
+      "kind": "requirement",
+      "subject": "order-api",
+      "metric": "rto_minutes",
+      "value": 30,
+      "unit": "minutes",
+      "scope": "region failure",
+      "period": "per incident",
+      "summary": "受注 API の Region 障害 RTO は 30 分を希望する。",
+      "source_refs": [
+        {
+          "source_id": "S1",
+          "quote": "受注 API の Region 障害 RTO は 30 分を希望する。",
+          "content_sha256": "2237a933b472059f898e1bfcf1efb7d0a1558ac584739be40948faf152a539ee"
+        }
+      ]
+    },
+    {
+      "id": "C2",
+      "kind": "requirement",
+      "subject": "order-api",
+      "metric": "rto_minutes",
+      "value": 120,
+      "unit": "minutes",
+      "scope": "region failure",
+      "period": "per incident",
+      "summary": "受注 API の Region 障害 RTO は 120 分とする。",
+      "source_refs": [
+        {
+          "source_id": "S2",
+          "quote": "受注 API の Region 障害 RTO は 120 分とする。",
+          "content_sha256": "4c5cb1d81f7fe5a1434319ee9054d6efc2a5bfb23d9988e12b56dc5b0dbd39fd"
+        }
+      ]
+    },
+    {
+      "id": "C3",
+      "kind": "observed",
+      "subject": "order-api",
+      "metric": "db_multi_az",
+      "value": false,
+      "unit": "boolean",
+      "scope": "primary database",
+      "period": "snapshot",
+      "summary": "\"MultiAZ\":false",
+      "source_refs": [
+        {
+          "source_id": "S3",
+          "quote": "\"MultiAZ\":false",
+          "content_sha256": "4153a7947e42fd0d7b9dfd254a9eb034fc97900cf553215ed350b2eb97126afe"
+        }
+      ]
+    }
+  ]
+}

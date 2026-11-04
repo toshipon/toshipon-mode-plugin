@@ -1,0 +1,3 @@
+id	kind	locator	title	retrieved	note
+S1	other	input.json	DEMO 要件。業務承認済みではありません	2026-11-03	テスト用の合成データ
+S2	other	https://docs.aws.amazon.com/wellarchitected/latest/framework/rel-13.html	DEMO 技術根拠。実案件の確認記録ではありません	2026-11-03	固定 fixture
