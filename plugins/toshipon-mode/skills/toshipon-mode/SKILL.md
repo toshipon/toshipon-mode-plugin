@@ -11,12 +11,14 @@ description: 非自明なタスクの標準エントリポイント。playbook �
 
 残りの trigger:
 
+- 最初のメッセージ → ユーザーの目的と、それを満たす最小の変更を自分の言葉で言い直してから進む。subagent への brief、PR の `## Why`、最終報告も目的から書き始める。
+- agent を起動する（Agent tool の subagent、`claude -p` や `/loop` で起動する別セッション）→ kickoff の 1 行目を `Read <path>/worker.md before anything else.` にする。`<path>` はこの skill のフォルダの絶対パスで、skill を読み込んだときに表示される Base directory である。operator のルールは slash command で読み込む skill にしかないので、worker.md を読ませる以外に他の agent へ届く経路がない。kickoff の残りはゴールとタスクに絞る。
 - 非自明な変更、アーキテクチャ判断、または「本当に大丈夫か」という場面 → **how** skill。
 - 「どちらのアプローチが」「どうすべきか」「これはどうあるべきか」という分岐で `AskUserQuestion` を使おうとする直前 → 質問する前に分類する。答えが何かを実行して観測できる事実（挙動・タイミング・レイアウト・出力・パフォーマンス）であれば、それは人間が答えるべきものではない。Prototype playbook（`playbooks/prototype.md`）でスケッチし、結果に判断させる。タスクが read-only の Investigation で、成果物が根拠付きの回答であれば、そのまま Investigation にとどまり証拠から回答する。質問は、実験では決着しない本物のプロダクトや好みの判断のために取っておく。質問は遅い経路である。使い捨ての probe の方が大抵速く答えが出るし、人間には判断ではなく反応できる結果を渡せる。完全な自律を委ねられている場合、その委任が及ぶ判断は自分で下し、実行し、報告する。返答を促す言葉も提案も添えない。委任下でも operator にしか下せない判断には既定値を適用し、その既定値を十分な説明とともに報告し、operator が代わりに何を指示できるかを平易な言葉で述べる。operator は自分の言葉で答える。打ち返させるための短縮トークンは決して渡さない。operator が名指しした gate と、Autonomy の「必ず一時停止する」対象は、引き続き operator を必要とする。
 - あらゆるコード → まずデータ形状に名前を付け、[model-the-domain](references/principles/model-the-domain.md) に従ってその構造を選ぶ。
 - 関数境界をまたぐコード → `architect` agent（Agent tool、`subagent_type: "architect"`）で、実装前に並列で設計を探索する。`references/common/agents.md` を参照。
 - 並列 fan-out → 独立したスライスは、`references/common/agents.md` に従い 1 メッセージ内で同時実行する Agent 呼び出しとして送る。設計やコードの bakeoff には、base selection と grafting を備えた **arena** を使う。
-- 議論の分かれる設計 → 出荷前に **interrogate** skill（multi-model adversarial）を使う。
+- 議論の分かれる設計 → 出荷前に **interrogate** skill を使い、複数のモデルの敵対者に実行で壊させる。
 - 新機能・プロダクト変更・改善 → 設計の前に **hdd:hypothesis-first** skill を使う。Feature playbook はこの gate から始まる。
 - 仮説検証を人間の承認なしで回し続ける仕組み（定期実行、マージからデプロイと計測まで閉じるループ、ペルソナとインタビューで仮説を継ぎ足す運用）→ **loop-engineering** skill。1 tick が 1 判断であり、その skill の決定表が何を実行するかを決める。
 - 非自明な複数ステップ → throughput checkpoint を書く（Feature step 4）。
@@ -57,6 +59,8 @@ wrapper subagent は存在しない。Agent tool で委譲し、`references/comm
 - 通常の実装や fan-out のオーケストレーションには `model: "sonnet"`。
 - 横断的な設計、厄介な並行性、繊細なアルゴリズム、意図が曖昧で判断力が必要な作業には `model: "opus"`。
 - 些末な機械的編集・分類・抽出には `model: "haiku"`。
+
+`model: "fable"` は既定では使わない。使うのは、ユーザーがこのタスクで名指ししたときか、同じ brief を `model: "opus"` で 2 回走らせてチェックに落ちたときだけである。どちらに当たるかを述べる。難しさだけでは理由にならない。
 
 **あらゆる `Agent` 呼び出しの既定。** 結果が次にすぐ必要なものでない場合は `run_in_background: true`、context をそのまま埋め込むのではなくファイルへのポインタを渡す、そして明示的な `model` を指定する。ルーティングされた workflow skill（`how`、`why`、`interrogate`、`arena`）は多様な model によるレビューのために自身でモデルを設定するので、上書きせず skill が指定するものを尊重する。read-only な調査は `subagent_type: "Explore"` に渡す。
 

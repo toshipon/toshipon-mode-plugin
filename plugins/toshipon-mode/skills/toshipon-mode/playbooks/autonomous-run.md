@@ -7,7 +7,7 @@
 3. Claude Code 組み込みの `/loop` を使って wake の仕組みを選ぶ。監視すべきイベント（CI、マージ、ref の前進）があれば、そのイベントで起こす watcher subagent を用意し、フォールバックとして長い時間ベースの heartbeat を添える。イベントがない場合は、結果を再確認する価値があるタイミングに合わせた固定間隔の heartbeat にする。CI については具体的に `/check-github-ci` が watcher になる。各 subagent の `effort` は、SKILL.md の Delegation 節にある「仕事に model と effort を合わせる」に従い、仕事の難しさに合わせて選ぶ。
 4. 各イテレーションでは、証拠が正当化する最小の変更を行い、述語に対して検証し、前進すれば commit し、役に立たなかった変更は破棄する。「役に立つかもしれない」belt-and-suspenders は revert し、そのまま乗せておかない。
    [sequence-verifiable-units](../references/principles/sequence-verifiable-units.md) に従って作業を並べ、最後にまとめて確認するのではなく各 unit を次に進む前に検証する。
-5. 途中で見つかったものはあなたのものである。壊れた skill、関連するバグ、flaky な verifier、レビューのノイズ、tooling の失敗、放置された follow-up、修正可能な drift は toshipon-mode 経由で自分で対処する。範囲外の修正は独立した PR にする。可逆的な作業を人間のために取り置いたり、`AskUserQuestion` を使ったりしない（[never-block-on-the-human](../references/principles/never-block-on-the-human.md)）。表に出すのは、不可逆な行動、実験では決着しない本物のプロダクトや好みの判断、または本当の行き詰まりだけである。述語を主要な駆動力として保ち、寄り道の修正のたびにそこへ戻る。
+5. 途中で見つかったもののうち、ゴールを支えるものはあなたのものである。壊れた skill、関連するバグ、flaky な verifier、レビューのノイズ、tooling の失敗、放置された follow-up、修正可能な drift は toshipon-mode 経由で自分で対処する。範囲外の修正は独立した PR にする。可逆的な作業を人間のために取り置いたり、`AskUserQuestion` を使ったりしない（[never-block-on-the-human](../references/principles/never-block-on-the-human.md)）。表に出すのは、不可逆な行動、実験では決着しない本物のプロダクトや好みの判断、または本当の行き詰まりだけである。述語を主要な駆動力として保ち、寄り道の修正のたびにそこへ戻る。
 6. **show-me-your-work** skill で毎イテレーション checkpoint する。何が変わったか、述語が動いたかどうかの行を記録する。記録のない run は監査も再開もできない。
 7. 述語が満たされたら止まる。停滞は停止ではない。止まらずアプローチを転換して押し進める。行き詰まったらスピンするのではなく、本物の dead end として表に出す。勝利を宣言するために述語を緩めることは決してしない。
 

@@ -5,7 +5,7 @@
 科学的であること。出荷するすべての行は runtime の証拠に遡れる。「役に立つかもしれない」belt-and-suspenders は仮説であって修正ではない。出荷しない。証拠が仮説を反証したら、それが動機づけたものを revert する。証拠が正当化する最小の変更を出荷し、それ以上は出荷しない。証拠が trace である Perf でも同じ規律を適用する。
 
 1. Non-negotiables にある driver skill 経由で、一致する surface 上で自分自身で再現する。debug や instrumentation の protocol がユーザーに再現を頼むよう指示していても同じである。ユーザーに聞くのは、driver がターゲットに届かない具体的な理由がある場合のみで、しかもそれを driver で行けるところまで駆動した後だけである。直接再現しない場合は、トリガーを合成する、条件を絞る、発火するまで instrument する。再現できないバグは、直ったと証明できない。
-2. 原因を二分探索する。候補となる仮説を立て、1 つが生き残るまで排除していく。影響を受ける subsystem には `how` を、regression の履歴には **why** skill を種として使う。各パスで、残っている問題空間を最も削る分割を選び、runtime の証拠を得て、排除する。プログラム状態が不明瞭なときは instrumentation や logging を追加し、コードが動く様子を読む。推測しない。長く粘るハントは Claude Code 組み込みの `/loop` で駆動する。step 3 の design fan-out の前に、生き残った *mechanism* を runtime の証拠で確認する。もっともらしいが未確認の原因の上に設計を組むと、全会一致で間違っていながら本物の原因が 1 つ隣の subsystem にあるということが起こり得る。
+2. 原因を二分探索する。候補となる仮説を立て、1 つが生き残るまで排除していく。影響を受ける subsystem のトレースと、regression の履歴を調べる **why** skill を種にする。各パスで、残っている問題空間を最も削る分割を選び、runtime の証拠を得て、排除する。プログラム状態が不明瞭なときは instrumentation や logging を追加し、コードが動く様子を読む。推測しない。長く粘るハントは Claude Code 組み込みの `/loop` で駆動する。step 3 の design fan-out の前に、生き残った *mechanism* を runtime の証拠で確認する。もっともらしいが未確認の原因の上に設計を組むと、全会一致で間違っていながら本物の原因が 1 つ隣の subsystem にあるということが起こり得る。
    [fix-root-causes](../references/principles/fix-root-causes.md) に従って各症状を根本原因まで遡る。
 3. 修正を計画する。関数境界をまたぐなら、まず `architect` agent を実行し並列で設計を探索する（`../references/common/agents.md` 参照）。実装は Agent tool で委譲する。通常の修正には `model: "sonnet"`、原因が微妙だったり意図が曖昧だったりする場合は `model: "opus"`、具体的なスコープを添えて。
 4. 同じ surface で検証する。元の repro が通るようになる。「不明瞭」や誤った surface は合格ではない。フラグを立てる。unit test はブランチの挙動を示すのであってバグの不在を示すのではない。これは [prove-it-works](../references/principles/prove-it-works.md) である。

@@ -4,7 +4,7 @@
 
 挙動の変更をこっそり持ち込む refactor は安全網を失う。cleanup が欠けている feature や本物のバグを明らかにした場合は、それを切り離し、pin した契約に対する構造変更をまず出荷する。redesign は許されるが、そう名指しして Feature にルーティングする。大規模または横断的な構造変更（多くの呼び出し箇所にまたがる migration、多くの subsystem を協調させる reshape）は独自のプランを必要とする。Playbooks セクションの no-match ルールに従って設計するか、**Multi-phase plan** にルーティングする。この playbook は焦点を絞った中規模までの変更向けである。
 
-1. まず挙動契約を pin する。**how** skill を影響を受ける subsystem にかけて契約を学び、構造を動かす前に現在の挙動を捉える characterization test、snapshot、または equivalence harness を書く。harness が「refactor」をチェック可能な主張にする（[prove-it-works](../references/principles/prove-it-works.md)）。その領域にカバレッジがなければ、構造に触れる前に pin を書く。型チェックと lint は pin にならない。
+1. まず挙動契約を pin する。影響を受ける subsystem をトレースして契約を学び、構造を動かす前に現在の挙動を捉える characterization test、snapshot、または equivalence harness を書く。harness が「refactor」をチェック可能な主張にする（[prove-it-works](../references/principles/prove-it-works.md)）。その領域にカバレッジがなければ、構造に触れる前に pin を書く。型チェックと lint は pin にならない。
 2. [model-the-domain](../references/principles/model-the-domain.md) に従い、コードに欠けている構造に名前を付ける。散らばった bool の代わりの state machine、広がった分岐の代わりの table や registry、繰り返される形状の想定の代わりの typed model、場当たり的な mutation の代わりの reducer。形状がすでに明確でローカルなら、退屈なコードのままにする。reshape は分岐や不正な状態を削除するものであるべきで、間接性を追加するものであってはならない。
 3. 目標の形状に名前を付ける。今日ゼロから作るとしたら、現在の要件が最初から基礎だったとしたら、モジュールのレイアウト、型、call graph はどうあるべきかを述べる。目標が関数境界をまたぐなら、move の前に `architect` agent でその形状を並列に設計探索する。
 4. 追加より先に引き算する。新しい形状を導入する前に、デッドウェイトを削除し、呼び出し元が 1 つの wrapper をたたみ、冗長な validator を落とし、孤立した参照を除去する（[subtract-before-you-add](../references/principles/subtract-before-you-add.md)）。目標の形状に到達する最小の変更が出荷される（[laziness-protocol](../references/principles/laziness-protocol.md)）。「役に立つかもしれない」投機的な cleanup は revert し、そのまま乗せておかない。

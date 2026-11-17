@@ -6,7 +6,7 @@
 
 このプラグインは、Cursor 向けプラグイン [pstack](https://github.com/cursor/plugins/tree/main/pstack)（Lauren Tan 作、MIT License）を参考に作りました。`toshipon-mode` skill は pstack の `poteto-mode` を、principles や `how`、`why`、`unslop`、`interrogate`、`arena` などのサブ skill は pstack の同名 skill を元にしています。日本語に翻訳したうえで、Claude Code の Agent tool やモデル指定（`opus` / `sonnet` / `haiku`）に合わせて書き換えています。
 
-upstream の変更は定期的に確認して取り込んでいます。最後に取り込んだのは pstack 0.15.29（cursor/plugins `88d4751`）です。
+upstream の変更は定期的に確認して取り込んでいます。最後に取り込んだのは pstack 0.15.43（cursor/plugins `2f87c85`）です。
 
 pstack 以外にも、次のコンポーネントは外部のリポジトリが元になっています。
 
@@ -47,13 +47,13 @@ APM は plugin を skill・command・agent に分解して配置するので、`
 
 - `nfr-design`: 議事録・Confluence・現行 AWS 構成から前提と要件を整理し、矛盾・承認・変更の影響を追跡します。承認済み要件から非機能要件定義書と AWS 方式設計書を生成、検証します。使い方は [専用 README](plugins/toshipon-mode/skills/nfr-design/README.md) を参照してください。
 - `toshipon-mode`: 非自明なタスクの標準エントリポイント。playbook を逐語コピーして todolist 化し、principles を適用し、証拠で検証してから完了を宣言します。
-- `how`: サブエージェントを並列起動してコードベースを調査し、サブシステムの動作を解説します。
+- `how`: サブエージェントでコードベースを調査し、サブシステムの動作を解説します。
 - `why`: 利用可能なツールを横断的に調査し、コードがそう作られた背景を根拠付きで解明します。
-- `unslop`: 文章から AI 特有の癖を取り除き、人間らしい声を加えます。
+- `unslop`: 文章から AI 特有の癖を取り除きます。
 - `technical-writing`: ドキュメント・RFC・PR 説明の構成と文の規律を扱います。
 - `show-me-your-work`: 長時間・自律的な作業の判断記録を残します。
 - `arena`: 同一タスクに対して複数候補を並列生成し、最良の候補に他の優れた部分を統合します。
-- `interrogate`: 複数モデルティアでコード変更を敵対的にレビューします。
+- `interrogate`: 複数モデルティアの敵対者がコード変更や設計を壊しにかかり、実行で証明された所見だけを返します。
 - `blast-radius`: 変更の影響範囲を評価します。
 - `web-perf`: Core Web Vitals などの Web パフォーマンスを分析します。
 - `tdd`: テスト駆動開発のガイドラインです。
