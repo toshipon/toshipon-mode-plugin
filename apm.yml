@@ -14,5 +14,5 @@ dependencies:
   apm:
     # 本体。同じリポジトリ内の Claude plugin（skills / agents / commands）
     - ./plugins/toshipon-mode
-    # hdd:hypothesis-first（skill）、hdd:verify / hdd:grill（command）、hdd:source-traceability（skill）
+    # hdd:hypothesis-first（skill）、hdd:verify / hdd:grilling（command）、hdd:source-traceability（skill）
     - toshipon/hypothesis-driven-development-skills/plugin
