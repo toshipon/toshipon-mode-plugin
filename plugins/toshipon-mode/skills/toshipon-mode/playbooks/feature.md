@@ -3,7 +3,7 @@
 **設計はあなたが持つ。計画し、レビューし、検証する。** 実装は委譲する。自分は先頭に立つ。
 
 1. Hypothesis gate。設計作業の前に、要求に対して **hdd:hypothesis-first** skill を実行する。feature が賭けている仮説の名前、それが検証済みかどうか、どんな証拠によるかを述べる。costly な feature に対する未検証の仮説は、まず `hdd:verify` か `hdd:grilling` にルーティングする。そのことを述べて止まり、未検証の賭けの上に構築しない。検証済みか、覆すコストの低い賭けであれば進み、仮説とその証拠を reply に記録する。スキップした場合は `hypothesis gate skipped: <reason>` としてリストに残す。
-2. 影響を受ける subsystem に `how` をかける。
+2. 影響を受ける subsystem をトレースする。
 3. `architect` agent を実行し並列で設計を探索する（`../references/common/agents.md` 参照）。
 4. throughput checkpoint を 4 つの todo 項目として書く。本当に当てはまらない次元（単一ファイル、fan-out なし）も、削除するのではなく `n/a: <reason>` を付けて項目を残す。
    - **Blocking first steps.** gate は fan-out の前に走る。

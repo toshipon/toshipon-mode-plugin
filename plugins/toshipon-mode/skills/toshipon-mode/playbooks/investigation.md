@@ -4,9 +4,9 @@
 
 Read-only な要求。「X はどう動くか」「Y はなぜこう作られたか」「Z は本当に大丈夫か」「X と Y のどちらにすべきか」。これらは根拠付きの説明や推奨を生むのであって、コード変更を生むのではない。
 
-1. **how** skill を通す（狭い質問には Explain mode、「本当に大丈夫か」には Critique mode）。動機に関する質問には **why** skill も通す。
+1. 質問の対象のコードをトレースする。「本当に大丈夫か」には **how** skill の Critique mode を使う。動機に関する質問には **why** skill も通す。
 2. throughput checkpoint は 1 行にとどめる。`throughput checkpoint: n/a, read-only investigation`。4 項目版はコード形の作業向け。
-3. `how` の形をした出力（Overview / Key Concepts / How It Works / Where Things Live / Gotchas）、または要求が選択肢間の判断であれば tradeoffs table を添えた推奨を出す。
+3. 出力（Overview / Key Concepts / How It Works / Where Things Live / Gotchas）、または要求が選択肢間の判断であれば tradeoffs table を添えた推奨を出す。
 4. **unslop** skill を reply に適用する。
 
 コード変更が先行する investigation でない限り、PR も CI watch も design fan-out もない。もし先行するなら、ユーザーに戻し Bug fix か Feature に再ルーティングする。
