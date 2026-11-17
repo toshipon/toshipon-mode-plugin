@@ -91,7 +91,7 @@ APM でインストールした場合は、公開されている取得元があ�
 
 | skill | `apm.yml` での扱い |
 |---|---|
-| `hdd:hypothesis-first`、`hdd:verify`、`hdd:grill`、`hdd:source-traceability`（`japanese-writing` が参照） | 依存として宣言済み（[toshipon/hypothesis-driven-development-skills](https://github.com/toshipon/hypothesis-driven-development-skills) の `plugin/`） |
+| `hdd:hypothesis-first`、`hdd:verify`、`hdd:grilling`、`hdd:source-traceability`（`japanese-writing` が参照） | 依存として宣言済み（[toshipon/hypothesis-driven-development-skills](https://github.com/toshipon/hypothesis-driven-development-skills) の `plugin/`） |
 | `superset:orchestrate`、`superset:browser` | 未宣言。Superset アプリが提供する skill のため |
 | `claude-in-chrome` | 未宣言。Claude Code に組み込まれている skill のため |
 
