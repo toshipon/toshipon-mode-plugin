@@ -28,6 +28,8 @@ def _read(path, limit, what):
         return data, json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as error:
         raise InputError(f"{what} is not valid JSON: {error}") from None
+    except RecursionError:
+        raise InputError(f"{what} is nested too deep to read as JSON.") from None
 
 
 def _plan(path):
@@ -50,6 +52,7 @@ def validate(root, plan_path, evidence_dir, delivery_path=None, env=None):
         delivery_bytes, delivery = _read(delivery_path, MAX_DELIVERY_BYTES, "--delivery")
         delivery_sha256 = records.sha256(delivery_bytes)
     found = [] if delivery is None else contract.check(delivery, evidence_dir, plan_sha256)
+    bound = delivery is not None and contract.delivered_plan(delivery) == plan_sha256
     classified = risk.classify(plan, env)
 
     run_dir = paths.create_run(root)
@@ -70,7 +73,7 @@ def validate(root, plan_path, evidence_dir, delivery_path=None, env=None):
             for number, item in enumerate(found, start=1)
         ],
     }
-    risk_record = {**head, "plan_sha256": plan_sha256, **classified}
+    risk_record = {**head, "plan_sha256": plan_sha256, "bound_to_delivery": bound, **classified}
     records.validate("iac-delivery", check, "transition_check")
     records.validate("iac-delivery", risk_record, "risk")
     records.write_json(paths.child(run_dir, "transition-check.json"), check)
@@ -95,6 +98,7 @@ def summary(check, risk_record):
         "status": check["status"],
         "violations": counts,
         "risk": risk_record.get("level", risk_record["status"]),
+        "bound_to_delivery": risk_record["bound_to_delivery"],
         "files": ["risk.json", "transition-check.json"],
     }
 
@@ -116,6 +120,10 @@ def evaluator_output(check, risk_record):
             for item in check["violations"]
         ]
         notes.append("The delivery contract is checked by fixed rules; no model is asked.")
+        if not risk_record["bound_to_delivery"]:
+            notes.append(
+                "The plan is not bound to the delivery: it records no plan yet, or another one."
+            )
     if risk_record["status"] == "evaluated":
         levels = [item["level"] for item in risk_record["changes"]]
         for level in LEVELS:

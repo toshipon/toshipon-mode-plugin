@@ -22,9 +22,19 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "role"],
+      "$comment": "`not: pattern \\n` refuses the trailing newline a `$` lets through in Python's re.search.",
       "properties": {
-        "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$" },
-        "role": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" }
+        "name": {
+          "description": "Who the record says acted. Self-reported: the harness checks no identity.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$",
+          "not": { "pattern": "\\n" }
+        },
+        "role": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "not": { "pattern": "\\n" }
+        }
       }
     },
     "evidence": {
@@ -153,12 +163,24 @@
       "description": "risk.json. Without opa the status is unevaluable and there is no level.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "run_id", "created_at", "plan_sha256", "status", "engine"],
+      "required": [
+        "schema_version",
+        "run_id",
+        "created_at",
+        "plan_sha256",
+        "bound_to_delivery",
+        "status",
+        "engine"
+      ],
       "properties": {
         "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
         "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
         "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
         "plan_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+        "bound_to_delivery": {
+          "description": "True only when --delivery was given, fits the schema, and its last plan evidence is this plan.",
+          "type": "boolean"
+        },
         "status": { "enum": ["evaluated", "unevaluable"] },
         "unevaluable_reason": { "type": "string", "minLength": 1 },
         "engine": {

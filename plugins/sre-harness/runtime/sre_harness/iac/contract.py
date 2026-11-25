@@ -7,6 +7,7 @@ state needs and the cross-transition rules are the tables below. No model is ask
 """
 
 import json
+import unicodedata
 
 from .. import records
 from . import evidence as evidence_files
@@ -50,6 +51,13 @@ REQUIRED_EVIDENCE = {
 PRIVILEGED_ROLE = "privileged"
 
 
+def person(name):
+    """The key two actor names are compared by: NFKC, trimmed, casefolded, the part before
+    `@`, trailing dots dropped. Names are what the record says; nobody's identity is checked."""
+    key = unicodedata.normalize("NFKC", name).strip().casefold()
+    return key.partition("@")[0].rstrip(".")
+
+
 def violation(code, transition, message, locator=None):
     item = {"code": code, "transition": transition, "message": message}
     if locator is not None:
@@ -77,7 +85,7 @@ def _contents(checked, index, kind, definition):
             continue
         try:
             value = json.loads(data.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
+        except (UnicodeDecodeError, ValueError, RecursionError):
             value = None
         if value is None or records.violations("iac-delivery", value, definition):
             problems.append(
@@ -123,7 +131,7 @@ def _approver_is_privileged_and_independent(transitions, index, checked):
             )
         )
     implemented = _last(transitions, index, "implemented")
-    if implemented is not None and implemented["actor"]["name"] == actor["name"]:
+    if implemented is not None and person(implemented["actor"]["name"]) == person(actor["name"]):
         problems.append(
             violation(
                 "approver_is_implementer",
@@ -145,6 +153,10 @@ def _approved_plan_was_staged(transitions, index, checked):
         violation("plan_not_staged", index, f"approved plan {digest} is not in {where}.")
         for digest in unstaged
     ]
+
+
+def _execution_record_is_shaped(transitions, index, checked):
+    return _contents(checked, index, "execution_record", "execution_record")[1]
 
 
 def _deployed_the_approved_plan(transitions, index, checked):
@@ -170,6 +182,7 @@ RULES = {
     "designed": (_requirement_is_approved,),
     "privileged_approved": (_approver_is_privileged_and_independent, _approved_plan_was_staged),
     "deployed": (_deployed_the_approved_plan,),
+    "rolled_back": (_execution_record_is_shaped,),
 }
 
 
@@ -266,13 +279,27 @@ def check(delivery, root, plan_sha256=None):
                 f"{transitions[-1]['to']}.",
             )
         )
-    plans = [entry for item in transitions for entry in item["evidence"] if entry["kind"] == "plan"]
-    if plan_sha256 is not None and plans and plans[-1]["sha256"] != plan_sha256:
+    delivered = delivered_plan(delivery)
+    if plan_sha256 is not None and delivered is not None and delivered != plan_sha256:
         found.append(
             violation(
                 "plan_mismatch",
                 None,
-                f"--plan is {plan_sha256}; the delivery's last plan is {plans[-1]['sha256']}.",
+                f"--plan is {plan_sha256}; the delivery's last plan is {delivered}.",
             )
         )
     return found
+
+
+def delivered_plan(delivery):
+    """The sha256 of the last plan the delivery recorded, or None (no plan yet, or the record
+    does not fit the schema). A --plan is bound to the delivery only when it is this plan."""
+    if records.violations("iac-delivery", delivery):
+        return None
+    plans = [
+        entry["sha256"]
+        for item in delivery["transitions"]
+        for entry in item["evidence"]
+        if entry["kind"] == "plan"
+    ]
+    return plans[-1] if plans else None

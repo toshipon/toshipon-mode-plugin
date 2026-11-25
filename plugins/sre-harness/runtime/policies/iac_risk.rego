@@ -35,7 +35,21 @@ public_flags := {"associate_public_ip_address", "map_public_ip_on_launch", "publ
 
 tag_keys := {"tags", "tags_all"}
 
-known_actions := {"no-op", "read", "create", "update", "delete"}
+# The action lists Terraform writes. Any other list (a repeat, a mix, an unknown name, not a
+# list of strings) is `unknown_action`: at least medium, and high when it holds a delete.
+known_shapes := {
+	["no-op"],
+	["read"],
+	["create"],
+	["update"],
+	["delete"],
+	["delete", "create"],
+	["create", "delete"],
+}
+
+replace_shapes := {["delete", "create"], ["create", "delete"]}
+
+harmless_shapes := {["no-op"], ["read"]}
 
 reason_level := {
 	"delete": "high",
@@ -56,41 +70,49 @@ obj(x) := x if is_object(x)
 
 else := {}
 
-changes_anything(change) if {
-	some action in change.actions
-	not action in {"no-op", "read"}
+# The actions of one resource change, or null when there are none to read.
+actions_of(resource) := object.get(object.get(resource, "change", {}), "actions", null)
+
+# An update is tags_only when before and after are both objects, nothing is left to be known
+# after apply, the tags differ, and nothing else does.
+tags_only(change) if {
+	change.actions == ["update"]
+	is_object(change.before)
+	is_object(change.after)
+	object.get(change, "after_unknown", {}) == {}
+	change.before != change.after
+	object.remove(change.before, tag_keys) == object.remove(change.after, tag_keys)
 }
 
 reasons[i] contains "delete" if {
-	input.resource_changes[i].change.actions == ["delete"]
+	actions := actions_of(input.resource_changes[i])
+	is_array(actions)
+	"delete" in actions
+	not actions in replace_shapes
 }
 
 reasons[i] contains "replace" if {
-	actions := input.resource_changes[i].change.actions
-	"delete" in actions
-	"create" in actions
+	actions_of(input.resource_changes[i]) in replace_shapes
 }
 
 reasons[i] contains "create" if {
-	input.resource_changes[i].change.actions == ["create"]
+	actions_of(input.resource_changes[i]) == ["create"]
 }
 
 reasons[i] contains "tags_only" if {
-	change := input.resource_changes[i].change
-	change.actions == ["update"]
-	object.remove(obj(change.before), tag_keys) == object.remove(obj(change.after), tag_keys)
+	tags_only(input.resource_changes[i].change)
 }
 
 reasons[i] contains "update" if {
 	change := input.resource_changes[i].change
 	change.actions == ["update"]
-	object.remove(obj(change.before), tag_keys) != object.remove(obj(change.after), tag_keys)
+	not tags_only(change)
 }
 
 reasons[i] contains "sensitive_type" if {
 	resource := input.resource_changes[i]
 	resource.type in sensitive_types
-	changes_anything(resource.change)
+	not actions_of(resource) in harmless_shapes
 }
 
 reasons[i] contains "public_setting" if {
@@ -108,24 +130,30 @@ reasons[i] contains "public_setting" if {
 }
 
 reasons[i] contains "unknown_action" if {
-	some action in input.resource_changes[i].change.actions
-	not action in known_actions
+	some i, resource in input.resource_changes
+	not actions_of(resource) in known_shapes
 }
 
 level_of(i) := names[max({0} | {rank[reason_level[r]] | some r in reasons[i]})]
 
+# Every resource change gets an item, even one with no address or actions, so that none is
+# dropped and the plan read as `none`; the harness refuses an item out of shape.
 changes := [item |
 	some i, resource in input.resource_changes
 	item := {
-		"address": resource.address,
-		"type": resource.type,
-		"actions": resource.change.actions,
+		"address": object.get(resource, "address", null),
+		"type": object.get(resource, "type", null),
+		"actions": actions_of(resource),
 		"level": level_of(i),
 		"reasons": sort([r | some r in reasons[i]]),
 	}
 ]
 
+# Defined only when resource_changes is a list: anything else gives no result, which the
+# harness reports as a failure, never as `none`.
 result := {
 	"level": names[max({0} | {rank[item.level] | some item in changes})],
 	"changes": changes,
+} if {
+	is_array(input.resource_changes)
 }

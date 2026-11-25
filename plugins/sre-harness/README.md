@@ -465,7 +465,7 @@ python -m examples.synthetic.iac_scenarios /tmp/iac-demo
 
 sre-harness iac validate --plan /tmp/iac-demo/valid/plan.json \
   --evidence /tmp/iac-demo/valid/evidence --delivery /tmp/iac-demo/valid/delivery.json
-# => {"run_id": "run-...", "status": "valid" | "violations" | "not_checked", "violations": {...}, "risk": "high" | ... | "unevaluable"}
+# => {"run_id": "run-...", "status": "valid" | "violations" | "not_checked", "violations": {...}, "risk": "high" | ... | "unevaluable", "bound_to_delivery": true | false}
 
 # v2 の evaluator adapter として（標準出力に evaluation.schema.json の $defs/output）
 sre-harness iac validate --plan plan.json --evidence evidence/ --delivery delivery.json --format evaluator-output
@@ -514,12 +514,21 @@ transitions: [{ from, to, at, actor: { name, role }, evidence: [{ kind, sha256, 
 | `implemented` | `commit` | |
 | `staging_verified` | `plan`、`test_result` | |
 | `pr_opened` | `pull_request` | |
-| `privileged_approved` | `plan` | actor の role が `privileged`。`implemented` の actor と別人。承認した plan の hash が `staging_verified` の plan の hash と一致 |
+| `privileged_approved` | `plan` | actor の role が `privileged`。`implemented` の actor と別人（名前は正規化して比べる。下記）。承認した plan の hash が `staging_verified` の plan の hash と一致 |
 | `deployed` | `execution_record` | 実行記録の `plan_sha256` が `privileged_approved` の plan の hash と一致 |
 | `rejected` | `note` | |
-| `rolled_back` | `execution_record` | |
+| `rolled_back` | `execution_record` | 実行記録の JSON の形（`deployed` と同じ `{"plan_sha256", "result"}`） |
 
-ほかに、どの遷移にも次を検査します。最初の遷移が `null → requirement_approved` であること、各遷移の `from` が前の遷移の `to` と同じこと、`at` が前の遷移より前でないこと（同時刻は可）、`state` が最後の遷移の `to` と同じこと、`--plan` の hash が delivery の最後の `plan` の証跡と同じこと。
+ほかに、どの遷移にも次を検査します。最初の遷移が `null → requirement_approved` であること、各遷移の `from` が前の遷移の `to` と同じこと、`at` が前の遷移より前でないこと（同時刻は可）、`state` が最後の遷移の `to` と同じこと、delivery に `plan` の証跡があれば `--plan` の hash がその最後の `plan` と同じこと。
+
+delivery にまだ `plan` の証跡が無い段階（`implemented` まで）では、`--plan` はどの delivery にも結び付きません。このときは違反にせず（`--plan` は必須で、ステージング前の delivery を検査できなくなるため）、`risk.json` と標準出力の要約に `bound_to_delivery: false` を必ず記録します。`true` になるのは、`--delivery` が schema に合い、その最後の `plan` の証跡が `--plan` と同じときだけです。`--delivery` を省いたときも `false` です。`--format evaluator-output` では `notes` に「The plan is not bound to the delivery」と書きます。
+
+承認者と実装者の照合について。
+
+- actor の `name` は記録に書かれた自己申告です。harness は本人確認をしません。
+- 比べる前に名前を正規化します（`contract.py` の `person`）。Unicode NFKC、前後の空白を除く、`casefold()`、`@` より後ろを除く、末尾の `.` を除く。`Alice`、`ALICE`、`alice@example.invalid`、`alice.` は `alice` と同じ人として扱います。それでも別表記の同一人物（`a.smith` と `alice` など）は見分けられません。逆に、`@` の後ろだけが違う別人は同じ人として扱います。
+- 照合するのは `implemented` の actor だけです。ステージング検証や PR を開いた人、設計した人が承認者と同じでも違反にしません。
+- schema は `name` を `^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$` に限ります。制御文字、改行（末尾の改行を含む）、空白、ASCII 以外の文字は `schema` 違反です。
 
 ### 違反の code
 
@@ -535,21 +544,28 @@ transitions: [{ from, to, at, actor: { name, role }, evidence: [{ kind, sha256, 
 | `approver_not_privileged`、`approver_is_implementer`、`plan_not_staged` | 特権者承認の規則に反する |
 | `plan_hash_mismatch`、`plan_mismatch` | 承認時と違う plan をデプロイした、`--plan` が delivery の plan と違う |
 
-証跡は `--evidence` の中だけを読みます。symlink は辿らず、ファイルは読み取り専用で開きます。
+証跡は `--evidence` の中だけを読みます。symlink は辿らず、ファイルは読み取り専用で開きます。`lstat` で調べてから `open` するまでの間にファイルを差し替えられること（TOCTOU）は防ぎません。対象は利用者自身のローカルファイルで、同じ権限での差し替えは範囲外です。証跡の JSON が深くネストしすぎて読めないときは `evidence_content_invalid` です。
 
 ### plan のリスク分類（Rego サンプル）
 
 `runtime/policies/iac_risk.rego` は、Terraform の `show -json` 形式の `resource_changes[].change` から変更ごとに水準（`none` < `low` < `medium` < `high`）と理由を返すサンプルです。網羅的な policy ではありません。
 
+`actions` は Terraform が書く形（`["no-op"]`、`["read"]`、`["create"]`、`["update"]`、`["delete"]`、置換の `["delete", "create"]` と `["create", "delete"]`）のどれかとして読みます。
+
 | 理由 | 水準 | 条件 |
 |---|---|---|
-| `delete` | high | `actions` が `["delete"]` |
-| `replace` | high | `actions` に `delete` と `create` の両方 |
-| `sensitive_type` | high | IAM、security group、S3 の公開設定の resource type で、`no-op` / `read` 以外 |
+| `delete` | high | `actions` に `delete` を 1 つでも含む（置換の 2 つの形を除く） |
+| `replace` | high | `actions` が `["delete", "create"]` か `["create", "delete"]` |
+| `sensitive_type` | high | IAM、security group、S3 の公開設定の resource type で、`actions` が `["no-op"]` / `["read"]` 以外 |
 | `public_setting` | high | `publicly_accessible` などが true になる、`acl` が `public-` で始まる値に変わる |
-| `create`、`update` | medium | それ以外の作成・更新 |
-| `unknown_action` | medium | 表にない action |
-| `tags_only` | low | `tags` / `tags_all` だけが変わる更新 |
+| `unknown_action` | medium | `actions` が上の 7 つの形のどれでもない（重複、組み合わせ、未知の名前、配列でない・空・文字列以外を含む） |
+| `create` | medium | `actions` が `["create"]` |
+| `update` | medium | `actions` が `["update"]` で `tags_only` でない |
+| `tags_only` | low | `actions` が `["update"]`、`before` と `after` がどちらも object、`after_unknown` が無いか `{}`、`tags` / `tags_all` が変わり、ほかは変わらない |
+
+水準は理由の水準の最大です。`none` になるのは `actions` が `["no-op"]` か `["read"]` で、ほかの理由も無いときだけです。分類できなかった resource を `none` にしないことは、2 つまでの action の全組み合わせを実物の opa で流すテスト（`tests/unit/test_iac_risk.py`）で検査しています。
+
+plan の形が違うとき（`resource_changes` が配列でない、`actions` が配列でない・空・空文字列か文字列以外を含む、`address` / `type` / `change` が無い）は、opa に渡す前に入力の誤り（exit 2）にします。opa に直接渡した場合も、`resource_changes` が配列でなければ policy は結果を返さず（harness は exit 1）、`actions` の形が違う resource は `unknown_action` です。
 
 状態遷移の検査には Rego を使いません（Python と JSON Schema です）。
 
@@ -559,14 +575,16 @@ transitions: [{ from, to, at, actor: { name, role }, evidence: [{ kind, sha256, 
 
 - `opa` が PATH に無いと、`risk.json` は `status: unevaluable` になり、水準を出しません。状態遷移の検査は行い、exit code は違反の有無で決まります。
 - `opa` は `guard.py` だけが起動します。argv は固定で（`opa eval --format json --strict --strict-builtin-errors --capabilities <同梱> --data <同梱 policy> --stdin-input data.sre_harness.iac_risk.result`）、plan は標準入力で渡します。policy、query、flag を利用者が指定する経路はありません。環境変数は `PATH`、`LANG`、`LC_ALL`、`TMPDIR`、`SYSTEMROOT` だけを渡し、cwd は空の一時ディレクトリです。
-- `runtime/policies/iac_risk.capabilities.json` は、policy が呼ぶ builtin（`eq`、`equal`、`neq`、`internal.member_2`、`is_object`、`is_string`、`object.remove`、`startswith`、`max`、`sort`、`or`）だけを並べた許可リストで、`allow_net` は空です。`http.send`、`net.lookup_ip_addr`、`opa.runtime` などを policy に書くと、opa が `undefined function` でコンパイルを拒否します（opa v1.22.2 で確認）。policy で新しい builtin を使うときは、`opa capabilities --current` の該当する定義をこのファイルに足します。
+- `runtime/policies/iac_risk.capabilities.json` は、policy が呼ぶ builtin（`eq`、`equal`、`neq`、`internal.member_2`、`is_array`、`is_object`、`is_string`、`object.get`、`object.remove`、`startswith`、`max`、`sort`、`or`）だけを並べた許可リストで、`allow_net` は空です。`http.send`、`net.lookup_ip_addr`、`opa.runtime` などを policy に書くと、opa が `undefined function` でコンパイルを拒否します（opa v1.22.2 で確認）。policy で新しい builtin を使うときは、`opa capabilities --current` の該当する定義をこのファイルに足します。
 - CI（`.github/workflows/sre-harness.yml`）は opa v1.22.2 の Linux amd64 static バイナリを版固定の URL から取得し、公式の `.sha256` の値で検査してから PATH に置きます。`SRE_HARNESS_REQUIRE_OPA=1` を付けて pytest を実行するので、CI では opa のテストが SKIP されず、opa が無ければ失敗します。手元で opa が無いと、opa を使うテストは理由付きで SKIP と表示されます。
 
 ### 出力
 
-`transition-check.json`（schema `iac-delivery` の `$defs/transition_check`）は `status`（`valid` / `violations` / `not_checked`）、`change_id`、`state`、`delivery_sha256`、`plan_sha256`、`transitions_checked`、`violations[{id, code, transition, message, locator}]` を持ちます。`risk.json`（`$defs/risk`）は `plan_sha256`、`status`（`evaluated` / `unevaluable`）、`engine`（policy と capabilities の hash、query）、`level`、`changes[{address, type, actions, level, reasons}]` を持ちます。
+`transition-check.json`（schema `iac-delivery` の `$defs/transition_check`）は `status`（`valid` / `violations` / `not_checked`）、`change_id`、`state`、`delivery_sha256`、`plan_sha256`、`transitions_checked`、`violations[{id, code, transition, message, locator}]` を持ちます。`risk.json`（`$defs/risk`）は `plan_sha256`、`bound_to_delivery`、`status`（`evaluated` / `unevaluable`）、`engine`（policy と capabilities の hash、query）、`level`、`changes[{address, type, actions, level, reasons}]` を持ちます。
 
 `--format evaluator-output` の `metrics` は `contract_violations`、`transitions_checked`（`--delivery` があるとき）と、`risk_high`、`risk_medium`、`risk_low`、`risk_none`、`risk_changes_total`（opa があるとき）です。違反は 1 件ずつ evidence（`transition-check.json#IV-0001`）になります。どちらも無いときは `metrics` を空にして `unevaluable` に理由を入れます。
+
+`--plan`、`--delivery` が読めない、JSON でない、深くネストしすぎて読めない、plan の形が違う、`--evidence` がディレクトリでないときは、run を作らずに exit 2 です。
 
 ### 未検証（IaC）
 
