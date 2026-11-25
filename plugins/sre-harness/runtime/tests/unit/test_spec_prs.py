@@ -311,3 +311,18 @@ def test_a_blob_over_the_cap_stops(tmp_path, git_calls, monkeypatch):
     assert repository.blob(SHA, "docs/c.md") is None  # absent
     assert "token" not in repr(repository).lower()
     assert paths.RUN_ID  # paths stays importable next to prs
+
+
+def test_the_named_host_reaches_the_guard_so_another_github_host_can_be_fetched(
+    tmp_path, git_calls
+):
+    source = "https://github.example.com/example-org/demo.git"
+    named = prs.Repository.open(
+        tmp_path, "example-org", "demo", source, "synthetic-value", host="github.example.com"
+    )
+    named.fetch(["+refs/heads/main:refs/sre-harness/base/main"])
+    env = git_calls[0][-1].env
+    assert any(key == "http.https://github.example.com/.extraheader" for key in env.values())
+    unnamed = prs.Repository.open(tmp_path, "example-org", "demo", source, "synthetic-value")
+    with pytest.raises(BoundaryError):
+        unnamed.fetch(["+refs/heads/main:refs/sre-harness/base/main"])
