@@ -335,9 +335,7 @@ def test_check_patch_refuses_a_patch_the_report_does_not_list(scenario, home):
     assert code == 3
 
 
-def test_check_patch_refuses_both_records_rewritten_when_the_target_file_changed(
-    scenario, home
-):
+def test_check_patch_refuses_both_records_rewritten_when_the_target_file_changed(scenario, home):
     """The sidecar and the report both name the new head, but the patched file changed on
     main: its blob is not the preimage the patch was made for."""
     run_id, value, _ = reported(home, scenario)
