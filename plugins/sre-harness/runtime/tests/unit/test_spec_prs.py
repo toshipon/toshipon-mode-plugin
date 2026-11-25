@@ -326,3 +326,15 @@ def test_the_named_host_reaches_the_guard_so_another_github_host_can_be_fetched(
     unnamed = prs.Repository.open(tmp_path, "example-org", "demo", source, "synthetic-value")
     with pytest.raises(BoundaryError):
         unnamed.fetch(["+refs/heads/main:refs/sre-harness/base/main"])
+
+
+def test_entry_splits_the_tree_on_newlines_only(tmp_path, git_calls):
+    """A name holding U+2028 stays one tree line: it cannot pose as another entry's line."""
+    _, answers = git_calls
+    repository = prs.Repository(tmp_path / "r.git", str(tmp_path))
+    fake, real = "f" * 40, "c" * 40
+    tree = (
+        f"100644 blob {OTHER}\tevil 100644 blob {fake}\ttarget.md\n120000 blob {real}\ttarget.md\n"
+    ).encode()
+    answers += [(0, tree)]
+    assert repository.entry(SHA, "docs/target.md") == ("120000", real)
