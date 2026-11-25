@@ -10,6 +10,7 @@ from ..errors import EXIT_OK, EXIT_QUALITY, InputError
 from ..github.fixture import FixtureTransport
 from ..github.rest import GhTransport, Limiter
 from . import analyze as analyze_stage
+from . import audit as audit_stage
 from . import extract as extract_stage
 from . import ingest as ingest_stage
 from . import patch as patch_stage
@@ -24,6 +25,11 @@ ANALYZE_SENDING = (
     "note: --backend claude sends default-branch Markdown that names no id, the registry's "
     "titles, and the semantic-conflict candidates (PR numbers, titles, values) to Anthropic "
     "through the Claude CLI (no tools, no MCP servers, auth mode {mode})."
+)
+AUDIT_SENDING = (
+    "note: --backend claude sends the run's findings, PR numbers and titles, the registry, the "
+    "trace links and the document sections to Anthropic through the Claude CLI (no tools, no "
+    "MCP servers, auth mode {mode}), in a call of its own."
 )
 SENDING = (
     "note: --backend claude sends the run's document sections (Markdown, ADRs, minutes, PR "
@@ -107,6 +113,16 @@ def _analyze(args, env, out):
     return code
 
 
+def _audit(args, env, out):
+    run_dir = paths.open_run(paths.state_root(env), args.run)
+    if not paths.child(run_dir, "findings.json").is_file():
+        raise InputError("the run has no findings yet: run `spec analyze` first.")
+    session = _session(args, run_dir, env, AUDIT_SENDING)
+    value, code = audit_stage.audit(run_dir, session, args.max_iterations)
+    print(json.dumps(audit_stage.summary(value), indent=2), file=out)
+    return code
+
+
 def _report(args, env, out):
     root = paths.state_root(env)
     run_dir = paths.open_run(root, args.run)
@@ -123,10 +139,11 @@ def _report(args, env, out):
             "findings": counts,
             "patches": [item["id"] for item in value["patches"]],
             "patch_rejections": len(value["patch_rejections"]),
+            "audit": value["audit"]["status"],
             "files": ["impact-report.json", "impact-report.md", "patches/"],
         }
         print(json.dumps(summary, indent=2), file=out)
-    return EXIT_QUALITY if value["status"] != "complete" else EXIT_OK
+    return EXIT_QUALITY if report_stage.blocked(value) else EXIT_OK
 
 
 def _sources(args, env, owner, name):
@@ -201,7 +218,7 @@ def _llm_arguments(parser, required):
 
 def register(groups):
     spec = groups.add_parser(
-        "spec", help="specification consistency: ingest, extract, analyze, report"
+        "spec", help="specification consistency: ingest, extract, analyze, audit, report"
     )
     stages = spec.add_subparsers(dest="stage", required=True)
 
@@ -232,6 +249,22 @@ def register(groups):
     analyze.add_argument("--default-branch", help="default branch name (else from the PR list)")
     _llm_arguments(analyze, required=False)
     analyze.set_defaults(handler=_analyze)
+
+    audit = stages.add_parser(
+        "audit", help="independent audit of the findings along eight axes, to audit.json"
+    )
+    audit.add_argument("--run", required=True, help="run id that `spec analyze` filled")
+    _llm_arguments(audit, required=True)
+    audit.add_argument(
+        "--max-iterations",
+        type=int,
+        default=audit_stage.DEFAULT_ITERATIONS,
+        help=(
+            "backend calls in all, retries of refused answers included "
+            f"(default {audit_stage.DEFAULT_ITERATIONS}, 1-{audit_stage.MAX_ITERATIONS})"
+        ),
+    )
+    audit.set_defaults(handler=_audit)
 
     report = stages.add_parser("report", help="findings to impact-report.json and .md")
     report.add_argument("--run", required=True, help="run id that `spec analyze` filled")

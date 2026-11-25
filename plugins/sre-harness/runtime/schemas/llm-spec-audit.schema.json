@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:llm-spec-audit",
+  "title": "llm-spec-audit",
+  "description": "What the backend returns to `spec audit`: findings along the eight axes, limitations, the axes it could not assess and the analysis findings it reviewed. It carries no status, score or verdict: the harness computes the axis status from the severities and decides the gate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "findings",
+    "limitations",
+    "not_assessed",
+    "reviewed"
+  ],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "description": "One audit finding. The outer shape is the one of the Autonomous Improvement Harness v2 audit.schema.json; only `category` differs (the eight axes).",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "severity",
+          "category",
+          "claim",
+          "evidence",
+          "next_experiment"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^F[0-9]+$"
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "category": {
+            "enum": [
+              "coverage",
+              "correctness",
+              "consistency",
+              "traceability",
+              "verifiability",
+              "clarity",
+              "feasibility",
+              "operability"
+            ]
+          },
+          "claim": {
+            "description": "What is wrong, in one or two sentences.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "evidence": {
+            "description": "Ids from the audit input (FD-0001, DEC-0001, DCI-0001, REQ-0001, RQI-0001, TL-0001, PT-0001, DOC-0001, DOC-0001#S1; DCI- and RQI- are inferred entities), each optionally followed by ': ' and a quote copied from that item. The harness checks that the id exists and the quote is in its text.",
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 600
+            }
+          },
+          "counter_evidence": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "alternative_hypothesis": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "next_experiment": {
+            "description": "What to read or change next to confirm or resolve the finding.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        }
+      }
+    },
+    "limitations": {
+      "description": "What the audit could not look at. Severe concerns belong in findings; `spec audit` refuses limitations that use a severity word, name an input id no finding cites, name a finding, or repeat a claim.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    },
+    "not_assessed": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "axis",
+          "reason"
+        ],
+        "properties": {
+          "axis": {
+            "enum": [
+              "coverage",
+              "correctness",
+              "consistency",
+              "traceability",
+              "verifiability",
+              "clarity",
+              "feasibility",
+              "operability"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        }
+      }
+    },
+    "reviewed": {
+      "description": "The analysis findings (FD-...) the audit checked, with the auditor's view. `verdict` is not a pass or a fail: upheld means the finding stands, disputed that the source does not support it. Every critical and high analysis finding must appear here or in the evidence of a finding.",
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ref",
+          "verdict",
+          "note"
+        ],
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^FD-[0-9]{4,}$"
+          },
+          "verdict": {
+            "enum": [
+              "upheld",
+              "disputed"
+            ]
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
+      }
+    }
+  }
+}

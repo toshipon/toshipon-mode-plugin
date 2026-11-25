@@ -13,16 +13,24 @@ fenced code block whose fence is longer than any backtick run in the text.
 `default_branch.moved_since_analysis` is null: this stage does not fetch, so it has not
 checked whether the default branch moved.
 
+With a current `audit.json` (`spec audit`), `audit` carries its axes and the Markdown a table
+per axis, with the backend and model that made it and its limitations in full right below the
+table; without one, with one made from other input, or with one whose status does not follow
+from its findings, every axis is `not_assessed`. A blocked, failed or not_assessed audit makes
+the report exit 1, as a stale or partial analysis does.
+
 `--format evaluator-output` prints, instead of the summary, the JSON an evaluator adapter of
 the toshipon-mode Autonomous Improvement Harness v2 prints (`evaluation.schema.json`,
 `$defs/output`): counts per finding kind, stale and unanalyzed PRs, and one evidence entry
-per finding that points into impact-report.json.
+per finding that points into impact-report.json, and with a current audit the number of audit
+findings per axis.
 """
 
 import re
 
 from .. import paths, records
 from ..errors import InputError
+from . import audit as audit_stage
 from . import findings as fd
 from . import patch as patch_stage
 from . import prs as git_prs
@@ -88,10 +96,26 @@ def build(run_dir):
             "explicit": explicit,
             "inferred": len(links["links"]) - explicit,
         },
+        "audit": audit_stage.load(run_dir)[0],
         "limitations": limitations,
     }
     records.validate("impact-report", report)
     return report, links
+
+
+def audit_view(report):
+    """The report's audit, or every axis not_assessed for a report made without one."""
+    return report.get("audit") or audit_stage.view(None, "not_run")
+
+
+def blocked(report):
+    """Whether `spec report` exits 1: an incomplete analysis, or an audit that blocks, failed or
+    assessed nothing."""
+    return report["status"] != "complete" or audit_view(report)["status"] in (
+        "blocked",
+        "failed",
+        "not_assessed",
+    )
 
 
 def _entities(item):
@@ -103,7 +127,73 @@ def _evidence_ids(item, basis):
     return ", ".join(ids) or "-"
 
 
-def markdown(report, links):
+AUDIT_STATUS = {
+    "passed": "合格。監査の critical / high も、監査が退けていない分析の critical / high もない",
+    "blocked": "不合格。監査の critical か high、または監査が退けていない分析の critical か high がある",
+    "failed": "不合格。上限の回数までに検査を通る答えが無かった",
+    "not_assessed": "不合格。評価できた観点が 1 つも無い",
+    "not_run": "未実施。`spec audit` を実行していない",
+    "stale": "古い。audit.json が今の入力から作られていないか、記録が findings と食い違う",
+}
+AUDIT_BACKEND = {
+    "stub": "規則だけの監査で、モデルは使っていません。文書は読まず、分析の重大な指摘を退けません",
+    "claude": "Claude CLI による監査です",
+}
+
+
+def _audit_markdown(view, audited):
+    text = "\n## 独立評価（audit）\n\n"
+    text += f"- 状態: {view['status']}（{AUDIT_STATUS[view['status']]}）\n"
+    if view["backend"] is not None:
+        model = cell(view["model"]) if view["model"] else "CLI の既定（`--model` 未指定）"
+        model = model if view["backend"] == "claude" else "なし"
+        text += (
+            f"- backend: {view['backend']}（{AUDIT_BACKEND[view['backend']]}）、model: {model}\n"
+        )
+    if view["analysis_blocking"]:
+        text += (
+            f"- 監査が退けていない分析の critical / high: {', '.join(view['analysis_blocking'])}\n"
+        )
+    text += "- 観点ごとの status は finding の severity から規則で決まります（LLM の判定ではありません）。"
+    text += "critical か high があれば fail、medium と low だけなら concerns、finding が無く監査できた観点は pass、"
+    text += "監査できなかった観点は not_assessed です。\n\n"
+    text += "| 観点 | status | finding |\n|---|---|---|\n"
+    for axis, entry in view["axes"].items():
+        text += f"| {axis} | {entry['status']} | {', '.join(entry['finding_ids']) or '-'} |\n"
+    if view["limitations"]:
+        text += "\naudit の limitations（全文。重大な指摘が紛れていないかを人が読みます）:\n\n"
+        text += "".join(block(line) for line in view["limitations"])
+    if audited is None:
+        return text
+    if audited["findings"]:
+        text += (
+            "\n| ID | 観点 | 重大度 | 指摘 | 根拠 | 次に確かめること |\n|---|---|---|---|---|---|\n"
+        )
+        for item in audited["findings"]:
+            text += (
+                f"| {item['id']} | {item['category']} | {item['severity']} | "
+                f"{cell(item['claim'])} | {cell('; '.join(item['evidence']))} | "
+                f"{cell(item['next_experiment'])} |\n"
+            )
+    if audited["rejected_findings"]:
+        text += "\n検査を通らず除いた指摘:\n\n| ID | 観点 | 重大度 | 理由 |\n|---|---|---|---|\n"
+        for item in audited["rejected_findings"]:
+            text += (
+                f"| {item['id']} | {item['category']} | {item['severity']} | "
+                f"{cell('; '.join(item['reasons']))} |\n"
+            )
+    if audited["reviewed"]:
+        text += "\n監査が確かめた分析の指摘:\n\n| 分析の指摘 | 見解 | メモ |\n|---|---|---|\n"
+        for entry in audited["reviewed"]:
+            text += f"| {entry['ref']} | {entry['verdict']} | {cell(entry['note'])} |\n"
+    notes = [f"{entry['axis']}: {entry['reason']}" for entry in audited["not_assessed"]]
+    if notes:
+        text += "\n監査できなかった観点:\n\n"
+        text += "".join(f"- {cell(line)}\n" for line in notes)
+    return text
+
+
+def markdown(report, links, audited=None):
     counts = {kind: 0 for kind in fd.KINDS}
     for item in report["findings"]:
         counts[item["kind"]] += 1
@@ -158,6 +248,7 @@ def markdown(report, links):
             f"{cell(', '.join(found['inferred'])) or '-'} |\n"
         )
     text += _patches_markdown(report)
+    text += _audit_markdown(audit_view(report), audited)
     text += "\n## 制約\n\n" + "".join(f"- {cell(line)}\n" for line in report["limitations"])
     return text
 
@@ -174,6 +265,11 @@ def evaluator_output(report):
     metrics["prs_total"] = float(len(report["prs"]))
     metrics["prs_stale"] = float(sum(1 for pr in report["prs"] if pr["stale"]))
     metrics["prs_unanalyzed"] = float(sum(1 for pr in report["prs"] if pr.get("missing")))
+    audited = audit_view(report)
+    if audited["status"] in ("passed", "blocked"):
+        for axis, entry in audited["axes"].items():
+            metrics[f"audit_findings_{axis}"] = float(len(entry["finding_ids"]))
+        metrics["audit_findings_blocking"] = float(len(audited["blocking"]))
     output = {
         "metrics": metrics,
         "evidence": [
@@ -186,7 +282,8 @@ def evaluator_output(report):
         ],
         "notes": (
             "Counts are computed by fixed rules from the registry, the default branch and the "
-            "open PRs. Inferred trace links never raise a finding above medium."
+            "open PRs. Inferred trace links never raise a finding above medium. "
+            f"Audit: {audited['status']}; its axis status follows the severities by rule."
         ),
     }
     analyzed = len(report["prs"]) - metrics["prs_stale"] - metrics["prs_unanalyzed"]
@@ -250,6 +347,6 @@ def report(run_dir, root):
     value["patches"], value["patch_rejections"] = patches, rejected
     records.validate("impact-report", value)
     records.write_json(paths.child(run_dir, "impact-report.json"), value)
-    text = markdown(value, links)
+    text = markdown(value, links, audit_stage.load(run_dir)[1])
     paths.write_private(paths.child(run_dir, "impact-report.md"), text)
     return value, text
