@@ -35,6 +35,20 @@
         "candidate_id": { "type": "string", "pattern": "^IC-[0-9]{4,}$" }
       }
     },
+    "generation": {
+      "description": "The generation side of the split the rule was learned from. evaluate leaves the rule out of a baseline whose evaluation PRs overlap these, and leaves out an entry without this record.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prs", "t1"],
+      "properties": {
+        "prs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "t1": { "$ref": "urn:sre-harness:common#/$defs/timestamp" }
+      }
+    },
     "candidate": {
       "type": "object",
       "description": "What the artifact (artifact_file, hash content_sha256) says: form, title and check are parsed from it, never taken from candidate.json.",

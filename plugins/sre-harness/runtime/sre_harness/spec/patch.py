@@ -292,12 +292,20 @@ def admit(data, repository, sha, allow, workdir):
 # Candidates from findings ----------------------------------------------------------------
 
 
+def _lines(text):
+    """Lines with their "\n", cut where git cuts them (not at U+2028, \x0c, ... as
+    `str.splitlines` does)."""
+    lines = [line + "\n" for line in text.split("\n")]
+    lines[-1] = lines[-1][:-1]
+    return lines if lines[-1] else lines[:-1]
+
+
 def render(path, before, after, mode, preimage):
     """One file's diff in the form `parse` accepts."""
     body = "".join(
         difflib.unified_diff(
-            before.splitlines(keepends=True),
-            after.splitlines(keepends=True),
+            _lines(before),
+            _lines(after),
             f"a/{path}",
             f"b/{path}",
             n=3,
@@ -401,13 +409,19 @@ def _contradiction(item, context, sha):
     return edits, refusals
 
 
+def reference_rule(registry, old, new):
+    """Move the id a file writes for `old` (its `external_id`) to the one for `new`. The
+    harness's own numbers (`DEC-…`) are never what a file names, so they are not replaced."""
+    return ("reference", {registry.external(old): registry.external(new)})
+
+
 def _superseded(item, context, sha, repository, allow):
     registry = context.registry
     old = next((name for name in item["entities"] if registry.status(name) == "superseded"), None)
     new = successor(registry, old) if old else None
     if new is None:
         return {}, [(None, "no_single_successor", f"{old} has no single active successor")]
-    rule = ("reference", {old: new, registry.external(old): registry.external(new)})
+    rule = reference_rule(registry, old, new)
     cited, refusals = _cited(item, sha)
     edits = {}
     for path, line in cited:
@@ -644,7 +658,7 @@ def check(run_dir, name, context):
     owner, _, repo = findings["repo"].partition("/")
     branch = git_prs.branch_name(findings["default_branch"]["name"])
     repository = git_prs.Repository.open(
-        context["root"], owner, repo, context["source"], context.get("token")
+        context["root"], owner, repo, context["source"], context.get("token"), host=context["host"]
     )
     target_pr = sidecar["target_pr"]
     if target_pr is None:

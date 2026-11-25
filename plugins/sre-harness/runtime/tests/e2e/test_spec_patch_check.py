@@ -420,3 +420,23 @@ def test_a_diff_for_a_symlink_in_the_tree_is_refused_by_mode(scenario, home, tmp
         patch.admit(diff, repository, sha, allow, tmp_path / "w")
     assert raised.value.code == "mode" and "120000" in raised.value.detail
     assert not (tmp_path / "w").exists()  # refused before git ran apply
+
+
+def test_check_patch_passes_the_named_host_to_the_repository(scenario, home, monkeypatch):
+    """As `spec analyze` does: without it the guard refuses a remote on another host."""
+    from sre_harness.errors import InputError
+
+    run_id, value, _ = reported(home, scenario)
+    seen = {}
+
+    def opened(*arguments, **options):
+        seen.update(options, source=arguments[3])
+        raise InputError("stopped by the test")
+
+    monkeypatch.setattr(git_prs.Repository, "open", opened)
+    env = {**home, "SPEC_READ_TOKEN": "synthetic-value"}
+    argv = ["spec", "check-patch", "--run", run_id, "--patch", value["patches"][0]["id"]]
+    code, _ = run_cli([*argv, "--auth-env", "SPEC_READ_TOKEN", "--host", "ghe.invalid"], env)
+    assert code == 2
+    assert seen["host"] == "ghe.invalid"
+    assert seen["source"] == "https://ghe.invalid/example-org/demo.git"

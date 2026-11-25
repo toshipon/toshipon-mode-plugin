@@ -26,6 +26,7 @@ Claude Code のセッション内で実行します。
 - 実行データと生成物をリポジトリの中に書きません。保存先が git の作業ツリーの中にあると、exit 3 で止まります。
 - 修正候補は Unified Diff のファイルとして出すだけで、適用しません。
 - 候補の承認は人が行います。
+- 時系列の分割（`review split`）が外すのは `t1` 以降のコメントと commit だけです。生成側の thread の `is_resolved` / `is_outdated` と PR 本文は収集した時点の値なので、`t1` より後の状態（後から解決された、本文が書き換えられた）が生成側に残ります。
 
 読み取り専用は、許可リストとテストで担保しています。
 
@@ -86,10 +87,11 @@ export REVIEW_READ_TOKEN=...   # 読み取り専用の fine-grained PAT
 - backend が出した lesson は、JSON Schema に加えて次の検査を通ったものだけを `lessons.jsonl` に入れます。引用（`quotes[].text`）が該当コメント本文の部分文字列であること、参照する thread と comment が送った DATA に存在すること。通らなかった lesson は理由付きで `rejected-lessons.jsonl` に入り、全件が通らなければ exit 1 です。
 - 次の値は backend の自己申告ではなく、harness が規則で決めます。
   - `confidence`: `confidence_basis`（thread 数、レビュアー数、PR 数、反対する thread 数）から `review/analyze.py` の `CONFIDENCE_RULES` で決めます。3 thread 以上・3 PR 以上・3 人以上で反対がなければ `strong`、3 thread 以上・2 PR 以上・2 人以上なら `recurring`、それ以外は `candidate` です。
-  - `source_trust`: lesson を支える thread の最初のコメントの投稿者です。owner / member / collaborator の人がいれば `member_supported`、bot だけなら `bot_only`、それ以外（外部、ghost、association 不明）は `external_only` です。
+  - `source_trust`: lesson を支える thread の最初のコメントの投稿者です。owner / member / collaborator の人がいれば `member_supported`、bot だけなら `bot_only`、それ以外（外部、ghost、association 不明）は `external_only` です。最初のコメントだけで決まるので、返信の投稿者は反映されません。返信は次の `untrusted_quotes` で扱います。
+  - `untrusted_quotes`: lesson が引用した（`quotes`）コメントと、自由文（`target`、`problem`、`rationale`、`fix_summary`、`applies_when`、`exceptions`）が文面を写したコメントのうち、owner / member / collaborator の人以外（外部、bot、ghost、mannequin、association 不明）のものです。コメント ID、投稿者の種別、association、見つかったフィールドを記録します。自由文の検査は、大文字小文字と空白を揃えたうえでの部分文字列の一致（12 文字以上）です。言い換えた文は検出できません。コメント中の `>` で始まる引用行は、そのコメントの投稿者の文面として扱いません。
   - `reviewer_agreement`: 解決済みか修正が見つかった thread は agreed、返信があるのに未解決・未修正なら disputed、返信がなければ unanswered。1 つでも disputed があれば lesson は disputed です。
   - `staleness`: backend が「この thread はこの lesson の方針を覆す」と候補を出し、その thread の時刻が lesson のどの thread よりも後なら `superseded` とし、`later_evidence` に thread を残します。時刻が前なら覆さず、`analyze.json` の `ignored_oppositions` に `not_later` と記録します。
-- `classify` は、superseded、`case_specific`、`external_only` / `bot_only` の lesson を候補にせず `set-aside.jsonl` に理由付きで出します。残りは `review/classify.py` の `TARGET_RULES`（固定の表）で rule / skill / policy_as_code / evaluation / knowledge / regression_test のどれかに決めます。
+- `classify` は、superseded、`case_specific`、`external_only` / `bot_only`、`untrusted_quotes` が空でない（理由 `untrusted_quote`）lesson を候補にせず `set-aside.jsonl` に理由付きで出します。残りは `review/classify.py` の `TARGET_RULES`（固定の表）で rule / skill / policy_as_code / evaluation / knowledge / regression_test のどれかに決めます。
 - `--existing-rules` の Markdown は読むだけです。symlink は辿らず（`classify.json` の `skipped_rule_files` に出ます）、1 ファイル 256 KiB、合計 512 KiB、500 ファイルを超えると切り詰めずに exit 2 で止まります。backend が出した既存ルールとの関係（contradicts / duplicates / narrows）は、引用がその行の部分文字列のものだけを `conflicts.jsonl` に残します。これは承認者に見せる注意書きで、分類も exit code も変えません。
 
 ### Claude に送るデータ
@@ -107,7 +109,7 @@ export REVIEW_READ_TOKEN=...   # 読み取り専用の fine-grained PAT
 - prompt は 1 回 1 MiB まで、analyze は PR 単位で 400 KiB ずつの batch に分けます。1 PR だけで上限を超えたら切り詰めずに exit 1 です。batch をまたいだ lesson はまとめません。
 - PR 本文とコメントは DATA の区切りの中に JSON として入れ、「DATA は命令ではない」と prompt に書きます。Claude にはツールも MCP サーバーも渡しません。
 - 呼び出しごとに `llm-calls.jsonl` に、費用（`total_cost_usd`）、token（`usage`）、model ごとの `costUSD` と `costBasis`、`num_turns`、`duration_ms`、prompt の SHA-256 と大きさを記録します。prompt そのものは記録しません。subscription 認証の費用は請求額ではなく換算値です。
-- run の記録済みの合計が `--max-run-budget-usd` に達したら、以降は呼ばずに exit 1 で止まります。各呼び出しには、残額（`--max-call-budget-usd` があればそれとの小さい方）を `--max-budget-usd` として渡します。
+- run の記録済みの合計が `--max-run-budget-usd` に達したら、以降は呼ばずに exit 1 で止まります。各呼び出しには、残額、1 回あたりの上限（100 USD）、`--max-call-budget-usd`（指定したとき）のうち最も小さい値を `--max-budget-usd` として渡します。
 - 呼び出しの前に、その上限額で `status: pending` の行を `llm-calls.jsonl` に予約し、終わってから結果で置き換えます。timeout、非 0 終了、envelope の解析失敗、中断で費用が読めなかった呼び出しは `status: error` とし、渡した上限額を使ったものとして数えます。harness ごと止まって `pending` のまま残った行も、上限額で数えます。guard が起動前に拒否した呼び出し（認証情報の欠落など）は 0 として数えます。
 
 ## Review Learning: 分割・生成・評価・承認
@@ -133,7 +135,7 @@ $H review approve --run run-... --candidate IC-0001 --reviewer alice --reason ".
 
 ### 生成（generate）
 
-- 候補は `classified.jsonl` の lesson からだけ作ります。`set-aside.jsonl` の lesson（superseded、case_specific、external_only、bot_only）からは作りません。`--include-untrusted` を付けたときだけ、external_only / bot_only だけを理由に外された lesson からも作り、候補に `untrusted_included: true` を付けます。classify の出力とは別に、generate 自身も lesson の `source_trust` を見て、flag なしでは external_only / bot_only の lesson を飛ばします。
+- 候補は `classified.jsonl` の lesson からだけ作ります。`set-aside.jsonl` の lesson（superseded、case_specific、external_only、bot_only、untrusted_quote）からは作りません。`--include-untrusted` を付けたときだけ、external_only / bot_only / untrusted_quote だけを理由に外された lesson からも作り、候補に `untrusted_included: true` を付けます。classify の出力とは別に、generate 自身も lesson の `source_trust` と `untrusted_quotes` を見て、flag なしでは external_only / bot_only の lesson と、外部の発言を引用・転記した lesson を飛ばします。候補の `sources` には、引用したコメント（`quote`）、引用せずに文面を写した外部のコメント（`copied`）、各 thread の最初のコメント（`excerpt`）が投稿者の種別と association 付きで入り、承認画面にすべて出ます。
 - 候補は `candidates/<IC-id>/candidate.json`（`runtime/schemas/improvement-candidate.schema.json`）と、承認の対象になる本文 `body.md` です。ファイル名は候補の id と固定の名前だけで、入力に含まれる path は使いません。`artifact.content_sha256` は `body.md` の SHA-256 です。**正本は hash が覆う `body.md` だけです。** evaluate が当てる検査と form、承認画面の「記録される内容」、registry に入る title・form・check は、どれも `body.md` を読み直して parse したものから作ります。`candidate.json` の `form`、`title`、`check` が parse の結果と違えば、evaluate も approve も exit 3 で止まります。`candidate.json` のそれ以外（target、sources、lint、risk など）は判断の材料で、hash は覆わず、registry にも入りません。
 - `form` は `declarative_check` か `prose` です。`declarative_check` の検査は `body.md` の末尾の ```` ```json sre-harness-check ```` ブロックにあるデータ（`path_globs`、`added_line_pattern`、`absent_pattern`、`message`）で、harness の解釈器（`runtime/sre_harness/review/apply_rules.py`）が評価します。生成されたコードは実行しません。`prose` は文章のルールで、評価では `review-eval-judge` が当てます。
 - `lint` は本文に agent 向けの命令文、URL、shell コマンド、秘密情報らしき文字列があれば、種類と位置（`span`）を記録します。拒否ではなく承認者への注意書きで、status は変えません。
@@ -148,11 +150,13 @@ $H review approve --run run-... --candidate IC-0001 --reviewer alice --reason ".
 ### 評価（evaluate）
 
 - 単位は「hunk × 指摘の種類（ルール）」です。評価用 PR の修正前のコードを使います。thread が付いた hunk は thread の `diff_hunk`（レビュアーが見た時点の hunk）、thread のないファイルは PR の patch の hunk です。
-- ルールは registry の承認済み（このリポジトリ、最新版が approved）を「既存ルール」とし、この run の候補を足して比べます。`with_candidates`（既存 + 全候補）、`baseline`（既存だけ）、候補ごと（既存 + その候補）の 3 種を出します。既存ルールの Markdown（`--existing-rules`）は実行できる形でないので、比較の基準には入りません。
+- ルールは registry の承認済み（このリポジトリ、最新版が approved）を「既存ルール」とし、この run の候補を足して比べます。承認時に registry へ、そのルールを作った run の生成側 PR の番号と `t1`（`generation`）を記録します。生成側 PR が今回の評価用 PR と 1 件でも重なる既存ルールは、自分の生成元で採点されることになるので基準から外し、`evaluation.json` の `excluded_baseline_rules` に理由（`generated_from_evaluation_prs` と重なった PR）を残します。`generation` の記録が無い entry（この記録を始める前に承認したもの）も、生成元が分からないので外します（理由 `no_generation_record`）。`with_candidates`（既存 + 全候補）、`baseline`（既存だけ）、候補ごと（既存 + その候補）の 3 種を出します。既存ルールの Markdown（`--existing-rules`）は実行できる形でないので、比較の基準には入りません。
 - ラベル: thread の最初のコメントがルールの title（`body.md` の見出し）と語を共有する（共有語が min(3, n) 以上かつ title の語の半分以上）とき、その thread はその種類の指摘とみなします。修正が見つかれば `human_flagged`、`fix.status = ambiguous` なら `ambiguous`（正解から外す）、修正がなければ `disputed`（指標から外し件数を出す）、指摘がなく adjudication が valid なら `human_missed_valid`、それ以外は `clean` です。
 - 指標: `precision_lower`（下限。人が確認していない指摘をすべて誤りと数える）、`precision_confirmed`（確認後。レビュアーが指摘したものと adjudication 済みのものだけ）、`recall`、`f1`（下限の precision と recall から）、`false_positive_rate`（clean なセルに出た指摘 / clean なセル数）。分母が 0 の指標は数値を出さず `undefined` です。
-- 95% 区間は評価用 PR を単位にした bootstrap（同じ PR の hunk は独立でないため）で、seed（既定 20260127）と回数（既定 1,000）を `evaluation.json` の `criteria.thresholds` に記録します。n（評価用 PR の数）を併記します。
-- **評価用 PR が 30 件未満の指標は数値ではなく `unevaluable` です。** `status: unevaluable` と理由を記録し、exit 0 で終わります。件数（`counts`）は出すので、どの hunk で何が起きたかは読めます。
+- 95% 区間は評価用 PR を単位にした bootstrap（同じ PR の hunk は独立でないため）で、seed（既定 20260127）と回数（既定 1,000）を `evaluation.json` の `criteria.thresholds` に記録します。n を併記します。
+- 30 件の判定と bootstrap で数えるのは、評価の単位（hunk）を 1 つ以上持つ評価用 PR だけです（`n_prs_with_units`）。split に入った評価用 PR の数は `n_prs` に別に記録します。変更ファイルや patch の無い PR は、件数を水増ししないよう数えません。
+- **hunk を持つ評価用 PR が 30 件未満の指標は数値ではなく `unevaluable` です。** `status: unevaluable` と理由を記録し、exit 0 で終わります。件数（`counts`）は出すので、どの hunk で何が起きたかは読めます。このとき候補は `evaluated` にならず `proposed` のままで（評価済みだったものは `proposed` に戻り）、`history` の最後に `unevaluable: <理由>` の記録が残ります。
+- **評価用 PR が 30 件に満たないリポジトリでは、候補は承認できません。** 件数を満たす期間で split を作り直し（`--t1` を早める、収集の期間を延ばす）、analyze からやり直してください。
 - `criteria_hash` は split の hash、指標の定義、閾値（30 件、95%、seed、回数）、ラベルの規則の hash です。`--seed` や `--resamples` を変えると別の評価になります。adjudication は基準ではなく正解の補正なので、`adjudication_sha256` として別に記録します。
 - 工数は review の各段の wall-clock（`timings.jsonl`）、コストは `llm-calls.jsonl` の集計で、`costBasis` を併記します。subscription 認証の費用は請求額ではありません。
 - `evaluation.md` に載せる題名や path は escape し、リンクと画像の記法を通しません。
@@ -200,9 +204,13 @@ adjudication（`--adjudication <file>`、schema `review-adjudication`）は、`e
 
 ### 承認の制約
 
-- `review approve` は stdin と stdout の両方が TTY のときだけ動きます。TTY がなければ何も記録せず exit 3 です。この検査を迂回する flag や環境変数はありません。agent の shell には TTY がないので、agent は承認できません。**これは本人確認ではありません。** 端末の前にいる人が誰かを確かめる仕組みではなく、`--reviewer` は入力どおりに記録します。
+- `review approve` と `review retire` は stdin と stdout の両方が TTY のときだけ動きます。TTY がなければ何も記録せず exit 3 です。この検査を迂回する flag や環境変数はありません。
+- **TTY と hash の入力は、パイプや非対話の実行からの「うっかりの自動承認」を防ぐためのものです。** pty を開いて起動し、画面の hash の先頭を打ち込むプログラムは通るので、意図的な迂回は防げません。承認者の本人確認でも、改ざん耐性でもありません。`--reviewer` は入力どおりに記録します。**承認の正当性は、registry の diff を置くリポジトリのレビュー（人がその diff を commit する段）で担保してください。**
+- `review reject` は TTY を求めません。候補を使えなくするだけの安全側の操作だからです。承認済みのルールを取り下げる `review retire` は、agent が非対話で実行できないよう TTY を求めます。
 - 承認の画面には、まず registry に記録される内容そのもの（`body.md` から parse した form、title、check）を出し、続けて本文、本文の lint、元になったコメントの引用（コードブロック）と投稿者の種別・association、既存ルールとの関係、評価の結果、リスクとロールバックを出します。外部の文字列は escape し、制御文字は置き換えます。
-- 画面の後で `content_sha256` の先頭 12 文字を入力します。違えば exit 3 です。候補が同じ `content_sha256` で評価されていない（未評価、評価後に本文が変わった、`check_failed`）ときも exit 3 です。
+- 画面の後で `content_sha256` の先頭 12 文字を入力します。違えば exit 3 です。候補が同じ `content_sha256` で評価されていない（未評価、評価後に本文が変わった、`check_failed`）とき、`evaluation.json` の `status` が `evaluated` でない（`unevaluable`）ときも exit 3 です。
+- 承認の前に、`evaluation.json` の `split_sha256` と `criteria_hash`、run の `split.json` の hash、`analyze.json` と `generate.json` の `split_sha256` が互いに一致することを確かめ、食い違えば exit 3 です。これは古い評価や別の split の評価で**うっかり**承認することを防ぐ検査です。
+- **run の中のファイルの照合に改ざん耐性はありません。** `body.md`、`candidate.json`、`evaluation.json`、`split.json` はどれも利用者と同じ権限で書けるローカルファイルで、署名もありません。これらを辻褄が合うように書き換えれば、evaluate を通っていない本文でも承認できます。上の照合は偽造を防ぎません。
 - 記録は state root の下の `registry/<RG-id>/v<N>.json`（schema `review-registry`）と、そのときの本文 `v<N>.md` です。記録する値は、`body.md` から parse した値と hash、run から決まる値（リポジトリ、run id、候補 id）、承認者の入力だけで、`candidate.json` の値は入れません。評価の後に `candidate.json` の `check` などを書き換えると、承認は exit 3 です。registry の記録と `v<N>.md` が食い違う（hash か parse 結果が違う）entry は、次の evaluate で基準として読むときに exit 3 で止まります。run とは別の場所です。版は追記だけで、既存のファイルは置き換えません。承認後に本文を変えて評価し直し、もう一度承認すると版 2 になります。`review reject` と `review retire` も版として記録します。
 - 有効化は、registry の記録と、`--activate-as <path>` を付けたときの Unified Diff（`v<N>.diff`。指定した path に本文を足す新規ファイルの差分）を出すまでです。作業ツリーには書かず、commit もしません。path は相対 path だけで、`..`、絶対 path、`.git/`、`.github/` は exit 3 です。diff を適用して commit するのは人です。
 - 承認済みのルールは、同じリポジトリの次の evaluate で「既存ルール」になります。
@@ -221,6 +229,8 @@ export SRE_HARNESS_PYTHON=~/.venvs/sre-harness/bin/python
 "${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" runs list
 ```
 
+launcher は Python を `-I`（isolated mode）で起動し、`runtime/` だけを `sys.path` に足します。作業ディレクトリ、`PYTHONPATH` などの `PYTHON*` 環境変数、user site-packages は読みません。利用者のリポジトリを作業ディレクトリにして実行しても、そこにある `argparse.py` や `json.py` は harness の中で import されません。`python3 -m sre_harness` で直接起動すると作業ディレクトリが `sys.path` の先頭に入るので、launcher を使ってください。
+
 ## 認証
 
 GitHub を読む段は `--auth-env <環境変数名>` が必須で、既定値はありません。その変数が空なら、通信せずに exit 2 で止まります。
@@ -230,6 +240,8 @@ export REVIEW_READ_TOKEN=...   # 読み取り専用の fine-grained PAT
 ```
 
 渡した値は、`gh` には `GH_TOKEN` として、`git` には環境変数経由の設定として渡ります。argv、remote の URL、リポジトリの config、ログ、run ディレクトリには書きません。`gh` には空の設定ディレクトリを、`git` には空の global / system 設定を見せます。子プロセスの stderr は保存しません。
+
+git の https の fetch 元は、許可した host（既定は `github.com`。呼び出し側が host を明示した場合はその host）の上にあるものだけを受け付け、トークンはその host にだけ付けます。別の host の https remote は exit 3 で拒否します。ローカルのディレクトリを fetch 元にするとき（利用者が明示する読み取り専用の入力）は、トークンを付けません。ref と refspec は `..`、`@{`、空の要素（`//`）、`.` で始まる要素、末尾の `.lock` を拒否します。
 
 ## データの保存場所
 
@@ -268,9 +280,11 @@ python -m coverage run -m pytest && python -m coverage report
 - APM での配置。launcher は自分の位置から `runtime/` を解決します。APM が plugin を分解して置く構成では動かない可能性があります。Claude Code の `/plugin` での導入を対象にしています。
 - git に環境変数経由でトークンを渡して private リポジトリを fetch できるか。合成データのテストはローカルの fetch だけを通ります。
 - 実際の Claude CLI に対する `review analyze` / `review classify` / `review generate` / `review evaluate`。テストは `guard._run` を差し替えた経路と stub だけを通ります。`--bare`（api-key）の envelope の形と `costBasis` の値は実機で確かめていません。
+- `--safe-mode`（subscription）で起動した Claude CLI が、利用者の hooks、plugin、`CLAUDE.md`、設定をどこまで読まないか。envelope の形は確かめましたが、隔離の範囲は実機で確かめていません。
 - 実際の GitHub に対する `review collect`。テストは合成応答と、`gh` の起動を差し替えた経路だけを通ります。`gh api graphql -i` の出力形式、secondary limit の応答（403 / 429 と `retry-after`）、fine-grained PAT で `isResolved` を読めるかは実機で確かめていません。
 - 実データでの precision / recall。合成データの数値は機構の検証で、どのルールの精度も主張しません。
-- 承認の TTY 検査が、実際の端末と agent の shell で期待どおりに分かれること。テストは TTY のない経路（exit 3）と、TTY の判定だけを差し替えた経路を通ります。
+- 承認と retire の TTY 検査が、実際の端末と、TTY の無い agent の shell で期待どおりに分かれること。テストは TTY のない経路（exit 3）と、TTY の判定だけを差し替えた経路を通ります。一方、`os.openpty()` で起動して hash の先頭を打ち込むスクリプトが承認を通すことは、合成データで確かめています（上の「承認の制約」）。
+- `--host` に GitHub Enterprise Server を指定したときの認証。harness は `gh` に `GH_TOKEN` だけを渡します。`gh` は GHES の host では `GH_ENTERPRISE_TOKEN` を読むため、そのままでは認証されない可能性があります。GHES では実機で確かめていません。
 
 ## Specification Consistency: 取り込みと抽出
 
@@ -311,6 +325,7 @@ python -m coverage run -m pytest && python -m coverage report
 - `path` は manifest のあるディレクトリ（基準ディレクトリ）からの相対 path です。絶対 path、`~` で始まる path、`..` を含む path、`\` を含む path は、何も読まずに exit 3 で拒否します。基準ディレクトリより上を指す方法はありません。
 - symlink は辿りません。途中のディレクトリとファイル自体を `lstat` で確かめ、`O_NOFOLLOW` で開きます。symlink があれば exit 3 です。manifest 自体が symlink でも exit 3 です。
 - ファイルは読むだけです。1 文書 2 MiB、run の合計 64 MiB を超えたら、切り詰めずに exit 1 で止まり、run を作りません。
+- `lstat` で確かめてから開くまでの間にファイルを symlink に差し替えられる余地（TOCTOU）は防いでいません（ファイル自体は `O_NOFOLLOW` で開くので、最後の要素の差し替えは拒否されます）。対象は利用者自身のローカルファイルで、同じ権限で差し替えられる攻撃者がいる状況は範囲外です。
 - manifest にあるのに無いファイル、通常のファイルでないもの、UTF-8 でないもの、形の違う export は、既定値で埋めずに `ingest.json` の `input_missing` に理由（`file_not_found`、`not_a_regular_file`、`not_utf8`、`unreadable_export`）付きで記録します。読めた分は `documents.jsonl` に書き、run は `partial`、exit 1 です。
 - `patch_globs` は `spec report` が使う「patch を出してよい文書」の glob です（`*` は 1 つの path 区切りの中、`**` は 0 個以上の区切りに一致します）。この段では検査（`..`、絶対 path、`.git/`、`.github/` は exit 3）して `ingest.json` に保存するだけです。manifest の `files` の path と `patch_globs` は、リポジトリのルートからの path として照合します（manifest をリポジトリのルートに置く前提です）。
 - 出力ファイル名と文書 ID（`DOC-0001`）は harness が決めます。入力の path は `provenance.locator` に入るだけで、ファイル名には使いません。
@@ -329,9 +344,10 @@ GitHub は `gh api --method GET` で `repos/{owner}/{repo}/pulls/{number}` と `
 
 ### 抽出の規則
 
-- **明示（`basis: explicit`）は規則で取ります。** 決定は `kind: adr` の文書から取ります。front-matter の `id`、`title`、`status`、`supersedes`、`approvers`（`名前 (役割)` の形）、`date`、`systems`、`components`、`environments`、front-matter が無ければ本文の `Status:`、`Supersedes:`、`Date:` の行か `## Status` の section です。要求は全文書の `REQ-0001 ...` で始まる見出しの section から取ります。最初の段落が statement、`Given` / `When` / `Then` の行（箇条書きでもよい）と `Acceptance criteria:` / `受入条件:` の後の箇条書きが受入条件、`Category:`、`Decisions:`、`Rationale:` の行が残りの項目です。要求の ID は原文の `REQ-` の番号をそのまま使い、決定の ID（`DEC-0001`）は harness が振って原文の ADR 番号を `external_id` に残します。
-- **状態は harness が決めます。** 原文の状態は `stated_status` に残し、`status` は次の規則で決めます（`runtime/sre_harness/spec/registry.py`）。approved（または superseded）の決定が `supersedes` に挙げた決定だけが superseded になります。却下・提案中・未解決の決定は何も置き換えません（`issues` に `cannot_supersede`）。approved と superseded には approver と根拠が要り、無ければ `unresolved`（`approval_incomplete`）です。superseded と書かれているのに置き換える approved の決定が無ければ `unresolved`（`no_approved_successor`）です。3 段の連鎖では末端だけが active です。置換の循環は exit 2 で止まり、何も書きません。存在しない決定への参照は `supersedes` / `decision_refs` から外し、`input_missing` に記録します。
-- **推定（`basis: inferred`）だけを backend に頼みます。** backend は明示で取れなかった決定と要求、規則が見落とした曖昧さを提案します。根拠（`evidence[].ref` と `quote`）が送った section を指し、引用がその section の部分文字列であるものだけを残します。推定の決定は approved にできません（`inferred_cannot_be_approved` で除きます）。推定は `confidence: low` に固定し、backend の自己申告を使いません。除いたものは `rejected-extractions.jsonl` に理由付きで残ります。
+- **明示（`basis: explicit`）は規則で取ります。** 決定は `kind: adr` の文書から取ります。front-matter の `id`、`title`、`status`、`supersedes`、`approvers`（`名前 (役割)` の形）、`date`、`systems`、`components`、`environments`、front-matter が無ければ本文の `Status:`、`Supersedes:`、`Date:` の行か `## Status` の section です。要求は全文書の `REQ-0001 ...` で始まる見出しの section から取ります。最初の段落が statement、`Given` / `When` / `Then` の行（箇条書きでもよい）と `Acceptance criteria:` / `受入条件:` の後の箇条書きが受入条件、`Category:`、`Decisions:`、`Rationale:` の行が残りの項目です。要求の ID は原文の `REQ-` の番号をそのまま使います。決定は、原文が `DEC-0002` の形の ID を書いていればそれをそのまま台帳の ID にし、それ以外（ADR 番号など）は harness が空いている `DEC-` の番号を振って、原文の ID を `external_id` に残します。文書からの参照（`supersedes`、`Decisions:`）は、原文に書かれた ID（`external_id`）だけで解決します。harness が振った番号は文書からの参照先になりません。同じ ID を 2 つの文書が書いていたら、backend を呼ばずに exit 2 で止まり、メッセージに両方の文書を出します。
+- **行は git と同じく `\n` でだけ区切ります。** 改ページ（`\x0c`）、`\x1c`〜`\x1e`、`\x85`、U+2028 / U+2029、単独の `\r` は行の中の文字として扱い、CRLF の行末の `\r` だけを落とします。section の locator（`L3-L10`）は git の行番号と一致します。
+- **状態は harness が決めます。** 原文の状態は `stated_status` に残し、`status` は次の規則で決めます（`runtime/sre_harness/spec/registry.py`）。approved（または superseded）の決定が `supersedes` に挙げた決定だけが superseded になります。却下・提案中・未解決の決定は何も置き換えません（`issues` に `cannot_supersede`）。approved と superseded には approver と根拠が要り、無ければ `unresolved`（`approval_incomplete`）です。superseded と書かれているのに置き換える approved の決定が無ければ `unresolved`（`no_approved_successor`）です。3 段の連鎖では末端だけが active です。置換の循環は exit 2 で止まり、何も書きません。メッセージには循環に入る決定と、その文書の path を出します。循環の検査は明示の決定同士の辺だけが対象です（推定の決定は明示の決定しか指せず、推定の決定を指す辺は作らないので、推定の辺が循環を作ることはありません）。存在しない決定への参照は `supersedes` / `decision_refs` から外し、`input_missing` に記録します。
+- **推定（`basis: inferred`）だけを backend に頼みます。** backend は明示で取れなかった決定と要求、規則が見落とした曖昧さを提案します。根拠（`evidence[].ref` と `quote`）が送った section を指し、引用が空白を除いて 8 文字以上で（`quote_too_short`）、その section の部分文字列であるものだけを残します。推定の決定は approved にできません（`inferred_cannot_be_approved` で除きます）。推定の決定と要求には、文書が書く ID とは別の名前空間の ID（決定は `DCI-0001`、要求は `RQI-0001`）を振ります。文書やファイルに書かれた `REQ-…`、`DEC-…`、ADR 番号はこれらに解決されません。推定の決定の `supersedes` は、明示の決定（backend に見せた `known_decisions` の ID）を指すものだけを残し、自分自身、別の推定の決定、存在しない ID を指すものは外して、`issues` に `supersedes_dropped` として理由を残します（exit 0）。推定は `confidence: low` に固定し、backend の自己申告を使いません。除いたものは `rejected-extractions.jsonl` に理由付きで残ります。
 - **stub は LLM の品質を何も示しません。** stub は議事録の `決定:` / `Decision:` 行を提案中の決定、`要求:` / `Requirement:` 行を要求とし、`TBD` を含む要求に曖昧さを 1 件付けるだけです。
 
 ### 曖昧さの検出
@@ -366,6 +382,8 @@ GitHub は `gh api --method GET` で `repos/{owner}/{repo}/pulls/{number}` と `
 - `--backend claude` の推定リンクと説明文の質。テストは stub と `guard._run` を差し替えた経路だけを通ります。
 - 実際の GitHub に対する `spec check-patch --auth-env`。テストは合成リポジトリと fixture の PR 一覧だけを通ります。
 - patch の header 解析は、許可する形を狭く決めて、それ以外を拒否する作りです。git のすべての版の `git apply` の解釈と突き合わせたわけではありません（確かめたのは git 2.54 と CI の git だけです）。
+- bare リポジトリの fetch は `fetch.fsckObjects=true` で行います。古い履歴に fsck の警告（壊れた日付、tree の並び順など）がある実際のリポジトリでは fetch が失敗する可能性がありますが、確かめていません。失敗したら default branch の fetch で exit 1 になります。
+- `impact-report.md` の自動リンク対策（`www.`、`@`、`://` の文字参照化）が GitHub の Markdown 表示で実際にリンクにならないこと。テストは文字列に元の形が残らないことだけを確かめています。
 
 ## Specification Consistency: トレースと open PR の分析
 
@@ -397,7 +415,11 @@ PR の内容は harness 専用の bare リポジトリから読みます。利�
 | fetch する ref | default branch を `refs/sre-harness/heads/<branch>` に、open PR の `refs/pull/<n>/head` を `refs/sre-harness/pull/<n>` に。それ以外は fetch しません。partial clone は使いません |
 | diff | run の `diff-cache/<sha256>.diff`。`(merge base, head SHA)` ごとに 1 回だけ計算します |
 
-キャッシュは run をまたいで使います。消すときは `<ルート>/cache/git/` を削除してください（次の実行で作り直します）。git の実行回数は PR 1 件につき固定の数（`rev-parse`、`merge-base`、`diff`）と、読める変更ファイル 1 件につき 2 回（merge base 側と head 側の blob）で、PR の組の総当たりはしません。`analyze.json` の `git_calls` と `diffs` に実測が残ります。1 つの diff が 2 MiB、1 ファイルが 2 MiB、run の diff の合計が 64 MiB を超えたら、切り詰めずに exit 1 で止まります。
+キャッシュは run をまたいで使います。消すときは `<ルート>/cache/git/` を削除してください（次の実行で作り直します）。git の実行回数は PR 1 件につき固定の数（`rev-parse`、`merge-base`、`diff`）と、読める変更ファイル 1 件につき 2 回（merge base 側と head 側の blob）で、PR の組の総当たりはしません。`analyze.json` の `git_calls` と `diffs` に実測が残ります。1 つの PR の diff が 2 MiB を超えたら、その PR だけを分析せず `input_missing` にし（run は `partial`、exit 1）、他の PR の分析は出します。1 ファイルが 2 MiB、run の diff の合計が 64 MiB を超えたら、切り詰めずに exit 1 で止まります。
+
+diff とファイルの中身は git と同じく `\n` でだけ行に分けます（CRLF の行末の `\r` だけを落とします）。改ページや U+2028 などで行番号がずれることはなく、変更行の中に `\r` を挟んで `diff --git` や `@@` を書いても、hunk の本文は `@@` の行数どおりに読むので、ヘッダや hunk として扱いません。
+
+PR の base が default branch でない PR（stacked PR）も、default branch との merge base に対して diff を取ります。親 PR の変更がその PR の変更として数えられる可能性があるので、`prs[].base_is_default` を `false` にし、`limitations` とその PR の指摘の説明に書きます。base の ref を fetch して親との差分を取ることはしません。
 
 ### 読むファイルと構造化記述の形
 
@@ -421,9 +443,9 @@ PR が要求の値を変えたことは、次の構造化記述だけから読�
 
 trace-link は Decision → Requirement → Design → IaC → Test のつながりで、下の層から上の層へ向きます（`refines`、`implements`、`verifies`、`depends_on`、`conflicts_with`）。
 
-- **explicit** は規則で取れたものだけです。台帳の `decision_refs`、ファイル中の ID 参照（front-matter の `supersedes` は `conflicts_with`）、Markdown の section 中に書かれた resource アドレスやリポジトリの path（`infra/logs.tf`）、テスト名の中の ID です。
-- **inferred** は `--backend` を付けたときだけ作ります。ID を 1 つも書いていない default branch の Markdown を backend に渡し、提案のうち、引用が文書の部分文字列で、宛先が台帳にあるものだけを `confidence: low` で残します（除いたものは `analyze.json` の `rejected_links`）。stub は「決定か要求のタイトル（7 文字以上）を含み、その ID を含まない文書」をつなぐだけで、LLM の品質を何も示しません。
-- 報告では explicit と inferred を別の列に出します。inferred の根拠だけで成り立つ指摘は `basis: inferred` になり、重大度は `medium` を上限にします。`critical` と `high` の唯一の根拠にはなりません（builder、`findings.check`、impact-report の schema の 3 か所で検査しています）。
+- **explicit** は規則で取れたものだけです。台帳の `decision_refs`、ファイル中の ID 参照（front-matter の `supersedes` は `conflicts_with`。ファイルに書かれた ID は、文書が書いた ID（`external_id`）だけで台帳に解決します。harness が振った `DEC-` の番号や推定の `DCI-` / `RQI-` にはつながりません）、Markdown の section 中に書かれた resource アドレスやリポジトリの path（`infra/logs.tf`）、テスト名の中の ID です。
+- **inferred** は `--backend` を付けたときだけ作ります。ID を 1 つも書いていない default branch の Markdown を backend に渡し、提案のうち、引用が空白を除いて 8 文字以上で文書の部分文字列で、宛先が台帳にあるもの（台帳の ID で指します）だけを `confidence: low` で残します（除いたものは `analyze.json` の `rejected_links`）。stub は「決定か要求のタイトル（7 文字以上）を含み、その ID を含まない文書」をつなぎ、タイトルを含む行を引用にするだけで、LLM の品質を何も示しません。
+- 報告では explicit と inferred を別の列に出します。inferred の根拠だけで成り立つ指摘は `basis: inferred` になり、重大度は `medium` を上限にします。`critical` と `high` の唯一の根拠にはなりません。推定の決定・要求（`DCI-` / `RQI-`）が対象の指摘も、証跡が explicit でも `basis: inferred` にして `inferred_entities` に挙げ、`medium` を上限にします（builder、`findings.check`、impact-report の schema の 3 か所で検査しています）。
 
 ### 指摘の種類
 
@@ -431,21 +453,21 @@ trace-link は Decision → Requirement → Design → IaC → Test のつなが
 
 | kind | 重大度 | 規則 |
 |---|---|---|
-| `semantic_conflict` | critical | 2 つ以上の open PR が、同じ entity の同じ構造化キーを互いに違う値にする。候補は (entity, key) の索引から決定論的に出します（PR の組の総当たりはしません）。同じ merge base の上で diff の hunk が重なるか隣り合う組は git が merge で衝突として示すので数えず、`limitations` に書きます。同じ値にする PR 同士は競合しません。backend は説明文だけを書きます |
-| `contradiction` | high | default branch のファイルの値が台帳の値（台帳の元の section の構造化記述）と違う。台帳に値が無いときはファイル同士で値が違う |
+| `semantic_conflict` | critical | 2 つ以上の open PR が、同じ entity の同じ構造化キーを互いに違う値にする。候補は (entity, key) の索引から決定論的に出します（PR の組の総当たりはしません）。PR がそのキーに与える値の集合（同じファイルに古い値の記述を残した場合も含む）が merge base と違えば「変えた」とみなします。同じ merge base の上で、そのキーの記述を含む hunk 同士が重なるか隣り合う組は git が merge で衝突として示すので数えず、`limitations` に書きます。別のファイル（両方が触る CHANGELOG など）の重なりでは数えるのをやめず、説明文に注記します。同じ値にする PR 同士は競合しません。backend は説明文だけを書きます |
+| `contradiction` | high | default branch のファイルの値が台帳の値（台帳の元の section の構造化記述）と違う。台帳に値が無いときはファイル同士で値が違う。PR では、PR の head が同じキーに違う値を 2 つ以上残している（その PR に付けます） |
 | `superseded_dependency` | high | superseded な決定に依存する要求・文書・IaC・テスト（決定から決定への参照は除く）。PR では、PR が新しく足した参照だけを数えます |
 | `missing_test` | high | PR が要求の構造化記述を変えたのに、その要求の ID を名前に持つテストを PR が変えていない（explicit なトレースだけで判定） |
 | `stale_sha` | high | PR 一覧の head SHA と fetch した `refs/pull/<n>/head` が違う（一覧と fetch の間に head が動いた）。その PR は分析せず、run は `stale` で exit 1。他の PR の分析は出します |
 | `not_reflected` | medium | approved で有効な決定か explicit な要求の ID を default branch のどのファイルも書いていない、または台帳の構造化記述のキーがどのファイルにも無い |
 | `ambiguous_requirement` | medium | 台帳の要求に `ambiguity` がある（規則の検出は explicit、LLM の検出は inferred） |
-| `input_missing` | medium | 台帳に無い ID への参照、extract の `input_missing`、head を fetch できなかった PR（fork の削除など。run は `partial` で exit 1） |
+| `input_missing` | medium | 台帳に無い ID への参照、extract の `input_missing`、head を fetch できなかった PR（fork の削除など）、PR 番号の無い（またはオブジェクトでない）PR 一覧の項目、diff が上限を超えた PR、UTF-8 でない変更ファイル（`prs[].unread_files`。default branch のファイルも）。台帳と参照以外のものは run を `partial`（exit 1）にします |
 | `impact` | info | PR が変えた単位からトレースを辿って届く決定と要求 |
 
 ### 報告
 
-`impact-report.json`（schema `impact-report`）は `run_id`、`generated_at`、`criteria_hash`（規則の版、重大度の表、inferred の上限、台帳の hash）、`default_branch{name, sha, moved_since_analysis}`、`prs[{number, head_sha, merge_base, analyzed_head_sha, stale}]`、`findings[]`、`patches[]`、`patch_rejections[]`、`audit`、`limitations[]` を持ちます。`audit` は下の「独立評価（spec audit）」の結果で、`spec audit` を実行していなければ全観点が `not_assessed` です。`moved_since_analysis` は `spec report` が fetch しないので常に false です。分析の後に default branch や PR の head が動いたかを `spec report` は確かめられないので、`limitations` にそう書き、patch ごとの再検査は `spec check-patch` が行います（下の「修正候補（patch）」）。
+`impact-report.json`（schema `impact-report`）は `run_id`、`generated_at`、`criteria_hash`（規則の版、重大度の表、inferred の上限、台帳の hash）、`default_branch{name, sha, moved_since_analysis}`、`prs[{number, head_sha, merge_base, analyzed_head_sha, stale, base_ref, base_is_default, unread_files?}]`、`findings[]`、`patches[]`、`patch_rejections[]`、`audit`、`limitations[]` を持ちます。`audit` は下の「独立評価（spec audit）」の結果で、`spec audit` を実行していなければ全観点が `not_assessed` です。`moved_since_analysis` は `spec report` が fetch しないので `null`（未確認）です。確かめていない値を「動いていない」で埋めません。分析の後に default branch や PR の head が動いたかを `spec report` は確かめられないので、`limitations` にそう書き、patch ごとの再検査は `spec check-patch` が行います（下の「修正候補（patch）」）。
 
-`impact-report.md` に載せる外部入力（PR タイトル、文書の引用、ファイルの値、説明文）は、表のセルではリンク・画像・HTML・`|`・バッククォートの記法をエスケープし、`://` を文字参照にします。引用と説明文は、本文中のバッククォートより長い fence のコードブロックに入れます。findings.json の `status` が `stale` か `partial` なら `spec report` も exit 1 です。今の入力から作った `audit.json` の `status` が `blocked` か `failed` のときも exit 1 です。
+`impact-report.md` に載せる外部入力（PR タイトル、文書の引用、ファイルの値、説明文）は、表のセルではリンク・画像・HTML・`|`・バッククォートの記法をエスケープし、GFM の自動リンクにならないよう `://` の `/`、`www.` の `.`、`@` を文字参照にします。引用と説明文は、本文中のバッククォートより長い fence のコードブロックに入れます。findings.json の `status` が `stale` か `partial` なら `spec report` も exit 1 です。今の入力から作った `audit.json` の `status` が `blocked`、`failed`、`not_assessed` のときも exit 1 です。
 
 `--format evaluator-output` は toshipon-mode の Autonomous Improvement Harness v2 の `evaluation.schema.json` の `$defs/output` の形で、種類ごとの件数（`findings_<kind>`）、`findings_total`、`findings_inferred`、`prs_total`、`prs_stale`、`prs_unanalyzed` と、指摘ごとの evidence（`impact-report.json#FD-0001`）を出します。今の入力から作った audit（`passed` か `blocked`）があれば、観点ごとの finding 件数（`audit_findings_<観点>`）と `audit_findings_blocking` も出します。分析できた PR が 0 件なら `unevaluable` を付けます。
 
@@ -456,7 +478,7 @@ trace-link は Decision → Requirement → Design → IaC → Test のつなが
 | 指摘 | patch | 出さない場合 |
 |---|---|---|
 | `contradiction` | 指摘が引用した行（Markdown の `- key: value` か front-matter の `key: value`）の値を台帳の値にする | 台帳に値が無い（ファイル同士の食い違い。どちらが正しいかは人が決めます） |
-| `superseded_dependency` | 置換された決定を名指す行を、後継の決定の ID にする（`ADR-0002` → `ADR-0005`。内部 ID なら内部 ID）。台帳が根拠の指摘（`requirements.json#REQ-0004`）は、その要求の元の section の行から探します | `superseded_by` を辿った先が 1 つの approved な決定にならない |
+| `superseded_dependency` | 置換された決定を名指す行を、後継の決定の ID にする（`ADR-0002` → `ADR-0005`）。置き換えるのは文書が書く ID（`external_id`）だけで、harness が振る `DEC-…` の番号は文書の参照先ではないので置き換えません。台帳が根拠の指摘（`requirements.json#REQ-0004`）は、その要求の元の section の行から探します | `superseded_by` を辿った先が 1 つの approved な決定にならない |
 
 `semantic_conflict`、`not_reflected`、`missing_test`、`ambiguous_requirement`、`input_missing`、`impact`、`stale_sha` には patch を出しません。
 
@@ -477,7 +499,7 @@ patch の対象:
 適用の手順（harness は適用しません）:
 
 1. `impact-report.md` と `patches/<PT-id>.diff` を人が読みます。
-2. 適用する直前に `spec check-patch --run <run_id> --patch <PT-id> (--auth-env NAME | --fixture <dir> --git-source <絶対 path>)` を実行します。PR 向けなら open PR の一覧を読み直して ref を fetch し直し、default branch 向けならその ref を fetch し直して、今の head を `target_head_sha` と比べます。違えば exit 3（古い SHA への修正は出しません。`spec analyze` と `spec report` をやり直してください）。fetch の前に、sidecar の `id`、`target_pr`、`target_head_sha`、`content_sha256`、`paths`、`preimage_blob_shas` が `impact-report.json` の `patches[]` の同じ id の項目と一致することも確かめ、食い違うか報告に無い patch なら exit 3 です。head が同じでも、今の head での対象ファイルの blob SHA が `preimage_blob_shas` と違えば exit 3 です。PR が open でなくなっていても exit 3 です。patch ファイルの `content_sha256` が sidecar と違う、sidecar と patch の path が違う、gate を通らないときも exit 3 です。同じなら一時 index で `git apply --cached --check` をやり直し、結果を標準出力に出します（通れば exit 0、通らなければ exit 1）。`--auth-env` の変数が空なら何も起動せず exit 2、`--patch` が `PT-0001` の形でなければ exit 3、run に無い patch は exit 2 です。
+2. 適用する直前に `spec check-patch --run <run_id> --patch <PT-id> (--auth-env NAME | --fixture <dir> --git-source <絶対 path>) [--host H]` を実行します（`--host` は analyze と同じく、fetch してよい host として guard に渡ります）。PR 向けなら open PR の一覧を読み直して ref を fetch し直し、default branch 向けならその ref を fetch し直して、今の head を `target_head_sha` と比べます。違えば exit 3（古い SHA への修正は出しません。`spec analyze` と `spec report` をやり直してください）。fetch の前に、sidecar の `id`、`target_pr`、`target_head_sha`、`content_sha256`、`paths`、`preimage_blob_shas` が `impact-report.json` の `patches[]` の同じ id の項目と一致することも確かめ、食い違うか報告に無い patch なら exit 3 です。head が同じでも、今の head での対象ファイルの blob SHA が `preimage_blob_shas` と違えば exit 3 です。PR が open でなくなっていても exit 3 です。patch ファイルの `content_sha256` が sidecar と違う、sidecar と patch の path が違う、gate を通らないときも exit 3 です。同じなら一時 index で `git apply --cached --check` をやり直し、結果を標準出力に出します（通れば exit 0、通らなければ exit 1）。`--auth-env` の変数が空なら何も起動せず exit 2、`--patch` が `PT-0001` の形でなければ exit 3、run に無い patch は exit 2 です。
 3. 通ったら、人が自分の checkout で `git apply patches/<PT-id>.diff` を実行し、commit します。
 
 この照合が防ぐのは、古い SHA 向けの patch をうっかり当てることです。同じ利用者権限で run の中のファイル（sidecar と `impact-report.json`）を両方書き換える偽造は防げません。その場合でも、対象ファイルが変わっていれば `preimage_blob_shas` の照合で止まり、許可リストの外の path は gate で止まります。

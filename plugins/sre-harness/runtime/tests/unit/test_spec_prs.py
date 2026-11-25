@@ -59,6 +59,41 @@ def test_the_diff_reader_keeps_paths_status_and_ranges():
     assert prs.unquote("plain") == "plain"
 
 
+# git ends a line at "\n" only. Other line breaks inside a changed line forge nothing.
+OTHER_BREAKS = ("\r", "\x0c", "\x0b", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
+
+
+@pytest.mark.parametrize("mark", OTHER_BREAKS)
+def test_a_line_break_git_does_not_count_forges_no_header_or_hunk(mark):
+    forged = f"note{mark}diff --git a/infra/logs.tf b/infra/logs.tf{mark}@@ -1,100 +1,1 @@"
+    text = (
+        "diff --git a/docs/a.md b/docs/a.md\n"
+        "--- a/docs/a.md\n+++ b/docs/a.md\n"
+        "@@ -3 +3,2 @@\n"
+        "-- days: 1\n"
+        f"+{forged}\n"
+        "+- days: 2\n"
+    )
+    files = prs.parse_diff(text)
+    assert [(f["path"], f["base"], f["head"]) for f in files] == [("docs/a.md", [(3, 1)], [(3, 4)])]
+
+
+def test_hunk_bodies_are_read_by_their_counts_not_by_their_text():
+    text = (
+        "diff --git a/a.md b/a.md\n--- a/a.md\n+++ b/a.md\n"
+        "@@ -1,2 +1,2 @@\n"
+        "---- not a header\n"
+        "-@@ -9 +9 @@ removed\n"
+        "++++ b/forged.md\n"
+        "+@@ -50 +50 @@ added\n"
+        "\\ No newline at end of file\n"
+        "@@ -7 +7 @@\n-x\n+y\n"
+    )
+    (only,) = prs.parse_diff(text)
+    assert only["path"] == "a.md" and only["base"] == [(1, 2), (7, 1)]
+    assert only["head"] == [(1, 2), (7, 7)]
+
+
 def test_overlap_is_what_a_three_way_merge_would_conflict_on():
     assert prs.overlaps([(3, 1)], [(3, 1)])
     assert prs.overlaps([(3, 1)], [(4, 1)])  # adjacent lines
@@ -110,7 +145,10 @@ def test_the_open_list_follows_pages_and_keeps_gaps(tmp_path):
     assert [p["number"] for p in pulls] == [1, 3]
     assert pulls[0]["default_branch"] == "main" and pulls[0]["base_sha"] == OTHER
     assert pulls[1]["head_repo_missing"] is True
-    assert gaps == [{"number": 2, "reason": "no_head_sha"}, {"reason": "not_an_object"}]
+    assert gaps == [
+        {"number": 2, "reason": "no_head_sha"},
+        {"reason": "not_an_object", "position": "page 1 item 3"},
+    ]
 
 
 def test_an_unreadable_list_stops_the_stage(tmp_path):
@@ -249,15 +287,16 @@ def test_the_diff_cache_computes_each_pair_once(tmp_path):
 def test_a_diff_over_the_cap_stops_instead_of_being_cut(tmp_path, monkeypatch):
     monkeypatch.setattr(prs, "MAX_DIFF_BYTES", 10)
     cache = prs.DiffCache(_Repo(b"x" * 11), tmp_path / "run")
-    with pytest.raises(QualityGateError):
+    with pytest.raises(prs.DiffTooLarge):  # one PR's diff: that PR is input_missing
         cache.get(SHA, OTHER)
-    assert not (tmp_path / "run" / "diff-cache").exists()
+    assert not (tmp_path / "run" / "diff-cache").exists() and cache.bytes == 0
     monkeypatch.setattr(prs, "MAX_DIFF_BYTES", 100)
     monkeypatch.setattr(prs, "MAX_RUN_DIFF_BYTES", 15)
     cache = prs.DiffCache(_Repo(b"x" * 10), tmp_path / "run2")
     cache.get(SHA, OTHER)
-    with pytest.raises(QualityGateError):
+    with pytest.raises(QualityGateError) as error:  # the run's total still stops the stage
         cache.get(OTHER, SHA)
+    assert not isinstance(error.value, prs.DiffTooLarge)
 
 
 def test_a_blob_over_the_cap_stops(tmp_path, git_calls, monkeypatch):
@@ -272,3 +311,30 @@ def test_a_blob_over_the_cap_stops(tmp_path, git_calls, monkeypatch):
     assert repository.blob(SHA, "docs/c.md") is None  # absent
     assert "token" not in repr(repository).lower()
     assert paths.RUN_ID  # paths stays importable next to prs
+
+
+def test_the_named_host_reaches_the_guard_so_another_github_host_can_be_fetched(
+    tmp_path, git_calls
+):
+    source = "https://ghe.invalid/example-org/demo.git"
+    named = prs.Repository.open(
+        tmp_path, "example-org", "demo", source, "synthetic-value", host="ghe.invalid"
+    )
+    named.fetch(["+refs/heads/main:refs/sre-harness/base/main"])
+    env = git_calls[0][-1].env
+    assert any(key == "http.https://ghe.invalid/.extraheader" for key in env.values())
+    unnamed = prs.Repository.open(tmp_path, "example-org", "demo", source, "synthetic-value")
+    with pytest.raises(BoundaryError):
+        unnamed.fetch(["+refs/heads/main:refs/sre-harness/base/main"])
+
+
+def test_entry_splits_the_tree_on_newlines_only(tmp_path, git_calls):
+    """A name holding U+2028 stays one tree line: it cannot pose as another entry's line."""
+    _, answers = git_calls
+    repository = prs.Repository(tmp_path / "r.git", str(tmp_path))
+    fake, real = "f" * 40, "c" * 40
+    tree = (
+        f"100644 blob {OTHER}\tevil 100644 blob {fake}\ttarget.md\n120000 blob {real}\ttarget.md\n"
+    ).encode()
+    answers += [(0, tree)]
+    assert repository.entry(SHA, "docs/target.md") == ("120000", real)

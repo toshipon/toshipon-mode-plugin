@@ -103,6 +103,7 @@ def _analyze(args, env, out):
         "repo": (owner, name),
         "source": source,
         "token": token,
+        "host": args.host,
         "root": root,
         "default_branch": args.default_branch,
         "session": session,
@@ -182,6 +183,7 @@ def _check_patch(args, env, out):
         "source": source,
         "token": token,
         "root": root,
+        "host": args.host,
     }
     output, code = patch_stage.check(run_dir, name, context)
     print(json.dumps(output, indent=2, ensure_ascii=False), file=out)

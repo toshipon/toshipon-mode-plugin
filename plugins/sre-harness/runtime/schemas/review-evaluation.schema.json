@@ -16,6 +16,7 @@
     "split_sha256",
     "adjudication_sha256",
     "n_prs",
+    "n_prs_with_units",
     "n_units",
     "labels",
     "candidates",
@@ -24,6 +25,7 @@
     "cost",
     "evidence",
     "baseline_rules",
+    "excluded_baseline_rules",
     "failures",
     "units",
     "threads_without_hunk",
@@ -42,7 +44,16 @@
     "adjudication_sha256": {
       "oneOf": [{ "$ref": "urn:sre-harness:common#/$defs/sha256" }, { "type": "null" }]
     },
-    "n_prs": { "type": "integer", "minimum": 0 },
+    "n_prs": {
+      "description": "Evaluation PRs in the split.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "n_prs_with_units": {
+      "description": "Evaluation PRs with at least one hunk (unit). The 30-PR minimum and the bootstrap use these.",
+      "type": "integer",
+      "minimum": 0
+    },
     "n_units": { "type": "integer", "minimum": 0 },
     "labels": {
       "type": "object",
@@ -98,6 +109,25 @@
         "properties": {
           "id": { "type": "string", "pattern": "^RG-[0-9]{4,}$" },
           "content_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" }
+        }
+      }
+    },
+    "excluded_baseline_rules": {
+      "description": "Approved rules left out of the baseline: learned from an evaluation PR of this split, or approved without a record of what they were learned from.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "content_sha256", "reason"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^RG-[0-9]{4,}$" },
+          "content_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+          "reason": { "enum": ["generated_from_evaluation_prs", "no_generation_record"] },
+          "overlapping_prs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "integer", "minimum": 1 }
+          }
         }
       }
     },

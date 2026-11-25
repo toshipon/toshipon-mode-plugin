@@ -25,9 +25,46 @@ def test_an_approved_successor_supersedes_the_old_decision():
     assert result["active"] == ["DEC-0005"]
 
 
-def test_supersedes_may_name_the_registry_id_too():
-    _, by_id = built(decision(2), decision(5, supersedes=["DEC-0002"]))
-    assert by_id["DEC-0002"]["superseded_by"] == ["DEC-0005"]
+def test_a_document_cannot_name_an_id_the_harness_assigned():
+    result, by_id = built(decision(2), decision(5, supersedes=["DEC-0002"]))
+    assert by_id["DEC-0002"]["status"] == "approved"
+    assert result["input_missing"] == [
+        {"kind": "decision_ref", "from": "DEC-0005", "ref": "DEC-0002"}
+    ]
+
+
+def test_a_written_id_is_never_taken_for_another_decision_s_registry_id():
+    written = decision(1, external_id="DEC-0002")  # registry DEC-0001, the ADR says DEC-0002
+    other = decision(2, external_id="ADR-0005")  # registry DEC-0002
+    successor = decision(3, external_id="ADR-0006", supersedes=["DEC-0002"])
+    _, by_id = built(written, other, successor)
+    assert by_id["DEC-0001"]["status"] == "superseded"
+    assert by_id["DEC-0002"]["status"] == "approved"
+    assert by_id["DEC-0003"]["supersedes"] == ["DEC-0001"]
+
+
+def test_two_decisions_with_one_written_id_are_refused_with_exit_2():
+    with pytest.raises(InputError) as error:
+        registry.build([decision(1), decision(2, external_id="ADR-0001")])
+    assert error.value.exit_code == 2 and "ADR-0001" in str(error.value)
+
+
+def test_an_inferred_draft_names_registry_ids_and_reaches_explicit_decisions_only():
+    proposal = decision(
+        1,
+        status="proposed",
+        basis="inferred",
+        id="DCI-0001",
+        external_id=None,
+        supersedes=["DEC-0002", "DCI-0001"],
+    )
+    del proposal["external_id"]
+    result, by_id = built(decision(2), proposal)
+    assert by_id["DCI-0001"]["supersedes"] == ["DEC-0002"]
+    assert by_id["DEC-0002"]["status"] == "approved"
+    assert {"kind": "decision_ref", "from": "DCI-0001", "ref": "DCI-0001"} in result[
+        "input_missing"
+    ]
 
 
 def test_in_a_chain_of_three_only_the_last_is_active():

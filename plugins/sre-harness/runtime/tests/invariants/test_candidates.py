@@ -1,6 +1,7 @@
 """Invariants of candidates and the registry, checked over whole synthetic runs.
 
-1. Without --include-untrusted, no candidate rests only on external_only / bot_only lessons.
+1. Without --include-untrusted, no candidate rests only on external_only / bot_only lessons,
+   or on a lesson that quotes or copies an outside speaker (`untrusted_quotes`).
 2. An approved registry version names an evaluation of exactly its artifact hash, and a record
    saying otherwise does not pass the schema.
 """
@@ -9,7 +10,7 @@ import json
 
 import pytest
 
-from examples.synthetic.github_responses import evaluation_scenario
+from examples.synthetic.github_responses import THIRTY_EVALUATION, evaluation_scenario
 from sre_harness import paths, records
 from sre_harness.review import approve, candidates, registry
 from tests.helpers import evaluate_cli, generated_run, read_jsonl, run_dir
@@ -29,11 +30,12 @@ def test_no_candidate_rests_only_on_untrusted_lessons_without_the_flag(
         record, _ = candidates.load(directory, candidate_id)
         trusts = {lessons[lesson]["source_trust"] for lesson in record["lesson_ids"]}
         assert not trusts <= UNTRUSTED, candidate_id
+        assert not any(lessons[lesson]["untrusted_quotes"] for lesson in record["lesson_ids"])
         assert record["untrusted_included"] is False
 
 
 def test_every_approved_version_was_evaluated_with_its_own_hash(tmp_path, home, clock):
-    run_id, split_path = generated_run(tmp_path, home, evaluation_scenario())
+    run_id, split_path = generated_run(tmp_path, home, evaluation_scenario(THIRTY_EVALUATION))
     assert evaluate_cli(home, run_id, split_path)[0] == 0
     directory, root = run_dir(home, run_id), paths.state_root(home)
     for candidate_id in candidates.ids(directory):

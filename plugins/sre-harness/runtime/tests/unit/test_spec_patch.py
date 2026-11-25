@@ -287,3 +287,30 @@ def test_a_reference_rule_replaces_whole_ids_only():
     )
     assert patch._apply_rule("Decisions: ADR-00021", rule) is None
     assert patch._apply_rule("XADR-0002", rule) is None
+
+
+@pytest.mark.parametrize("odd", [" ", "\x0c", "\x1c", "\x85"], ids=repr)
+def test_a_rendered_diff_counts_lines_as_git_does(tmp_path, odd):
+    """Characters `str.splitlines` breaks on, but git does not, stay inside one line."""
+    from examples.synthetic.spec_repo import run_git
+
+    before = f"# 保持{odd}の補足\n\n- retention_days: 365\n"
+    after = before.replace("365", "400")
+    path = "docs/a.md"
+    data = patch.render(path, before, after, "100644", patch.blob_sha(before.encode()))
+    assert patch.parse(data.encode()) == [path]
+    repository = tmp_path / "r"
+    run_git(tmp_path, "init", "-q", str(repository))
+    (repository / "docs").mkdir()
+    (repository / path).write_bytes(before.encode("utf-8"))
+    (tmp_path / "p.diff").write_bytes(data.encode("utf-8"))
+    run_git(repository, "apply", str(tmp_path / "p.diff"))
+    assert (repository / path).read_bytes() == after.encode("utf-8")
+
+
+def test_a_reference_moves_only_the_ids_files_write():
+    """Files name decisions by their external id; the harness's DEC- numbers are not targets."""
+    assert patch.reference_rule(_registry(), "DEC-0002", "DEC-0005") == (
+        "reference",
+        {"ADR-0002": "ADR-0005"},
+    )
