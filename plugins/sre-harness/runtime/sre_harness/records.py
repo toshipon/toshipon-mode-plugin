@@ -103,7 +103,8 @@ def write_json(path, value):
 
 def read_jsonl(path):
     try:
-        lines = Path(path).read_text(encoding="utf-8").splitlines()
+        # Only "\n" ends a row: splitlines() also cuts at U+2028, NEL and form feed.
+        lines = Path(path).read_text(encoding="utf-8").split("\n")
     except FileNotFoundError:
         raise InputError(f"missing file: {path}") from None
     try:
