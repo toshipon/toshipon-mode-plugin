@@ -36,7 +36,13 @@ PROCESS_AND_NETWORK = {
     "httpx",
     "aiohttp",
     "webbrowser",
+    "posix",
+    "_posixsubprocess",
+    "importlib",
+    "concurrent",
+    "runpy",
 }
+OS_MODULES = {"os", "posix"}
 OS_CALLS = re.compile(r"system|popen|exec[lv]p?e?|spawn[lv]p?e?|posix_spawnp?|fork|forkpty|kill")
 DYNAMIC = {"eval", "exec", "compile", "__import__"}
 ALLOWED_HOSTS = {
@@ -53,30 +59,80 @@ def modules():
     return sorted(path for path in PACKAGE.rglob("*.py") if path.name != "guard.py")
 
 
-def imported(tree):
+def guard_internals():
+    """Names guard binds by import (subprocess, os, ...). Reachable through guard, not its API."""
+    tree = ast.parse((PACKAGE / "guard.py").read_text(encoding="utf-8"))
+    return {
+        (alias.asname or alias.name).split(".")[0]
+        for node in tree.body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+
+
+GUARD_INTERNALS = guard_internals()
+
+
+def _outside_guard_api(name):
+    return name.startswith("_") or name in GUARD_INTERNALS
+
+
+def _imports(tree, offenders):
+    """Record offending imports. Returns the names bound to os and to the guard module."""
+    os_names, guard_names = set(), set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            yield from (alias.name for alias in node.names)
+            for alias in node.names:
+                if alias.name.split(".")[0] in PROCESS_AND_NETWORK:
+                    offenders.append(f"import {alias.name}")
+                if alias.name == "os" or (alias.name.startswith("os.") and not alias.asname):
+                    os_names.add(alias.asname or "os")
         elif isinstance(node, ast.ImportFrom) and node.level == 0:
-            yield node.module or ""
+            module = node.module or ""
+            if module.split(".")[0] in PROCESS_AND_NETWORK:
+                offenders.append(f"import {module}")
+            elif module in OS_MODULES:
+                offenders.append(f"from {module} import ...")
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if (node.module or "").split(".")[-1] == "guard" and _outside_guard_api(alias.name):
+                    offenders.append(f"from guard import {alias.name}")
+                if node.module is None and alias.name == "guard":
+                    guard_names.add(alias.asname or "guard")
+    return os_names, guard_names
+
+
+def _is_safe_os_getattr(call):
+    """getattr(os, "O_NOFOLLOW", 0) reads a constant; any other name could be a process call."""
+    name = call.args[1] if len(call.args) > 1 else None
+    return (
+        isinstance(name, ast.Constant)
+        and isinstance(name.value, str)
+        and not OS_CALLS.fullmatch(name.value)
+    )
 
 
 def find_offenders(source):
     """Ways a module could start a process or open a socket outside guard, as short strings."""
     tree = ast.parse(source)
     offenders = []
-    for name in imported(tree):
-        if name.split(".")[0] in PROCESS_AND_NETWORK or name == "importlib":
-            offenders.append(f"import {name}")
+    os_names, guard_names = _imports(tree, offenders)
     for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and OS_CALLS.fullmatch(node.attr):
-            if isinstance(node.value, ast.Name) and node.value.id == "os":
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            owner = node.value.id
+            if owner in os_names and OS_CALLS.fullmatch(node.attr):
                 offenders.append(f"os.{node.attr}")
+            if owner in guard_names and _outside_guard_api(node.attr):
+                offenders.append(f"guard.{node.attr}")
+        if isinstance(node, ast.Attribute) and node.attr == "_run":
+            offenders.append("reaches into guard._run")
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             if node.func.id in DYNAMIC:
                 offenders.append(f"{node.func.id}()")
-        if isinstance(node, ast.Attribute) and node.attr == "_run":
-            offenders.append("reaches into guard._run")
+            first = node.args[0] if node.args else None
+            if node.func.id == "getattr" and isinstance(first, ast.Name):
+                if first.id in os_names and not _is_safe_os_getattr(node):
+                    offenders.append("getattr(os, ...)")
     return offenders
 
 
