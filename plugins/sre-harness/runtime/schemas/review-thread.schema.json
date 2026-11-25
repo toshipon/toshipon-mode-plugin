@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:review-thread",
+  "title": "review-thread",
+  "description": "One review thread, review summary or PR conversation comment. Fields the source left out are not filled; their names are listed in missing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "run_id",
+    "created_at",
+    "provenance",
+    "node_id",
+    "kind",
+    "repo",
+    "pr",
+    "comments",
+    "missing"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "id": { "type": "string", "pattern": "^RT-[0-9]{4,}$" },
+    "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+    "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "provenance": { "$ref": "urn:sre-harness:common#/$defs/provenance" },
+    "node_id": { "$ref": "#/$defs/node_id" },
+    "kind": { "enum": ["inline_thread", "review_summary", "issue_comment"] },
+    "repo": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$" },
+    "pr": { "$ref": "#/$defs/pr" },
+    "thread": { "$ref": "#/$defs/thread" },
+    "review": { "$ref": "#/$defs/review" },
+    "comments": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/comment" } },
+    "fix": { "$ref": "#/$defs/fix" },
+    "missing": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z_]+(\\[[0-9]+\\])?(\\.[a-z_]+)*$" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "inline_thread" } } },
+      "then": { "required": ["thread"], "not": { "required": ["review"] } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "review_summary" } } },
+      "then": { "required": ["review"], "not": { "required": ["thread"] } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "issue_comment" } } },
+      "then": { "not": { "anyOf": [{ "required": ["thread"] }, { "required": ["review"] }] } }
+    }
+  ],
+  "$defs": {
+    "node_id": { "type": "string", "pattern": "^[A-Za-z0-9_=+/-]{1,200}$" },
+    "sha_or_null": {
+      "oneOf": [{ "$ref": "urn:sre-harness:common#/$defs/git_sha" }, { "type": "null" }]
+    },
+    "author_type": { "enum": ["user", "bot", "ghost"] },
+    "pr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "state": { "enum": ["open", "closed"] },
+        "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "merged_at": {
+          "oneOf": [{ "$ref": "urn:sre-harness:common#/$defs/timestamp" }, { "type": "null" }]
+        },
+        "author_login": { "type": "string", "minLength": 1 },
+        "author_type": { "$ref": "#/$defs/author_type" },
+        "base_sha": { "$ref": "urn:sre-harness:common#/$defs/git_sha" },
+        "head_sha": { "$ref": "urn:sre-harness:common#/$defs/git_sha" },
+        "head_repo": { "type": "string", "minLength": 1 }
+      }
+    },
+    "thread": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "is_resolved": { "type": "boolean" },
+        "is_outdated": { "type": "boolean" },
+        "resolved_by": { "type": ["string", "null"] },
+        "path": { "type": "string", "minLength": 1 },
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "original_line": { "type": ["integer", "null"], "minimum": 1 },
+        "diff_hunk": { "type": ["string", "null"] },
+        "original_commit_id": { "$ref": "#/$defs/sha_or_null" },
+        "commit_id": { "$ref": "#/$defs/sha_or_null" }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": { "enum": ["approved", "changes_requested", "commented", "dismissed"] }
+      }
+    },
+    "comment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "author_type"],
+      "properties": {
+        "id": { "$ref": "#/$defs/node_id" },
+        "author_login": { "type": "string", "minLength": 1 },
+        "author_type": { "$ref": "#/$defs/author_type" },
+        "author_association": {
+          "enum": [
+            "owner",
+            "member",
+            "collaborator",
+            "contributor",
+            "first_time_contributor",
+            "mannequin",
+            "none"
+          ]
+        },
+        "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "body": { "type": "string" },
+        "in_reply_to": { "$ref": "#/$defs/node_id" },
+        "commit_id": { "$ref": "#/$defs/sha_or_null" },
+        "original_commit_id": { "$ref": "#/$defs/sha_or_null" },
+        "suggestion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["lines"],
+          "properties": { "lines": { "type": "array", "items": { "type": "string" } } }
+        }
+      },
+      "if": { "properties": { "author_type": { "enum": ["user", "bot"] } } },
+      "then": { "required": ["author_login"] }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha", "path"],
+      "properties": {
+        "sha": { "$ref": "urn:sre-harness:common#/$defs/git_sha" },
+        "path": { "type": "string", "minLength": 1 },
+        "range": {
+          "type": "array",
+          "prefixItems": [{ "type": "integer", "minimum": 1 }, { "type": "integer", "minimum": 1 }],
+          "items": false,
+          "minItems": 2
+        }
+      }
+    },
+    "fix": {
+      "description": "Before and after of the change a thread led to. Filled by `review analyze` (a later stage), never by normalize.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["found", "not_found", "ambiguous"] },
+        "commits": { "type": "array", "items": { "$ref": "urn:sre-harness:common#/$defs/git_sha" } },
+        "before": { "$ref": "#/$defs/location" },
+        "after": { "$ref": "#/$defs/location" },
+        "method": { "enum": ["suggestion_applied", "reply_link", "same_path_later_commit"] }
+      }
+    }
+  }
+}

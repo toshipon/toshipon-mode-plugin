@@ -1,0 +1,38 @@
+# The remaining comments of one review thread, one page per call. Read-only.
+query($thread: ID!, $cursor: String) {
+  rateLimit {
+    cost
+    remaining
+    resetAt
+  }
+  node(id: $thread) {
+    ... on PullRequestReviewThread {
+      comments(first: 100, after: $cursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          databaseId
+          body
+          createdAt
+          authorAssociation
+          author {
+            login
+            __typename
+          }
+          replyTo {
+            id
+          }
+          originalCommit {
+            oid
+          }
+          commit {
+            oid
+          }
+        }
+      }
+    }
+  }
+}
