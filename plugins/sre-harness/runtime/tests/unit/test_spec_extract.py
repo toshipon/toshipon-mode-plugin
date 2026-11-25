@@ -7,6 +7,7 @@ from examples.synthetic.spec_scenarios import (
     HTTP_CLIENT_OLD,
     INJECTED_ADR,
     INJECTION,
+    LEADS,
     MINUTES_DECISION,
     MINUTES_REQUIREMENT,
     MISSING_ADR,
@@ -15,6 +16,8 @@ from examples.synthetic.spec_scenarios import (
     RETENTION_CHAIN,
     RETENTION_DAYS,
     RETENTION_REQ,
+    _adr,
+    _write,
     write_cycle_workspace,
     write_workspace,
 )
@@ -158,7 +161,8 @@ def test_the_stub_infers_from_minutes_and_marks_it_inferred(home, run_id):
     assert "external_id" not in inferred[0]
     req = [r for r in requirements["requirements"] if r["basis"] == "inferred"]
     assert [r["statement"] for r in req] == [MINUTES_REQUIREMENT]
-    assert req[0]["id"] == "REQ-0006"  # after the highest explicit id, REQ-0005
+    assert req[0]["id"] == "RQI-0001"  # its own namespace, never a REQ- id a document writes
+    assert inferred[0]["id"] == "DCI-0001"
     llm_flags = [
         a for r in requirements["requirements"] for a in r["ambiguity"] if a["detector"] == "llm"
     ]
@@ -168,10 +172,12 @@ def test_the_stub_infers_from_minutes_and_marks_it_inferred(home, run_id):
     assert [row["stage"] for row in calls] == ["extract"]
 
 
-def test_a_cycle_stops_extract_with_exit_2(tmp_path, home):
+def test_a_cycle_stops_extract_with_exit_2(tmp_path, home, capsys):
     run_id = ingested(home, write_cycle_workspace(tmp_path / "cycle"))
     code, _ = extract(home, run_id)
     assert code == 2
+    error = capsys.readouterr().err
+    assert "docs/adr/0011-a.md" in error and "docs/adr/0012-b.md" in error
     assert not (run_dir(home, run_id) / "decisions.json").exists()
 
 
@@ -245,7 +251,7 @@ def model_answer(data):
                 "nfr_category": None,
                 "decision_refs": [],
                 "acceptance_criteria": [],
-                "evidence": [{"ref": "DOC-9999#S1", "quote": "x"}],
+                "evidence": [{"ref": "DOC-9999#S1", "quote": "どこにもない文書の引用"}],
             },
         ],
         "ambiguity": [
@@ -323,3 +329,127 @@ def test_a_document_too_large_for_one_batch_stops(home, run_id, monkeypatch):
     monkeypatch.setattr(extract_stage, "MAX_BATCH_BYTES", 100)
     code, _ = extract(home, run_id)
     assert code == 1
+
+
+# Ids: what documents write, what the harness assigns, what the backend proposes ----------
+
+
+def small_workspace(directory, files):
+    listed = [(path, "minutes" if "minutes" in path else "adr") for path in files]
+    listed = [(p, "markdown" if p.endswith("requirements.md") else k) for p, k in listed]
+    return _write(directory, files, listed)
+
+
+MINUTES_ONLY = "# 定例\n\n## 議事\n\n決定: 夜間バッチの結果は毎朝確認する。\n\n要求: 夜間バッチは監視されること。\n"
+
+
+def test_a_document_reference_never_resolves_to_an_inferred_entry(tmp_path, home):
+    files = {
+        "docs/adr/0001-a.md": _adr(1, "ログは JSON で出す", "approved", approvers=LEADS),
+        "docs/minutes/2026-01-10.md": MINUTES_ONLY,
+        # DEC-0002 is what the inferred decision used to get (one explicit decision + 1)
+        "docs/requirements.md": "# R\n\n## REQ-0001: 監視\n\n監視すること。\n\nDecisions: DEC-0002\n",
+    }
+    run_id = ingested(home, small_workspace(tmp_path / "ws", files))
+    _, decisions, requirements = extracted(home, run_id)
+    assert [d["id"] for d in decisions["decisions"]] == ["DEC-0001", "DCI-0001"]
+    assert [r["id"] for r in requirements["requirements"]] == ["REQ-0001", "RQI-0001"]
+    req = requirement_by_external(requirements)["REQ-0001"]
+    assert req["decision_refs"] == []
+    assert {"kind": "decision_ref", "from": "REQ-0001", "ref": "DEC-0002"} in requirements[
+        "input_missing"
+    ]
+
+
+def test_an_adr_that_writes_a_dec_id_keeps_it_as_its_registry_id(tmp_path, home):
+    written = _adr(1, "キューは X を使う", "approved", approvers=LEADS)
+    files = {
+        "docs/adr/a.md": written.replace("id: ADR-0001", "id: DEC-0002").replace(
+            "# ADR-0001: ", "# "
+        ),
+        "docs/adr/b.md": _adr(5, "キューの監視", "approved", approvers=LEADS),
+        "docs/adr/c.md": _adr(
+            6, "キューは Y を使う", "approved", supersedes=("DEC-0002",), approvers=LEADS
+        ),
+    }
+    run_id = ingested(home, small_workspace(tmp_path / "ws", files))
+    _, decisions, _ = extracted(home, run_id)
+    adr = by_external(decisions)
+    assert adr["DEC-0002"]["id"] == "DEC-0002"
+    assert adr["DEC-0002"]["status"] == "superseded"
+    assert adr["DEC-0002"]["superseded_by"] == [adr["ADR-0006"]["id"]]
+    assert adr["ADR-0005"]["status"] == "approved" and adr["ADR-0005"]["id"] != "DEC-0002"
+    assert len({d["id"] for d in decisions["decisions"]}) == 3
+
+
+def test_two_documents_with_one_written_id_stop_extract_with_exit_2(tmp_path, home, capsys):
+    files = {
+        "docs/adr/a.md": _adr(1, "キューは X を使う", "approved", approvers=LEADS),
+        "docs/adr/b.md": _adr(1, "キューは Y を使う", "approved", approvers=LEADS),
+    }
+    run_id = ingested(home, small_workspace(tmp_path / "ws", files))
+    code, _ = extract(home, run_id)
+    assert code == 2
+    assert "ADR-0001" in capsys.readouterr().err
+    assert not (run_dir(home, run_id) / "decisions.json").exists()
+
+
+def answer_superseding(targets, quote=MINUTES_DECISION, needle=MINUTES_DECISION):
+    def answer(data):
+        ref = section_ref(data, needle)
+        return {
+            "decisions": [
+                {
+                    "key": "D1",
+                    "title": "x",
+                    "content": "x",
+                    "rationale": "",
+                    "status": "proposed",
+                    "supersedes": list(targets),
+                    "scope": {"systems": [], "components": [], "environments": []},
+                    "evidence": [{"ref": ref, "quote": quote}],
+                }
+            ],
+            "requirements": [],
+            "ambiguity": [],
+        }
+
+    return answer
+
+
+def test_an_inferred_decision_keeps_only_supersedes_that_name_explicit_decisions(
+    tmp_path, home, run_id, fake_claude
+):
+    explicit = by_external(extracted(home, run_id)[1])
+    target = explicit["ADR-0006"]["id"]
+    wanted = ["DCI-0001", "DCI-0002", "DEC-0010", "DEC-0099", target, "ADR-0005"]
+    fake_claude(answer_superseding(wanted))
+    code, summary = extract(with_home(home, tmp_path), run_id, *LLM_ARGS, backend="claude")
+    assert code == 0, summary
+    decisions = read(home, run_id, "decisions.json")
+    (inferred,) = [d for d in decisions["decisions"] if d["basis"] == "inferred"]
+    assert inferred["supersedes"] == [target, explicit["ADR-0005"]["id"]]
+    dropped = [i["detail"] for i in inferred["issues"] if i["kind"] == "supersedes_dropped"]
+    assert len(dropped) == 4
+    assert all(any(ref in text for text in dropped) for ref in wanted[:4])
+    assert not any(m.get("from") == inferred["id"] for m in decisions["input_missing"])
+    assert explicit["ADR-0006"]["status"] == by_external(decisions)["ADR-0006"]["status"]
+
+
+def test_a_quote_shorter_than_eight_characters_is_not_evidence(tmp_path, home, run_id, fake_claude):
+    quote = "トは 5 分以内"  # in the section, 8 characters, 6 without the spaces
+    assert quote in MINUTES_REQUIREMENT
+    fake_claude(answer_superseding([], quote=quote, needle=MINUTES_REQUIREMENT))
+    code, summary = extract(with_home(home, tmp_path), run_id, *LLM_ARGS, backend="claude")
+    assert code == 0, summary
+    kept = read(home, run_id, "decisions.json")["decisions"]
+    assert not [d for d in kept if d["basis"] == "inferred"]
+    rejected = read_jsonl(run_dir(home, run_id) / "rejected-extractions.jsonl")
+    assert [row["reasons"][0].split(":")[0] for row in rejected] == ["quote_too_short"]
+
+
+def test_the_extract_schema_wants_quotes_of_eight_characters():
+    answer = answer_superseding([], quote="監視")(
+        {"documents": [{"sections": [{"ref": "DOC-0001#S1", "text": MINUTES_DECISION}]}]}
+    )
+    assert records.violations("llm-spec-extract", answer) != []
