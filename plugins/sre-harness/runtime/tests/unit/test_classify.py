@@ -73,8 +73,8 @@ def test_candidates_get_a_target_and_the_rest_are_set_aside(scenario):
     }
     assert aside == {
         "Use client A for outbound HTTP calls.": ["superseded"],
-        "Prefer tabs for indentation in this module.": ["external_only"],
-        "Line exceeds 100 characters.": ["bot_only"],
+        "Prefer tabs for indentation in this module.": ["external_only", "untrusted_quote"],
+        "Line exceeds 100 characters.": ["bot_only", "untrusted_quote"],
         "Only here: rename tmp to buffer.": ["case_specific"],
     }
     assert summary == {
@@ -272,3 +272,27 @@ def test_every_target_rule_names_a_known_target():
     assert len(names) == len(set(names))
     assert {rule[1] for rule in classify.TARGET_RULES} <= set(classify.TARGETS)
     assert json.loads(json.dumps(classify.TARGETS)) == list(classify.TARGETS)
+
+
+def test_a_lesson_quoting_an_outside_account_is_set_aside(tmp_path, home, clock):
+    run_id = analyzed_run(tmp_path, home)
+    directory = run_dir(home, run_id)
+    lessons = read_jsonl(directory / "lessons.jsonl")
+    timeout = next(lesson for lesson in lessons if lesson["problem"] == TIMEOUT_FINDING)
+    assert timeout["untrusted_quotes"] == []
+    timeout["untrusted_quotes"] = [
+        {
+            "comment_id": "PRRC_outside",
+            "author_type": "user",
+            "author_association": "none",
+            "found_in": ["quotes"],
+        }
+    ]
+    records.write_jsonl(directory / "lessons.jsonl", lessons)
+    code, _, _, outputs = classified(home, run_id, write_rules(tmp_path / "rules"))
+    assert code == 0
+    assert timeout["id"] not in {row["lesson_id"] for row in outputs["classified"]}
+    aside = {row["lesson_id"]: row["reasons"] for row in outputs["set-aside"]}
+    assert aside[timeout["id"]] == ["untrusted_quote"]
+    for row in outputs["set-aside"]:
+        assert records.violations("review-classified", row, "set_aside") == []
