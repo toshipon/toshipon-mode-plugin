@@ -103,3 +103,39 @@ def prompt_parts(prompt):
     head, _, rest = prompt.partition(llm.DATA_BEGIN)
     body, _, _ = rest.partition(llm.DATA_END)
     return head, json.loads(body)
+
+
+RULES_TEXT = "# HTTP\n\n- Every outbound HTTP client call must set a timeout.\n"
+
+
+def generated_run(tmp_path, env, fixture, *, split=True, t1=None, name="fx", generate=True):
+    """collect -> normalize -> [split] -> analyze -> classify -> generate, all with stub.
+
+    Returns (run id, split path or None)."""
+    from examples.synthetic.github_responses import SPLIT_T1
+
+    run_id = prepared_run(tmp_path, env, fixture, name=name)
+    split_path = None
+    if split:
+        code, made = run_cli(["review", "split", "--run", run_id, "--t1", t1 or SPLIT_T1], env)
+        assert code == 0, made
+        split_path = made["split"]
+    extra = ["--split", split_path] if split_path else []
+    stub = ["--backend", "stub"]
+    code, result = run_cli(["review", "analyze", "--run", run_id, *stub, *extra], env)
+    assert code == 0, result
+    rules = tmp_path / f"{name}-rules"
+    rules.mkdir(exist_ok=True)
+    (rules / "http.md").write_text(RULES_TEXT)
+    argv = ["review", "classify", "--run", run_id, "--existing-rules", str(rules), *stub]
+    code, result = run_cli(argv, env)
+    assert code == 0, result
+    if generate:
+        code, result = run_cli(["review", "generate", "--run", run_id, *stub, *extra], env)
+        assert code == 0, result
+    return run_id, split_path
+
+
+def evaluate_cli(env, run_id, split_path, *extra):
+    argv = ["review", "evaluate", "--run", run_id, "--split", split_path, "--backend", "stub"]
+    return run_cli([*argv, *extra], env)
