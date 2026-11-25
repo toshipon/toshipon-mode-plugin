@@ -191,6 +191,52 @@ def test_an_approved_rule_is_the_next_evaluations_baseline(evaluated, home):
     assert [entry["id"] for entry in result["candidates"]] == ["IC-0002"]
 
 
+def test_the_registry_records_the_generation_side_of_the_rule(evaluated, home):
+    run_id, split_path = evaluated
+    decide(home, run_id)
+    (version,) = registry.entries(root(home))["RG-0001"]
+    split = json.loads(open(split_path).read())
+    assert version["generation"] == {"prs": split["generation"]["prs"], "t1": split["t1"]}
+
+
+def test_a_baseline_is_not_scored_on_the_prs_it_was_learned_from(evaluated, tmp_path, home):
+    run_id, split_path = evaluated
+    decide(home, run_id)
+    learned_from = set(json.loads(open(split_path).read())["generation"]["prs"])
+    # A later run splits earlier, so its evaluation side holds the PRs RG-0001 came from.
+    later, later_split = generated_run(
+        tmp_path,
+        home,
+        evaluation_scenario(THIRTY_EVALUATION),
+        t1="2026-01-10T00:00:00Z",
+        name="later",
+    )
+    evaluation_prs = set(json.loads(open(later_split).read())["evaluation"]["prs"])
+    assert learned_from & evaluation_prs
+    assert evaluate_cli(home, later, later_split)[0] == 0
+    result = json.loads((run_dir(home, later) / "evaluation.json").read_text())
+    assert result["baseline_rules"] == []
+    (excluded,) = result["excluded_baseline_rules"]
+    assert excluded["id"] == "RG-0001" and excluded["reason"] == "generated_from_evaluation_prs"
+    assert excluded["overlapping_prs"] == sorted(learned_from & evaluation_prs)
+    assert all(item["rule_id"] != "RG-0001" for item in result["findings"])
+    assert records.violations("review-evaluation", result) == []
+
+
+def test_a_baseline_without_its_generation_side_is_left_out(evaluated, home):
+    run_id, split_path = evaluated
+    decide(home, run_id)
+    path = root(home) / "registry" / "RG-0001" / "v0001.json"
+    version = json.loads(path.read_text())
+    del version["generation"]  # an entry approved before the generation side was recorded
+    path.write_text(records.canonical(version) + "\n")
+    assert evaluate_cli(home, run_id, split_path)[0] == 0
+    result = json.loads((run_dir(home, run_id) / "evaluation.json").read_text())
+    assert result["baseline_rules"] == []
+    (excluded,) = result["excluded_baseline_rules"]
+    assert (excluded["id"], excluded["reason"]) == ("RG-0001", "no_generation_record")
+
+
 def test_activation_writes_a_diff_and_never_the_work_tree(evaluated, home, tmp_path):
     run_id, _ = evaluated
     summary, _ = decide(home, run_id, activate_as="docs/rules/http-timeout.md")
