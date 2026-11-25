@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from examples.synthetic.github_responses import evaluation_scenario
+from examples.synthetic.github_responses import THIRTY_EVALUATION, evaluation_scenario
 from sre_harness import paths, records
 from sre_harness.review import approve, candidates, registry
 from tests.helpers import evaluate_cli, generated_run, read_jsonl, run_dir
@@ -35,7 +35,7 @@ def test_no_candidate_rests_only_on_untrusted_lessons_without_the_flag(
 
 
 def test_every_approved_version_was_evaluated_with_its_own_hash(tmp_path, home, clock):
-    run_id, split_path = generated_run(tmp_path, home, evaluation_scenario())
+    run_id, split_path = generated_run(tmp_path, home, evaluation_scenario(THIRTY_EVALUATION))
     assert evaluate_cli(home, run_id, split_path)[0] == 0
     directory, root = run_dir(home, run_id), paths.state_root(home)
     for candidate_id in candidates.ids(directory):

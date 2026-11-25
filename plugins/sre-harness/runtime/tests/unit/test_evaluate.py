@@ -9,8 +9,9 @@ from jsonschema import Draft202012Validator
 
 from examples.synthetic.github_responses import THIRTY_EVALUATION as THIRTY
 from examples.synthetic.github_responses import TIMEOUT_FINDING, evaluation_scenario
-from sre_harness import guard, records
+from sre_harness import guard, llm, paths, records
 from sre_harness.review import candidates, evaluate
+from sre_harness.review import split as split_stage
 from tests.helpers import (
     LLM_ARGS,
     evaluate_cli,
@@ -77,12 +78,37 @@ def test_normal_code_draws_no_finding_and_the_exception_stays_on_the_lesson(thre
     assert units[41]["source"] == "thread" and units[42]["source"] == units[43]["source"] == "patch"
 
 
-def test_under_thirty_prs_the_result_is_unevaluable(three):
-    _, _, result = three
+def test_under_thirty_prs_the_result_is_unevaluable(three, home):
+    run_id, _, result = three
     assert result["status"] == "unevaluable" and result["n_prs"] == 3
     assert result["unevaluable_reason"] == "insufficient evaluation PRs: 3 < 30"
     for config in result["configs"].values():
         assert all(metric["value"] is None for metric in config["metrics"].values())
+    # The candidates stay proposed: tried, too few PRs, nothing to approve on.
+    directory = run_dir(home, run_id)
+    for candidate_id in candidates.ids(directory):
+        record, _ = candidates.load(directory, candidate_id)
+        assert record["status"] == "proposed"
+        assert record["evaluation_ref"] is None and record["criteria_hash"] is None
+        last = record["history"][-1]
+        assert (last["by"], last["to"]) == ("evaluate", "proposed")
+        assert last["note"] == "unevaluable: insufficient evaluation PRs: 3 < 30"
+
+
+def test_an_evaluated_candidate_goes_back_to_proposed_when_a_rerun_is_unevaluable(
+    tmp_path, home, clock
+):
+    run_id, split_path = generated_run(tmp_path, home, evaluation_scenario(THIRTY))
+    assert evaluate_cli(home, run_id, split_path)[0] == 0
+    directory = run_dir(home, run_id)
+    assert candidates.load(directory, "IC-0001")[0]["status"] == "evaluated"
+    stricter = {**evaluate.metrics.THRESHOLDS, "min_prs": 31}
+    split = split_stage.load(Path(split_path))
+    session = llm.Session(directory, "stub")
+    result = evaluate.evaluate(directory, paths.state_root(home), split, session, None, stricter)
+    assert result["status"] == "unevaluable"
+    record, _ = candidates.load(directory, "IC-0001")
+    assert record["status"] == "proposed" and record["criteria_hash"] is None
 
 
 def test_thirty_synthetic_prs_give_numbers(tmp_path, home, clock):

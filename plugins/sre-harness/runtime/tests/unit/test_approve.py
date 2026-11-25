@@ -8,6 +8,7 @@ import pytest
 
 from examples.synthetic.github_responses import (
     INJECTED_EXCEPTION,
+    THIRTY_EVALUATION,
     TIMEOUT_FINDING,
     evaluation_scenario,
 )
@@ -22,8 +23,10 @@ REASON = "Matches the team's HTTP policy."
 
 @pytest.fixture
 def evaluated(tmp_path, home, clock):
-    run_id, split_path = generated_run(tmp_path, home, evaluation_scenario())
-    assert evaluate_cli(home, run_id, split_path)[0] == 0
+    """Thirty evaluation PRs: the fewest that give an `evaluated` result, which approval needs."""
+    run_id, split_path = generated_run(tmp_path, home, evaluation_scenario(THIRTY_EVALUATION))
+    code, summary = evaluate_cli(home, run_id, split_path)
+    assert code == 0 and summary["status"] == "evaluated", summary
     return run_id, split_path
 
 
@@ -80,6 +83,29 @@ def test_a_candidate_that_was_not_evaluated_is_refused(tmp_path, home, clock):
     assert registry.entries(root(home)) == {}
 
 
+def test_an_unevaluable_evaluation_cannot_approve(tmp_path, home, clock):
+    # Three evaluation PRs: evaluate runs but gives no numbers, and nothing may be approved.
+    run_id, split_path = generated_run(tmp_path, home, evaluation_scenario())
+    code, summary = evaluate_cli(home, run_id, split_path)
+    assert code == 0 and summary["status"] == "unevaluable"
+    with pytest.raises(BoundaryError) as refused:
+        decide(home, run_id)
+    assert refused.value.exit_code == 3
+    assert registry.entries(root(home)) == {}
+
+
+def test_approval_reads_the_status_of_the_evaluation_itself(evaluated, home):
+    run_id, _ = evaluated
+    path = run_dir(home, run_id) / "evaluation.json"
+    evaluation = json.loads(path.read_text())
+    evaluation.update(status="unevaluable", unevaluable_reason="insufficient evaluation PRs")
+    records.write_json(path, evaluation)
+    assert candidates.load(run_dir(home, run_id), "IC-0001")[0]["status"] == "evaluated"
+    with pytest.raises(BoundaryError, match="unevaluable"):
+        decide(home, run_id)
+    assert registry.entries(root(home)) == {}
+
+
 def test_a_wrong_hash_prefix_records_nothing(evaluated, home):
     run_id, _ = evaluated
     with pytest.raises(BoundaryError, match="typed hash does not match"):
@@ -107,14 +133,14 @@ def test_approval_writes_version_one_and_the_screen_shows_sources_and_lint(evalu
     record, _ = candidates.load(run_dir(home, run_id), "IC-0001")
     assert record["status"] == "approved" and record["approval"]["registry_version"] == 1
     assert "association member" in screen and "author_type user" in screen
-    assert "## Evaluation" in screen and "unevaluable" in screen
+    assert "## Evaluation" in screen and "- status: evaluated" in screen
     folder = root(home) / "registry" / "RG-0001"
     assert sorted(p.name for p in folder.iterdir()) == ["v0001.json", "v0001.md"]
     assert oct(folder.stat().st_mode & 0o777) == "0o700"
 
 
 def test_the_screen_names_every_quoted_speaker_and_the_lint(tmp_path, home, clock):
-    fixture = evaluation_scenario(injected_exception=True)
+    fixture = evaluation_scenario(THIRTY_EVALUATION, injected_exception=True)
     run_id, split_path = generated_run(tmp_path, home, fixture, untrusted=True)
     assert evaluate_cli(home, run_id, split_path)[0] == 0
     directory = run_dir(home, run_id)
@@ -161,7 +187,7 @@ def test_an_approved_rule_is_the_next_evaluations_baseline(evaluated, home):
     assert evaluate_cli(home, run_id, split_path)[0] == 0
     result = json.loads((run_dir(home, run_id) / "evaluation.json").read_text())
     assert [rule["id"] for rule in result["baseline_rules"]] == ["RG-0001"]
-    assert result["configs"]["baseline"]["counts"]["true_positives"] == 1
+    assert result["configs"]["baseline"]["counts"]["true_positives"] == 12  # the reproduced PRs
     assert [entry["id"] for entry in result["candidates"]] == ["IC-0002"]
 
 

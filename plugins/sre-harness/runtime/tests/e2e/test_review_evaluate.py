@@ -55,7 +55,7 @@ def test_the_review_learning_evaluation_runs_end_to_end(tmp_path, home, clock):
     for folder in sorted((directory / "candidates").iterdir()):
         record = json.loads((folder / "candidate.json").read_text())
         assert records.violations("improvement-candidate", record) == []
-        assert record["status"] == "evaluated"
+        assert record["status"] == "proposed"  # unevaluable: too few evaluation PRs
         assert record["artifact"]["content_sha256"] == records.sha256(
             (folder / "body.md").read_bytes()
         )
