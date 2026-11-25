@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "insight-discovery/insight-audit.schema.json",
+  "title": "Independent audit of hypotheses: is an existing method enough, is the problem framed wrongly, can it be refuted.",
+  "$ref": "#/$defs/output",
+  "$defs": {
+    "output": {
+      "description": "What the auditor returns for one cycle.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["audits", "limitations"],
+      "properties": {
+        "audits": { "type": "array", "items": { "$ref": "#/$defs/audit" } },
+        "limitations": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hypothesis", "existing_sufficient", "problem_framing", "falsifiable", "findings", "recommendation"],
+      "properties": {
+        "hypothesis": { "type": "string", "pattern": "^H[0-9]+$" },
+        "existing_sufficient": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verdict", "basis", "refs"],
+          "properties": {
+            "verdict": { "enum": ["yes", "no", "unknown"] },
+            "basis": { "type": "string", "minLength": 1 },
+            "refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          }
+        },
+        "problem_framing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verdict", "basis"],
+          "properties": {
+            "verdict": { "enum": ["sound", "misframed", "unknown"] },
+            "basis": { "type": "string", "minLength": 1 }
+          }
+        },
+        "falsifiable": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verdict", "basis"],
+          "properties": {
+            "verdict": { "enum": ["yes", "no"] },
+            "basis": { "type": "string", "minLength": 1 }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["severity", "claim", "evidence", "counter_hypothesis"],
+            "properties": {
+              "severity": { "enum": ["critical", "high", "medium", "low"] },
+              "claim": { "type": "string", "minLength": 1 },
+              "evidence": { "type": "string", "minLength": 1 },
+              "counter_hypothesis": { "type": "string" }
+            }
+          }
+        },
+        "recommendation": { "enum": ["keep", "handoff_evolution", "handoff_improvement", "reject"] }
+      }
+    },
+    "stored": {
+      "description": "One audit as kept with a candidate: the auditor's answer plus who gave it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["auditor", "existing_sufficient", "problem_framing", "falsifiable", "findings", "recommendation"],
+      "properties": {
+        "auditor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "independence"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "independence": { "enum": ["separate_process", "subagent", "same_context"] }
+          }
+        },
+        "existing_sufficient": { "$ref": "#/$defs/audit/properties/existing_sufficient" },
+        "problem_framing": { "$ref": "#/$defs/audit/properties/problem_framing" },
+        "falsifiable": { "$ref": "#/$defs/audit/properties/falsifiable" },
+        "findings": { "$ref": "#/$defs/audit/properties/findings" },
+        "recommendation": { "$ref": "#/$defs/audit/properties/recommendation" }
+      }
+    }
+  }
+}

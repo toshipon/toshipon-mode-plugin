@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "insight-discovery/insight.schema.json",
+  "title": "One research-question candidate. Observations and interpretations are separate fields; novelty is a provisional status, never a claim.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "id", "run_id", "created_at", "fingerprint", "observations", "interpretations",
+    "evidence_refs", "evidence_summary", "abstracted_problem", "levels", "doubted_premise", "hypothesis",
+    "analogy", "prior_art", "novelty", "refutation", "unverified", "status", "history", "human_prior", "routing"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^INS-[0-9]{8}-[0-9]{2,}$" },
+    "run_id": { "description": "The analysis cycle that produced it.", "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "minLength": 1 },
+    "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "observations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "evidence_refs", "quotes"],
+        "properties": {
+          "text": { "$ref": "#/$defs/text" },
+          "evidence_refs": { "$ref": "#/$defs/evidence_refs" },
+          "quotes": { "type": "array", "items": { "$ref": "#/$defs/text" } }
+        }
+      }
+    },
+    "interpretations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "based_on"],
+        "properties": {
+          "text": { "$ref": "#/$defs/text" },
+          "based_on": { "description": "Indexes into observations.", "type": "array", "minItems": 1, "items": { "type": "integer", "minimum": 0 } }
+        }
+      }
+    },
+    "evidence_refs": { "$ref": "#/$defs/evidence_refs" },
+    "evidence_summary": {
+      "description": "Computed from the evidence, not written by a model.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "distinct_contexts", "strength"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 1 },
+        "distinct_contexts": { "type": "integer", "minimum": 1 },
+        "strength": { "enum": ["candidate", "recurring", "strong"] }
+      }
+    },
+    "abstracted_problem": { "$ref": "#/$defs/text" },
+    "levels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["individual", "structural", "premise"],
+      "properties": {
+        "individual": { "$ref": "#/$defs/text" },
+        "structural": { "$ref": "#/$defs/text" },
+        "premise": { "$ref": "#/$defs/text" }
+      }
+    },
+    "doubted_premise": { "$ref": "#/$defs/text" },
+    "hypothesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statement", "generator"],
+      "properties": {
+        "statement": { "$ref": "#/$defs/text" },
+        "generator": { "enum": ["inversion", "analogy", "constraint_removal", "constraint_addition", "counterexample"] }
+      }
+    },
+    "analogy": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source_domain", "mapping", "where_it_breaks"],
+          "properties": {
+            "source_domain": { "$ref": "#/$defs/text" },
+            "mapping": { "$ref": "#/$defs/text" },
+            "where_it_breaks": { "$ref": "#/$defs/text" }
+          }
+        }
+      ]
+    },
+    "prior_art": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "url", "retrieved_at", "claim", "relation"],
+        "properties": {
+          "title": { "$ref": "#/$defs/text" },
+          "url": { "type": "string", "pattern": "^https://[^\\s]+$" },
+          "retrieved_at": { "type": "string", "minLength": 1 },
+          "claim": { "$ref": "#/$defs/text" },
+          "relation": { "enum": ["same", "partial", "different"] }
+        }
+      }
+    },
+    "novelty": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "queries", "searched_at"],
+      "properties": {
+        "status": { "enum": ["not_searched", "searched_none_found", "partial_overlap", "covered_by_existing"] },
+        "queries": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "searched_at": { "type": ["string", "null"] }
+      }
+    },
+    "refutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["falsification", "counter_evidence", "audit"],
+      "properties": {
+        "falsification": { "$ref": "#/$defs/text" },
+        "counter_evidence": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+        "audit": { "$ref": "insight-audit.schema.json#/$defs/stored" }
+      }
+    },
+    "minimal_experiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["procedure", "comparison", "estimated_hours"],
+      "properties": {
+        "procedure": { "$ref": "#/$defs/text" },
+        "comparison": { "$ref": "#/$defs/text" },
+        "estimated_hours": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "success_criteria": { "$ref": "#/$defs/text" },
+    "kill_criteria": { "$ref": "#/$defs/text" },
+    "estimated_cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hours", "money", "note"],
+      "properties": {
+        "hours": { "type": "number", "minimum": 0 },
+        "money": { "type": "number", "minimum": 0 },
+        "note": { "type": "string" }
+      }
+    },
+    "confidence": { "enum": ["low", "medium", "high"] },
+    "confidence_reason": { "$ref": "#/$defs/text" },
+    "unverified": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+    "status": { "enum": ["candidate", "accepted", "rejected", "tested"] },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to", "at", "actor", "reason"],
+        "properties": {
+          "from": { "type": ["string", "null"] },
+          "to": { "type": "string", "minLength": 1 },
+          "at": { "type": "string", "minLength": 1 },
+          "actor": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "human_prior": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text", "recorded_at"],
+          "properties": { "text": { "$ref": "#/$defs/text" }, "recorded_at": { "type": "string", "minLength": 1 } }
+        }
+      ]
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["disposition", "reason"],
+      "properties": {
+        "disposition": { "enum": ["research", "handoff_evolution", "handoff_improvement"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "handoff_ref": { "type": "string", "minLength": 1 }
+      }
+    },
+    "scores": {
+      "description": "Ordinal 1-3. `evidence` is computed; the others come from a model with a reason.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "evidence", "delta_from_prior_art", "testability", "cost"],
+      "properties": {
+        "value": { "$ref": "#/$defs/score" },
+        "evidence": { "$ref": "#/$defs/score" },
+        "delta_from_prior_art": { "$ref": "#/$defs/score" },
+        "testability": { "$ref": "#/$defs/score" },
+        "cost": { "$ref": "#/$defs/score" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "routing": { "properties": { "disposition": { "const": "research" } } } } },
+      "then": {
+        "required": [
+          "minimal_experiment", "success_criteria", "kill_criteria", "estimated_cost", "confidence",
+          "confidence_reason", "scores"
+        ]
+      }
+    },
+    {
+      "if": { "properties": { "novelty": { "properties": { "status": { "const": "not_searched" } } } } },
+      "then": { "properties": { "prior_art": { "maxItems": 0 } } }
+    }
+  ],
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "maxLength": 4000, "pattern": "\\S" },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^EV-[0-9a-f]{12}$" }
+    },
+    "score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "reason"],
+      "properties": {
+        "score": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "reason": { "$ref": "#/$defs/text" }
+      }
+    }
+  }
+}

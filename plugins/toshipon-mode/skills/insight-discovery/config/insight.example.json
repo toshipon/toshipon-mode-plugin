@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "sources": [
+    { "adapter": "ledger" },
+    { "adapter": "claude_insights" },
+    { "adapter": "manual", "path": "~/notes/insight-exports" },
+    { "adapter": "review", "path": "~/work/review-records" }
+  ],
+  "limits": {
+    "max_evidence_per_cycle": 60,
+    "max_llm_calls_per_run": 6,
+    "max_seconds_per_run": 900,
+    "max_file_bytes": 1000000,
+    "max_files_per_source": 500,
+    "max_text_chars": 2000
+  },
+  "gates": {
+    "min_evidence": 2,
+    "min_distinct_contexts": 2,
+    "similarity": 0.85,
+    "max_candidates": 3
+  },
+  "agents": {
+    "analyst": { "claude": { "model": "sonnet", "max_budget_usd": 0.5 }, "timeout_seconds": 600 },
+    "auditor": { "claude": { "model": "opus", "max_budget_usd": 1 }, "timeout_seconds": 900 }
+  },
+  "search": {
+    "allowed_domains": ["arxiv.org", "github.com", "acm.org"],
+    "max_queries": 5,
+    "max_query_chars": 120
+  }
+}
