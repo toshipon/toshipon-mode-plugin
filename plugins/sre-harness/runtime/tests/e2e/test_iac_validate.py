@@ -183,3 +183,85 @@ def test_evaluator_output_carries_the_risk_counts_with_opa(home, tmp_path, opa_o
     assert list(v2.iter_errors(output)) == []
     assert output["metrics"]["risk_high"] == 5 and output["metrics"]["risk_medium"] == 1
     assert output["metrics"]["risk_changes_total"] == 6
+
+
+# Input nested too deep to parse: exit 2, no run -----------------------------------------
+
+DEEP = "[" * 200_000 + "]" * 200_000
+
+
+@pytest.mark.parametrize("which", ["plan", "delivery"])
+def test_json_nested_too_deep_is_exit_2_and_creates_no_run(home, tmp_path, which):
+    case = sc.write_case(tmp_path / "case")
+    if which == "plan":
+        case["plan"].write_text('{"resource_changes": [], "x": ' + DEEP + "}")
+    else:
+        case["delivery"].write_text(DEEP)
+    code, summary = validate(home, case)
+    assert code == 2 and summary is None
+    assert runs(home) == []
+
+
+# A plan out of shape is an input error before opa sees it -------------------------------
+
+
+@pytest.mark.parametrize(
+    "resource_changes",
+    [
+        {"a": 1},
+        "none",
+        [{"address": "a.b", "type": "a", "change": {"actions": "delete"}}],
+        [{"address": "a.b", "type": "a", "change": {"actions": []}}],
+        [{"address": "a.b", "type": "a", "change": {"actions": ["delete", 1]}}],
+        [{"address": "a.b", "type": "a", "change": {"actions": [""]}}],
+        [{"address": "a.b", "type": "a", "change": {}}],
+    ],
+)
+def test_a_plan_whose_actions_cannot_be_classified_is_exit_2(home, tmp_path, resource_changes):
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"resource_changes": resource_changes}))
+    (tmp_path / "evidence").mkdir()
+    code, summary = validate(home, plan=plan, evidence=tmp_path / "evidence")
+    assert code == 2 and summary is None
+    assert runs(home) == []
+
+
+# Whether --plan is the plan the delivery recorded ---------------------------------------
+
+
+def test_a_delivery_with_no_plan_yet_says_the_plan_is_not_bound_to_it(home, tmp_path, no_opa):  # noqa: F811
+    evidence = tmp_path / "case/evidence"
+    delivery = sc.valid_delivery(evidence, until="implemented")
+    path = tmp_path / "case/delivery.json"
+    path.write_text(json.dumps(delivery))
+    other = sc.write_plan(tmp_path / "other.json", "low")
+    code, summary = validate(home, plan=other, evidence=evidence, delivery=path)
+    assert code == 0 and summary["status"] == "valid"
+    assert summary["bound_to_delivery"] is False
+    assert read(home, summary["run_id"], "risk.json")["bound_to_delivery"] is False
+
+
+def test_the_delivered_plan_is_bound_to_the_delivery(home, tmp_path, no_opa):  # noqa: F811
+    code, summary = validate(home, sc.write_case(tmp_path / "case"))
+    assert code == 0 and summary["bound_to_delivery"] is True
+    assert read(home, summary["run_id"], "risk.json")["bound_to_delivery"] is True
+
+
+def test_a_plan_alone_is_not_bound_to_any_delivery(home, tmp_path, no_opa):  # noqa: F811
+    plan = sc.write_plan(tmp_path / "plan.json", "low")
+    (tmp_path / "evidence").mkdir()
+    code, summary = validate(home, plan=plan, evidence=tmp_path / "evidence")
+    assert code == 0 and summary["bound_to_delivery"] is False
+    assert read(home, summary["run_id"], "risk.json")["bound_to_delivery"] is False
+
+
+def test_evaluator_output_says_when_the_plan_is_not_bound(home, tmp_path, no_opa, v2):  # noqa: F811
+    evidence = tmp_path / "case/evidence"
+    path = tmp_path / "case/delivery.json"
+    path.write_text(json.dumps(sc.valid_delivery(evidence, until="implemented")))
+    plan = sc.write_plan(tmp_path / "other.json", "low")
+    code, output = validate(
+        home, None, "--format", "evaluator-output", plan=plan, evidence=evidence, delivery=path
+    )
+    assert code == 0 and list(v2.iter_errors(output)) == []
+    assert "not bound" in output["notes"]

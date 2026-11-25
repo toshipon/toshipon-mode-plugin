@@ -311,3 +311,110 @@ def test_the_reader_reads_inside_the_directory_only(tmp_path):
     assert evidence.read(tmp_path, "a/missing.txt") == (None, "evidence_missing")
     assert evidence.read(tmp_path, "a\\b.txt") == (None, "evidence_path_refused")
     assert evidence.read(tmp_path, "") == (None, "evidence_path_refused")
+
+
+# Who approved: the implementer under another spelling --------------------------------
+
+
+@pytest.mark.parametrize(
+    "written, key",
+    [
+        ("alice", "alice"),
+        ("Alice", "alice"),
+        ("ALICE", "alice"),
+        (" alice\t", "alice"),
+        ("alice@example.invalid", "alice"),
+        ("Alice@Example.Invalid", "alice"),
+        ("alice.", "alice"),
+        ("alice..", "alice"),
+        ("alice.@example.invalid", "alice"),
+        ("ａｌｉｃｅ", "alice"),  # fullwidth letters fold under NFKC
+        ("Straße", "strasse"),  # casefold, not lower
+        ("alice.b", "alice.b"),
+        ("bob", "bob"),
+    ],
+)
+def test_a_person_is_compared_by_one_normalised_key(written, key):
+    assert contract.person(written) == key
+
+
+@pytest.mark.parametrize("alias", ["Alice", "ALICE", "alice@example.invalid", "alice."])
+def test_the_implementer_under_another_spelling_is_still_the_implementer(case, alias):
+    root, delivery = case
+    index = FORWARD.index("privileged_approved")
+    delivery["transitions"][index]["actor"] = {"name": alias, "role": "privileged"}
+    assert codes(check(delivery, root)) == ["approver_is_implementer"]
+
+
+def test_only_the_implementer_is_compared_with_the_approver(case):
+    root, delivery = case
+    approver = dict(delivery["transitions"][FORWARD.index("privileged_approved")]["actor"])
+    for stage in ("requirement_approved", "designed", "staging_verified", "pr_opened"):
+        delivery["transitions"][FORWARD.index(stage)]["actor"] = dict(approver)
+    assert check(delivery, root) == []
+
+
+@pytest.mark.parametrize("name", ["alice\n", "alice\r", "al\nice", "alice\x00", "alice\x1b", " "])
+def test_an_actor_name_with_control_characters_is_refused_by_the_schema(case, name):
+    root, delivery = case
+    delivery["transitions"][2]["actor"]["name"] = name
+    assert set(codes(check(delivery, root))) == {"schema"}
+
+
+# A rolled-back change ------------------------------------------------------------------
+
+
+def _rolled_back(root, delivery, text):
+    (root / "deploy/rollback.json").write_text(text)
+    delivery["transitions"].append(
+        {
+            "from": "deployed",
+            "to": "rolled_back",
+            "at": "2026-01-13T00:00:00Z",
+            "actor": {"name": "bob", "role": "privileged"},
+            "evidence": [sc.evidence_item(root, "execution_record", "deploy/rollback.json")],
+        }
+    )
+    delivery["state"] = "rolled_back"
+    return delivery
+
+
+@pytest.mark.parametrize(
+    "text", ['{"result": "rolled back"}\n', "not json\n", '["a"]\n', '{"plan_sha256": "x"}\n']
+)
+def test_a_rollback_execution_record_out_of_shape_is_a_violation(case, text):
+    root, delivery = case
+    found = check(_rolled_back(root, delivery, text), root)
+    assert codes(found) == ["evidence_content_invalid"]
+    assert found[0]["transition"] == 7 and found[0]["locator"] == "deploy/rollback.json"
+
+
+# Evidence JSON nested too deep to parse -------------------------------------------------
+
+
+def test_requirement_evidence_nested_too_deep_is_out_of_shape_not_a_crash(case):
+    root, delivery = case
+    (root / "requirement/REQ-0001.json").write_text("[" * 200_000 + "]" * 200_000)
+    for item in delivery["transitions"]:
+        for entry in item["evidence"]:
+            if entry["kind"] == "requirement":
+                entry["sha256"] = sc.sha256_file(root / entry["locator"])
+    assert codes(check(delivery, root)) == ["evidence_content_invalid"] * 2
+
+
+# Which plan the delivery delivered -----------------------------------------------------
+
+
+@pytest.mark.parametrize("until", FORWARD)
+def test_the_delivered_plan_is_the_last_plan_recorded(tmp_path, until):
+    root = tmp_path / "evidence"
+    delivery = sc.valid_delivery(root, until=until)
+    staged = sc.sha256_file(root / "staging/plan.json")
+    has_plan = FORWARD.index(until) >= FORWARD.index("staging_verified")
+    assert contract.delivered_plan(delivery) == (staged if has_plan else None)
+
+
+def test_a_delivery_out_of_schema_has_no_delivered_plan(case):
+    _, delivery = case
+    delivery["state"] = "applied"
+    assert contract.delivered_plan(delivery) is None

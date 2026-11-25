@@ -208,3 +208,113 @@ def test_each_rule_of_the_sample(opa_on_path, change, level, reason):  # noqa: F
 def test_an_empty_plan_has_no_risk(opa_on_path):  # noqa: F811
     found = risk.classify(_plan())
     assert found["level"] == "none" and found["changes"] == []
+
+
+# Combinations the sample must not call harmless -----------------------------------------
+
+
+def _one(opa_change):
+    found = risk.classify(_plan(opa_change))
+    (item,) = found["changes"]
+    return item
+
+
+@pytest.mark.parametrize(
+    "actions, level, reasons",
+    [
+        (["delete", "delete"], "high", ["delete", "unknown_action"]),
+        (["update", "delete"], "high", ["delete", "unknown_action"]),
+        (["delete", "no-op"], "high", ["delete", "unknown_action"]),
+        (["delete", "update"], "high", ["delete", "unknown_action"]),
+        (["create", "update"], "medium", ["unknown_action"]),
+        (["no-op", "no-op"], "medium", ["unknown_action"]),
+        (["read", "no-op"], "medium", ["unknown_action"]),
+        (["create", "create"], "medium", ["unknown_action"]),
+        (["delete", "create", "delete"], "high", ["delete", "unknown_action"]),
+    ],
+)
+def test_an_action_combination_outside_the_known_shapes_is_not_none(
+    opa_on_path,  # noqa: F811
+    actions,
+    level,
+    reasons,
+):
+    item = _one(_rc("aws_sqs_queue.a", "aws_sqs_queue", actions, {"n": 1}, {"n": 1}))
+    assert (item["level"], item["reasons"]) == (level, reasons)
+
+
+def _update(before, after, **extra):
+    change = _rc("aws_s3_bucket.a", "aws_s3_bucket", ["update"], before, after)
+    change["change"].update(extra)
+    return change
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        _update(None, None),
+        _update(None, {}),
+        _update({}, None),
+        _update({}, {}),
+        _update({"tags": {"a": "b"}}, {"tags": {"a": "b"}}),
+        _update("x", "y"),
+        _update([1], [2]),
+        {"address": "aws_s3_bucket.a", "type": "aws_s3_bucket", "change": {"actions": ["update"]}},
+        _update({"tags": {}}, {"tags": {"a": "b"}}, after_unknown={"arn": True}),
+        _update({"tags": {}}, {"tags": {"a": "b"}}, after_unknown=True),
+        _update({"tags": {}}, {"tags": {"a": "b"}}, after_unknown=None),
+    ],
+)
+def test_an_update_is_tags_only_only_when_known_tags_are_all_that_change(opa_on_path, change):  # noqa: F811
+    item = _one(change)
+    assert (item["level"], item["reasons"]) == ("medium", ["update"])
+
+
+def test_a_tags_change_with_an_empty_after_unknown_is_still_tags_only(opa_on_path):  # noqa: F811
+    item = _one(_update({"tags": {}}, {"tags": {"a": "b"}}, after_unknown={}))
+    assert (item["level"], item["reasons"]) == ("low", ["tags_only"])
+
+
+ACTIONS = ("no-op", "read", "create", "update", "delete", "forget")
+
+
+def test_no_sequence_of_actions_is_none_unless_it_is_a_no_op_or_a_read(opa_on_path):  # noqa: F811
+    sequences = [[a] for a in ACTIONS] + [[a, b] for a in ACTIONS for b in ACTIONS]
+    plan = _plan(
+        *[
+            _rc(f"aws_sqs_queue.q{n}", "aws_sqs_queue", list(actions), {"n": 1}, {"n": 2})
+            for n, actions in enumerate(sequences)
+        ]
+    )
+    found = risk.classify(plan)
+    for actions, item in zip(sequences, found["changes"]):
+        harmless = actions in (["no-op"], ["read"])
+        assert (item["level"] == "none") == harmless, actions
+        assert item["reasons"] or harmless, actions
+        if "delete" in actions:
+            assert item["level"] == "high", actions
+
+
+# Input the Python side refuses, given to opa directly -----------------------------------
+
+
+def _raw(plan):
+    code, stdout = guard.opa_risk(records.canonical(plan), timeout=60)
+    assert code == 0
+    return json.loads(stdout)
+
+
+@pytest.mark.parametrize("actions", ["delete", [], [1], [None], {"0": "delete"}, None])
+def test_actions_that_are_not_a_list_of_names_are_unknown_not_none(opa_on_path, actions):  # noqa: F811
+    change = {"address": "aws_sqs_queue.a", "type": "aws_sqs_queue", "change": {"actions": actions}}
+    value = _raw(_plan(change))["result"][0]["expressions"][0]["value"]
+    (item,) = value["changes"]
+    assert "unknown_action" in item["reasons"]
+    assert item["level"] in {"medium", "high"} and value["level"] != "none"
+
+
+@pytest.mark.parametrize("plan", [{"resource_changes": {"a": {}}}, {"resource_changes": "x"}, {}])
+def test_resource_changes_that_are_not_a_list_give_no_result(opa_on_path, plan):  # noqa: F811
+    assert _raw(plan) == {}
+    with pytest.raises(QualityGateError):
+        risk.classify(plan)
