@@ -30,10 +30,10 @@ MAX_RULES_BYTES = 512 * 1024
 MAX_RULE_FILES = 500
 
 SET_ASIDE = (
-    ("superseded", ("staleness", "status"), "superseded"),
-    ("case_specific", ("scope",), "case_specific"),
-    ("external_only", ("source_trust",), "external_only"),
-    ("bot_only", ("source_trust",), "bot_only"),
+    ("superseded", lambda lesson: lesson["staleness"]["status"] == "superseded"),
+    ("case_specific", lambda lesson: lesson["scope"] == "case_specific"),
+    ("external_only", lambda lesson: lesson["source_trust"] == "external_only"),
+    ("bot_only", lambda lesson: lesson["source_trust"] == "bot_only"),
 )
 
 # (rule name, target, pattern over target + problem + fix_summary + applies_when, condition).
@@ -85,14 +85,7 @@ _LIST_MARKER = re.compile(r"^(?:[-*+]|[0-9]+[.)])\s+")
 
 
 def set_aside_reasons(lesson):
-    reasons = []
-    for reason, keys, value in SET_ASIDE:
-        found = lesson
-        for key in keys:
-            found = found[key]
-        if found == value:
-            reasons.append(reason)
-    return reasons
+    return [reason for reason, applies in SET_ASIDE if applies(lesson)]
 
 
 def target_for(lesson, fixed):
