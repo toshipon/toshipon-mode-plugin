@@ -51,6 +51,8 @@ export SRE_HARNESS_PYTHON=~/.venvs/sre-harness/bin/python
 "${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" runs list
 ```
 
+launcher は Python を `-I`（isolated mode）で起動し、`runtime/` だけを `sys.path` に足します。作業ディレクトリ、`PYTHONPATH` などの `PYTHON*` 環境変数、user site-packages は読みません。利用者のリポジトリを作業ディレクトリにして実行しても、そこにある `argparse.py` や `json.py` は harness の中で import されません。`python3 -m sre_harness` で直接起動すると作業ディレクトリが `sys.path` の先頭に入るので、launcher を使ってください。
+
 ## 認証
 
 GitHub を読む段は `--auth-env <環境変数名>` が必須で、既定値はありません。その変数が空なら、通信せずに exit 2 で止まります。
