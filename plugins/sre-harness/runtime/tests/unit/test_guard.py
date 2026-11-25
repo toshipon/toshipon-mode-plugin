@@ -294,6 +294,18 @@ REFUSED_GIT = [
     ["rev-parse", "--git-dir"],
     ["read-tree", "-u", SHA],
     ["merge-base", "--fork-point", SHA],
+    ["rev-parse", "--verify", "refs/sre-harness/a..b"],
+    ["rev-parse", "--verify", "refs/sre-harness/a/../../x"],
+    ["rev-parse", "--verify", "refs/sre-harness/a//b"],
+    ["rev-parse", "--verify", "refs/sre-harness/a/"],
+    ["rev-parse", "--verify", "refs/sre-harness/pull/7.lock"],
+    ["rev-parse", "--verify", "refs/sre-harness/pull/.7"],
+    ["rev-parse", "--verify", "refs/sre-harness/a@{1}"],
+    ["fetch", "https://github.com/example-org/demo.git", "+refs/heads/a..b:refs/sre-harness/a"],
+    ["fetch", "https://github.com/example-org/demo.git", "+refs/heads/a:refs/sre-harness/../x"],
+    ["fetch", "https://github.com/example-org/demo.git", "+refs/heads/a:refs/sre-harness/a.lock"],
+    ["fetch", "https://github.com/example-org/demo.git", "+refs/heads/.a:refs/sre-harness/a"],
+    ["fetch", "https://github.com/example-org/demo.git", "+refs/heads/a//b:refs/sre-harness/a"],
 ]
 
 
@@ -515,3 +527,45 @@ def test_the_subscription_login_gets_the_user_name_it_is_stored_under(tmp_path):
     assert child == {"HOME": "/home/alice", "USER": "alice", "LOGNAME": "alice", "PATH": "/usr/bin"}
     with_key = guard._claude_env("api-key", str(tmp_path), ambient)
     assert "USER" not in with_key and with_key["HOME"] == str(tmp_path)
+
+
+REMOTE_HOSTS = [
+    # (host passed to guard.git, remote URL, host that receives the token)
+    (None, "https://github.com/example-org/demo.git", "github.com"),
+    ("github.com", "https://github.com/example-org/demo.git", "github.com"),
+    ("ghe.example", "https://ghe.example/example-org/demo.git", "ghe.example"),
+]
+
+REFUSED_REMOTE_HOSTS = [
+    (None, "https://attacker.example/example-org/demo.git"),
+    (None, "https://ghe.example/example-org/demo.git"),
+    ("ghe.example", "https://github.com/example-org/demo.git"),
+    ("github.com", "https://github.com.attacker.example/example-org/demo.git"),
+    ("-x", "https://github.com/example-org/demo.git"),
+    ("GHE.EXAMPLE", "https://ghe.example/example-org/demo.git"),
+]
+
+
+def git_config(env):
+    return {
+        env[f"GIT_CONFIG_KEY_{number}"]: env[f"GIT_CONFIG_VALUE_{number}"]
+        for number in range(int(env["GIT_CONFIG_COUNT"]))
+    }
+
+
+@pytest.mark.parametrize("host, remote, token_host", REMOTE_HOSTS)
+def test_the_token_goes_only_to_the_allowed_host(calls, tmp_path, host, remote, token_host):
+    refspec = "+refs/pull/7/head:refs/sre-harness/pull/7"
+    guard.git(tmp_path, ["fetch", "--quiet", remote, refspec], token=TOKEN, host=host)
+    headers = [key for key in git_config(calls[0].env) if key.endswith(".extraheader")]
+    assert headers == [f"http.https://{token_host}/.extraheader"]
+
+
+@pytest.mark.parametrize("host, remote", REFUSED_REMOTE_HOSTS)
+def test_a_remote_on_another_host_is_refused(calls, tmp_path, host, remote):
+    refspec = "+refs/pull/7/head:refs/sre-harness/pull/7"
+    for token in (TOKEN, None):
+        with pytest.raises(BoundaryError) as refused:
+            guard.git(tmp_path, ["fetch", "--quiet", remote, refspec], token=token, host=host)
+        assert refused.value.exit_code == 3
+    assert calls == []

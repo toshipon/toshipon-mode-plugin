@@ -31,10 +31,12 @@ _QUERY_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _VARIABLE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
 _CURSOR = re.compile(r"[A-Za-z0-9+/=_:.-]{1,400}")
 _ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,127}")
-_REF = r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}"
-_OWN_REF = re.compile(rf"refs/sre-harness/{_REF}")
-_REFSPEC = re.compile(rf"\+?refs/(?:heads|pull)/{_REF}:refs/sre-harness/{_REF}")
-_REMOTE_URL = re.compile(r"https://[a-z0-9.-]+/[A-Za-z0-9-]+/[A-Za-z0-9._-]+\.git")
+# One path element of a ref: no leading or trailing dot, so `.hidden`, `a.` and `//` fail.
+_REF_PART = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9_-])?")
+_OWN_REF = re.compile(r"refs/sre-harness/([^:]{1,200})")
+_REFSPEC = re.compile(r"\+?refs/(?:heads|pull)/([^:]{1,200}):refs/sre-harness/([^:]{1,200})")
+_REMOTE_URL = re.compile(r"https://([a-z0-9.-]+)/[A-Za-z0-9-]+/[A-Za-z0-9._-]+\.git")
+DEFAULT_GIT_HOST = "github.com"
 
 # REST: GET only, and only these paths. Values are checked against the pattern named here.
 REST_ENDPOINTS = {
@@ -248,19 +250,32 @@ def gh_graphql(name, variables=None, *, token, host=None, env=None, timeout=60):
     return _gh(arguments, token, host, env, timeout)
 
 
+def _is_ref_name(value):
+    """The part after refs/<kind>/. Refuses `..`, `@{`, empty elements and `.lock` endings."""
+    return all(
+        _REF_PART.fullmatch(part) and ".." not in part and not part.endswith(".lock")
+        for part in value.split("/")
+    )
+
+
+def _ref_allowed(pattern, value):
+    match = pattern.fullmatch(value)
+    return bool(match) and all(_is_ref_name(name) for name in match.groups())
+
+
 def _git_value_allowed(subcommand, value, position):
     if subcommand == "init":
         return False
     if subcommand == "fetch":
         if position == 0:
             return bool(_REMOTE_URL.fullmatch(value)) or _is_local_source(value)
-        return bool(_REFSPEC.fullmatch(value))
+        return _ref_allowed(_REFSPEC, value)
     if subcommand == "apply":
         return _is_patch_file(value)
     if subcommand in {"show", "cat-file"} and ":" in value:
         sha, _, path = value.partition(":")
         return bool(_SHA.fullmatch(sha)) and _is_repo_path(path)
-    return bool(_SHA.fullmatch(value) or _OWN_REF.fullmatch(value))
+    return bool(_SHA.fullmatch(value)) or _ref_allowed(_OWN_REF, value)
 
 
 def _is_local_source(value):
@@ -313,6 +328,7 @@ def _git_env(git_dir, token, index_file, remote, env):
     config = list(_GIT_CONFIG)
     if token and remote and _REMOTE_URL.fullmatch(remote):
         # The token travels in the environment, never in argv, the URL or the repository config.
+        # git() has already checked that this host is the allowed one.
         host = remote.split("/")[2]
         basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
         config.append((f"http.https://{host}/.extraheader", f"Authorization: Basic {basic}"))
@@ -334,11 +350,22 @@ def _git_env(git_dir, token, index_file, remote, env):
     return child
 
 
-def git(git_dir, arguments, *, token=None, index_file=None, env=None, timeout=300):
+def _check_remote_host(remote, host):
+    """An https remote must be on the allowed host (github.com unless the caller names one)."""
+    allowed = _checked(_HOST, DEFAULT_GIT_HOST if host is None else host, "host")
+    match = _REMOTE_URL.fullmatch(remote)
+    if match and match.group(1) != allowed:
+        raise BoundaryError(
+            f"refused git fetch: the remote is not on {allowed}; pass --host to read another host."
+        )
+
+
+def git(git_dir, arguments, *, token=None, host=None, index_file=None, env=None, timeout=300):
     """Run one allowlisted git command against the harness's own bare repository.
 
     Returns (exit code, stdout bytes). The user's checkout, config and credential helper are
-    never read.
+    never read. An https remote must be on `host` (github.com by default), and only that host
+    is given the token. A local directory source never gets the token.
     """
     arguments = check_git(arguments)
     git_dir = Path(git_dir)
@@ -352,6 +379,7 @@ def git(git_dir, arguments, *, token=None, index_file=None, env=None, timeout=30
                 "refused git fetch: a source and at least one refspec are required."
             )
         remote = values[0]
+        _check_remote_host(remote, host)
     result = _run(
         [_executable("git"), *arguments],
         env=_git_env(git_dir, token, index_file, remote, env),

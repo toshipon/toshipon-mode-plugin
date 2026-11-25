@@ -1,9 +1,15 @@
-"""Structure checks: where a process or a socket could come from, and what the repo carries."""
+"""Structure checks: where a process or a socket could come from, and what the repo carries.
+
+The process and network check is a guard against writing such code by mistake. It reads the
+syntax tree of the package; it is not a sandbox and does not stop code written to evade it.
+"""
 
 import ast
 import json
 import re
 from pathlib import Path
+
+import pytest
 
 from sre_harness import privacy
 
@@ -30,7 +36,13 @@ PROCESS_AND_NETWORK = {
     "httpx",
     "aiohttp",
     "webbrowser",
+    "posix",
+    "_posixsubprocess",
+    "importlib",
+    "concurrent",
+    "runpy",
 }
+OS_MODULES = {"os", "posix"}
 OS_CALLS = re.compile(r"system|popen|exec[lv]p?e?|spawn[lv]p?e?|posix_spawnp?|fork|forkpty|kill")
 DYNAMIC = {"eval", "exec", "compile", "__import__"}
 ALLOWED_HOSTS = {
@@ -47,37 +59,150 @@ def modules():
     return sorted(path for path in PACKAGE.rglob("*.py") if path.name != "guard.py")
 
 
-def imported(tree):
+def guard_internals():
+    """Names guard binds by import (subprocess, os, ...). Reachable through guard, not its API."""
+    tree = ast.parse((PACKAGE / "guard.py").read_text(encoding="utf-8"))
+    return {
+        (alias.asname or alias.name).split(".")[0]
+        for node in tree.body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+
+
+GUARD_INTERNALS = guard_internals()
+
+
+def _outside_guard_api(name):
+    return name.startswith("_") or name in GUARD_INTERNALS
+
+
+def _imports(tree, offenders):
+    """Record offending imports. Returns the names bound to os and to the guard module."""
+    os_names, guard_names = set(), set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            yield from (alias.name for alias in node.names)
+            for alias in node.names:
+                if alias.name.split(".")[0] in PROCESS_AND_NETWORK:
+                    offenders.append(f"import {alias.name}")
+                if alias.name == "os" or (alias.name.startswith("os.") and not alias.asname):
+                    os_names.add(alias.asname or "os")
         elif isinstance(node, ast.ImportFrom) and node.level == 0:
-            yield node.module or ""
+            module = node.module or ""
+            if module.split(".")[0] in PROCESS_AND_NETWORK:
+                offenders.append(f"import {module}")
+            elif module in OS_MODULES:
+                offenders.append(f"from {module} import ...")
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if (node.module or "").split(".")[-1] == "guard" and _outside_guard_api(alias.name):
+                    offenders.append(f"from guard import {alias.name}")
+                if node.module is None and alias.name == "guard":
+                    guard_names.add(alias.asname or "guard")
+    return os_names, guard_names
+
+
+def _is_safe_os_getattr(call):
+    """getattr(os, "O_NOFOLLOW", 0) reads a constant; any other name could be a process call."""
+    name = call.args[1] if len(call.args) > 1 else None
+    return (
+        isinstance(name, ast.Constant)
+        and isinstance(name.value, str)
+        and not OS_CALLS.fullmatch(name.value)
+    )
+
+
+def find_offenders(source):
+    """Ways a module could start a process or open a socket outside guard, as short strings."""
+    tree = ast.parse(source)
+    offenders = []
+    os_names, guard_names = _imports(tree, offenders)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            owner = node.value.id
+            if owner in os_names and OS_CALLS.fullmatch(node.attr):
+                offenders.append(f"os.{node.attr}")
+            if owner in guard_names and _outside_guard_api(node.attr):
+                offenders.append(f"guard.{node.attr}")
+        if isinstance(node, ast.Attribute) and node.attr == "_run":
+            offenders.append("reaches into guard._run")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in DYNAMIC:
+                offenders.append(f"{node.func.id}()")
+            first = node.args[0] if node.args else None
+            if node.func.id == "getattr" and isinstance(first, ast.Name):
+                if first.id in os_names and not _is_safe_os_getattr(node):
+                    offenders.append("getattr(os, ...)")
+    return offenders
 
 
 def test_only_guard_can_start_a_process_or_open_a_socket():
-    offenders = []
-    for path in modules():
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for name in imported(tree):
-            if name.split(".")[0] in PROCESS_AND_NETWORK or name == "importlib":
-                offenders.append(f"{path.relative_to(RUNTIME)}: import {name}")
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and OS_CALLS.fullmatch(node.attr):
-                if isinstance(node.value, ast.Name) and node.value.id == "os":
-                    offenders.append(f"{path.relative_to(RUNTIME)}: os.{node.attr}")
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id in DYNAMIC:
-                    offenders.append(f"{path.relative_to(RUNTIME)}: {node.func.id}()")
-            if isinstance(node, ast.Attribute) and node.attr == "_run":
-                offenders.append(f"{path.relative_to(RUNTIME)}: reaches into guard._run")
+    offenders = [
+        f"{path.relative_to(RUNTIME)}: {offender}"
+        for path in modules()
+        for offender in find_offenders(path.read_text(encoding="utf-8"))
+    ]
     assert offenders == []
 
 
-def test_the_check_would_catch_an_offender():
-    tree = ast.parse("import os\nfrom urllib import request\nos.system('x')\n")
-    assert "urllib" in set(imported(tree))
-    assert any(isinstance(node, ast.Attribute) and node.attr == "system" for node in ast.walk(tree))
+# Each line is one way to reach a process or the network without going through guard.
+OFFENDING_SOURCES = [
+    "import subprocess",
+    "import socket",
+    "from urllib import request",
+    "import http.client",
+    "import multiprocessing.pool",
+    "import os\nos.system('x')",
+    "import os\nos.posix_spawn('x', [], {})",
+    "import os\nos.fork()",
+    "from os import system",
+    "from os import popen as p",
+    "from posix import system",
+    "import posix",
+    "import os as o\no.system('x')",
+    "import os as o\no.execv('x', [])",
+    "import os\ngetattr(os, 'system')('x')",
+    "import os as o\ngetattr(o, 'fork')()",
+    "import os\nname = 'system'\ngetattr(os, name)('x')",
+    "import importlib",
+    "import importlib.util",
+    "from importlib import import_module",
+    "import concurrent.futures",
+    "from concurrent.futures import ProcessPoolExecutor",
+    "import runpy",
+    "from .guard import subprocess",
+    "from .guard import _run as r",
+    "from ..guard import _executable",
+    "from .guard import shutil",
+    "from . import guard\nguard._run([])",
+    "from .. import guard as g\ng.subprocess.run([])",
+    "eval('1')",
+    "exec('1')",
+    "compile('1', 'x', 'exec')",
+    "__import__('subprocess')",
+]
+
+# Uses the package relies on. They must stay clean or the check is too broad to keep.
+CLEAN_SOURCES = [
+    "import os\nos.environ.get('X')",
+    "import os\nflags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)",
+    "import os\nos.open('x', os.O_RDONLY)",
+    "from os.path import join",
+    "from . import guard\nguard.git('/x', ['rev-parse'])",
+    "from .. import guard, paths\nguard.gh_rest('pulls')",
+    "from .guard import gh_rest, git",
+    "from .errors import BoundaryError",
+]
+
+
+@pytest.mark.parametrize("source", OFFENDING_SOURCES)
+def test_the_check_catches_each_way_around_guard(source):
+    assert find_offenders(source) != []
+
+
+@pytest.mark.parametrize("source", CLEAN_SOURCES)
+def test_the_check_leaves_ordinary_code_alone(source):
+    assert find_offenders(source) == []
 
 
 def tracked_text_files():
