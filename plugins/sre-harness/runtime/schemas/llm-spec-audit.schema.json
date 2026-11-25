@@ -59,7 +59,7 @@
             "maxLength": 1000
           },
           "evidence": {
-            "description": "Ids from the audit input (FD-0001, DEC-0001, REQ-0001, TL-0001, PT-0001, DOC-0001, DOC-0001#S1), each optionally followed by ': ' and a quote copied from that item. The harness checks that the id exists and the quote is in its text.",
+            "description": "Ids from the audit input (FD-0001, DEC-0001, DCI-0001, REQ-0001, RQI-0001, TL-0001, PT-0001, DOC-0001, DOC-0001#S1; DCI- and RQI- are inferred entities), each optionally followed by ': ' and a quote copied from that item. The harness checks that the id exists and the quote is in its text.",
             "type": "array",
             "minItems": 1,
             "maxItems": 20,

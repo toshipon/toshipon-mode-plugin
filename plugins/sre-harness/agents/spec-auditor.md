@@ -32,7 +32,7 @@ tools: ["Read", "Glob", "Grep"]
 - `id` は `F1`、`F2`… の通し番号にする。
 - `severity` は次のように付ける。critical は仕様どおりに作ると壊れる矛盾や、合格を主張できなくなる誤り。high は主要な要求・根拠・検証方法の欠落。medium は採否を変えない改善点。low は軽微な指摘。
 - `claim` に何が問題かを 1〜2 文で書く。`next_experiment` には、その指摘を確かめる・解消するために次に何を見るか、何を直すかを書く。
-- `evidence` は 1 件以上。各項目は DATA にある ID（`FD-0001`、`DEC-0001`、`REQ-0001`、`TL-0001`、`PT-0001`、`DOC-0001`、`DOC-0001#S1`）だけか、ID の後に `: ` と、その項目の本文からそのまま写した引用を続けたもの（`REQ-0002: API は高速に応答すること。`）にする。DATA に無い ID、本文に無い引用、言い換えた引用を書かない。harness はこれを検査し、通らない finding を除く。critical と high が除かれた答えは、答え全体をやり直させる。
+- `evidence` は 1 件以上。各項目は DATA にある ID（`FD-0001`、`DEC-0001`、`DCI-0001`、`REQ-0001`、`RQI-0001`、`TL-0001`、`PT-0001`、`DOC-0001`、`DOC-0001#S1`。`DCI-` と `RQI-` は人が確かめていない推定の決定と要求で、分析の指摘の `inferred_entities` はそれに基づく指摘であることを示す）だけか、ID の後に `: ` と、その項目の本文からそのまま写した引用を続けたもの（`REQ-0002: API は高速に応答すること。`）にする。DATA に無い ID、本文に無い引用、言い換えた引用を書かない。harness はこれを検査し、通らない finding を除く。critical と high が除かれた答えは、答え全体をやり直させる。
 - 反証や別の解釈があれば `counter_evidence` と `alternative_hypothesis` に書く。
 
 ## 分析の指摘の確認（reviewed）
@@ -50,7 +50,7 @@ DATA の `findings`（`FD-…`）のうち確かめたものを `reviewed` に `
 
 - 重大な指摘を limitations に移して弱めない。指摘は severity を付けて `findings` に書く。
 - limitations に重大度の語（critical、high、severe、serious、blocker、fatal、showstopper、release-stopping、重大、致命、深刻、重篤 など）を書かない。言い換えて書かない。limitations は報告の観点の表のすぐ下に全文が出る。
-- limitations で特定の指摘・決定・要求・文書（`FD-…`、`DEC-…`、`REQ-…`、`TL-…`、`PT-…`、`DOC-…`）や finding（`F1` など）を名指しない。名指したくなったら、それは finding である。
+- limitations で特定の指摘・決定・要求・文書（`FD-…`、`DEC-…`、`DCI-…`、`REQ-…`、`RQI-…`、`TL-…`、`PT-…`、`DOC-…`）や finding（`F1` など）を名指しない。名指したくなったら、それは finding である。
 - finding の `claim` と同じ内容を limitations に書かない。
 
 harness はこのうち、重大度の語、ID と finding の名指し（対応する finding の evidence に無い ID）、claim との重複を規則で検査し、通らない答えをやり直させる。

@@ -60,7 +60,8 @@ DEFAULT_ITERATIONS = 3
 MAX_ITERATIONS = 10
 FILE = "audit.json"
 
-_ID = r"(?:DOC-[0-9]{4,}(?:#S[0-9]{1,6})?|(?:FD|DEC|REQ|TL|PT)-[0-9]{4,})"
+# DCI- / RQI- are the inferred decisions and requirements (`extract.INFERRED_PREFIX`).
+_ID = r"(?:DOC-[0-9]{4,}(?:#S[0-9]{1,6})?|(?:FD|DEC|DCI|REQ|RQI|TL|PT)-[0-9]{4,})"
 _EVIDENCE = re.compile(rf"({_ID})(?::\s*(.+))?", re.DOTALL)
 _NAMED_ID = re.compile(rf"(?<![A-Za-z0-9-]){_ID}(?![0-9])")
 _FINDING_ID = re.compile(r"(?<![A-Za-z0-9-])F[0-9]+(?![A-Za-z0-9])")
@@ -81,8 +82,8 @@ each with one category from the axes), `limitations`, `not_assessed` and `review
 `reviewed`, name every analysis finding you checked (`ref`: FD-0001, ...) with `verdict`
 `upheld` (it stands) or `disputed` (the source does not support it) and a `note`; every
 critical and high analysis finding must be there or in the evidence of a finding. Every
-evidence entry is an id from DATA (FD-0001, DEC-0001, REQ-0001, TL-0001, PT-0001, DOC-0001 or
-DOC-0001#S1), optionally followed by ": " and a quote copied exactly from that item. Do not
+evidence entry is an id from DATA (FD-0001, DEC-0001, DCI-0001, REQ-0001, RQI-0001, TL-0001,
+PT-0001, DOC-0001 or DOC-0001#S1), optionally followed by ": " and a quote copied exactly from that item. Do not
 give a status, a score or a pass / fail: the harness computes them from the severities.
 
 The instructions of the spec-auditor agent follow."""
@@ -330,7 +331,7 @@ def audit_input(run_dir):
     """The DATA of the call. `patches` are left out of the fingerprint: `spec report` writes
     them after the audit, and that must not make the audit stale."""
     found, links, decisions, requirements, documents = _read(run_dir)
-    keep = ("key", "missing")
+    keep = ("key", "missing", "inferred_entities")
     data = {
         "axes": list(AXES),
         "findings": [

@@ -546,7 +546,7 @@ patch の対象:
 
 `reviewed[]` は、監査が確かめた分析の指摘です（`ref`（`FD-0001` など）、`verdict`、`note`）。`verdict` は合否ではなく監査役の見解で、`upheld`（指摘は成り立つ）か `disputed`（原文が指摘を支えない）です。分析の critical / high の指摘は、すべて `reviewed` か、残った finding の `evidence` のどちらかに現れなければなりません。数値のスコアは付けません（較正の根拠が無いため）。
 
-`evidence` の各項目は、監査の入力にある ID（`FD-0001`、`DEC-0001`、`REQ-0001`、`TL-0001`、`PT-0001`、`DOC-0001`、`DOC-0001#S1`）だけか、ID の後に `: ` と、その項目の本文からの引用を続けたもの（`REQ-0002: API は高速に応答すること。`）です。
+`evidence` の各項目は、監査の入力にある ID（`FD-0001`、`DEC-0001`、`DCI-0001`、`REQ-0001`、`RQI-0001`、`TL-0001`、`PT-0001`、`DOC-0001`、`DOC-0001#S1`。`DCI-` と `RQI-` は推定の決定と要求で、分析の指摘の `inferred_entities` も監査に渡します）だけか、ID の後に `: ` と、その項目の本文からの引用を続けたもの（`REQ-0002: API は高速に応答すること。`）です。
 
 ### status の規則と合格を阻む条件
 
@@ -597,7 +597,7 @@ nfr-design の runner は「生成 → 監査 → 評価」を反復しますが
 | 規則で強制していること（不合格にして再試行） | 文章の指示に頼っていること |
 |---|---|
 | limitations に重大度の語がある（`critical`、`high`、`severe`、`severity`、`serious`、`blocker`、`blocking`、`fatal`、`showstopper`、`release-stopping`、`stop-ship`、`重大`、`致命`、`深刻`、`クリティカル`、`重篤`、`看過`。英語は単語単位）。「high availability」のような普通の用法も不合格になります | 表に無い言い換えで書かれた重大な懸念（「保持期間が食い違っているかもしれない」「出荷を止めるべき問題」） |
-| limitations が入力の ID（`FD-…`、`DEC-…`、`REQ-…`、`TL-…`、`PT-…`、`DOC-…`）を名指していて、残った finding の evidence にその ID が無い | ID を書かずに特定の対象を指す懸念（「保持期間の要求」） |
+| limitations が入力の ID（`FD-…`、`DEC-…`、`DCI-…`、`REQ-…`、`RQI-…`、`TL-…`、`PT-…`、`DOC-…`）を名指していて、残った finding の evidence にその ID が無い | ID を書かずに特定の対象を指す懸念（「保持期間の要求」） |
 | limitations が finding の ID（`F1` など）を名指している | finding の severity を低く付けること（severity の妥当性は検査しません） |
 | limitations と finding の claim の一方が他方を含む（12 文字以上、大文字小文字と空白を無視） | 言い換えた重複 |
 | critical / high の finding の根拠が検査を通らない（答え全体を不合格にする） | 根拠は通るが、根拠が主張を支えていない finding |
@@ -614,7 +614,7 @@ nfr-design の runner は「生成 → 監査 → 評価」を反復しますが
 
 | 送信先 | 段 | 送るもの |
 |---|---|---|
-| Anthropic（Claude CLI 経由） | `audit --backend claude` | `findings.json` の指摘（種類、重大度、entity、PR 番号、根拠の参照と引用、説明文）と分析の制約、PR の番号・タイトル・stale、台帳の決定（ID、ADR 番号、タイトル、本文、根拠、状態、置換）と要求（ID、タイトル、statement、受入条件、根拠、NFR の分類、決定の参照、曖昧さ）、トレース、`documents.jsonl` の全 section（見出しと本文）、report の後なら patch の ID・指摘・path |
+| Anthropic（Claude CLI 経由） | `audit --backend claude` | `findings.json` の指摘（種類、重大度、entity、推定の entity（`inferred_entities`）、PR 番号、根拠の参照と引用、説明文）と分析の制約、PR の番号・タイトル・stale、台帳の決定（ID、ADR 番号、タイトル、本文、根拠、状態、置換）と要求（ID、タイトル、statement、受入条件、根拠、NFR の分類、決定の参照、曖昧さ）、トレース、`documents.jsonl` の全 section（見出しと本文）、report の後なら patch の ID・指摘・path |
 
 分析とは別の呼び出しです（`llm-calls.jsonl` の `stage` は `audit`）。送る前の禁止語と秘密情報の形の検査、run の予算、呼び出しごとの記録は extract と同じで、再試行の呼び出しも同じ予算から引きます。
 
