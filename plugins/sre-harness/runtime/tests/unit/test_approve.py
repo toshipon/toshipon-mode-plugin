@@ -234,3 +234,92 @@ def test_at_a_terminal_the_command_line_shows_the_screen_and_asks(evaluated, hom
     assert code == 0 and asked and "content_sha256" in asked[0]
     text = out.getvalue()
     assert text.startswith("# Approve IC-0001") and '"registry_id": "RG-0001"' in text
+
+
+def tamper(env, run_id, **fields):
+    path = run_dir(env, run_id) / "candidates" / "IC-0001" / "candidate.json"
+    record = json.loads(path.read_text())
+    record.update(fields)
+    records.write_json(path, record)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"check": {"path_globs": ["**"], "added_line_pattern": "never", "message": "m"}},
+        {"title": "A title nobody evaluated"},
+    ],
+)
+def test_a_record_changed_after_evaluation_cannot_be_approved(evaluated, home, fields):
+    run_id, _ = evaluated
+    tamper(home, run_id, **fields)
+    with pytest.raises(BoundaryError, match="does not match its artifact"):
+        decide(home, run_id)
+    assert registry.entries(root(home)) == {}
+
+
+def test_the_command_line_also_refuses_a_changed_record(evaluated, home, monkeypatch):
+    run_id, _ = evaluated
+    tamper(home, run_id, title="A title nobody evaluated")
+    typed = digest(home, run_id)[: approve.PREFIX_LENGTH]
+    monkeypatch.setattr(review_cli, "_is_terminal", lambda stream: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: typed)
+    argv = ["review", "approve", "--run", run_id, "--candidate", "IC-0001"]
+    code = cli.main([*argv, "--reviewer", "alice", "--reason", REASON], env=home, out=io.StringIO())
+    assert code == 3 and registry.entries(root(home)) == {}
+
+
+def test_the_registry_records_only_what_the_artifact_hash_covers(evaluated, home):
+    run_id, _ = evaluated
+    _, screen = decide(home, run_id)
+    (version,) = registry.entries(root(home))["RG-0001"]
+    _, text = candidates.load(run_dir(home, run_id), "IC-0001")
+    title, check, problems = candidates.parse(text)
+    assert problems == []
+    assert set(version["candidate"]) == {
+        "content_sha256",
+        "form",
+        "title",
+        "check",
+        "artifact_file",
+    }
+    assert version["candidate"]["check"] == check and version["candidate"]["title"] == title
+    assert version["candidate"]["content_sha256"] == records.sha256(text)
+    stored = (root(home) / "registry" / "RG-0001" / "v0001.md").read_text()
+    assert stored == text
+    # The screen shows exactly what is recorded.
+    recorded = json.dumps(
+        {"form": "declarative_check", "title": title, "check": check},
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    )
+    assert "## What is recorded" in screen and recorded in screen
+
+
+def test_an_old_evaluation_cannot_approve_an_edited_check(evaluated, home):
+    run_id, split_path = evaluated
+    old = digest(home, run_id)
+    body = run_dir(home, run_id) / "candidates" / "IC-0001" / "body.md"
+    body.write_text(body.read_text().replace("client\\\\.get", "client\\\\.post"))
+    with pytest.raises(BoundaryError, match="changed after it was evaluated"):
+        decide(home, run_id, typed=old[: approve.PREFIX_LENGTH])
+    assert evaluate_cli(home, run_id, split_path)[0] == 0
+    new = digest(home, run_id)
+    assert new != old
+    with pytest.raises(BoundaryError, match="typed hash does not match"):
+        decide(home, run_id, typed=old[: approve.PREFIX_LENGTH])
+    decide(home, run_id)
+    (version,) = registry.entries(root(home))["RG-0001"]
+    assert version["candidate"]["content_sha256"] == new
+    assert version["candidate"]["check"]["added_line_pattern"] == r"client\.post\("
+
+
+def test_a_changed_registry_record_is_refused_as_a_baseline(evaluated, home):
+    run_id, split_path = evaluated
+    decide(home, run_id)
+    path = root(home) / "registry" / "RG-0001" / "v0001.json"
+    version = json.loads(path.read_text())
+    version["candidate"]["check"]["added_line_pattern"] = "never"
+    path.write_text(records.canonical(version) + "\n")
+    assert evaluate_cli(home, run_id, split_path)[0] == 3

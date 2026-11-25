@@ -69,11 +69,8 @@ def test_the_schema_refuses_an_approval_without_an_evaluation():
         "lineage": {"run_id": "run-20260128T000000Z-0123abcd", "candidate_id": "IC-0001"},
         "candidate": {
             "content_sha256": "a" * 64,
-            "candidate_version": 1,
             "form": "prose",
-            "target": "rule",
             "title": "t",
-            "problem": "p",
             "artifact_file": "v0001.md",
         },
         "evaluation": None,

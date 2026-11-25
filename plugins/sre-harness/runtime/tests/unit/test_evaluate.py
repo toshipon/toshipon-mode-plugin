@@ -268,10 +268,10 @@ def test_prose_rules_go_to_the_judge_and_only_known_ids_count(tmp_path, home, cl
 
 def test_evaluation_md_escapes_external_text(three, home):
     run_id, split_path, _ = three
-    path = run_dir(home, run_id) / "candidates" / "IC-0002" / "candidate.json"
-    record = json.loads(path.read_text())
-    record["title"] = "[click](https://example.com/x) ![img](https://example.com/i.png) <b>"
-    records.write_json(path, record)
+    body = run_dir(home, run_id) / "candidates" / "IC-0002" / "body.md"
+    title = "[click](https://example.com/x) ![img](https://example.com/i.png) <b>"
+    _, rest = body.read_text().split("\n", 1)
+    body.write_text(f"# {title}\n{rest}")
     assert evaluate_cli(home, run_id, split_path)[0] == 0
     text = (run_dir(home, run_id) / "evaluation.md").read_text()
     assert "](" not in text and "![" not in text and "<b>" not in text
@@ -289,3 +289,34 @@ def test_effort_and_cost_are_reported(three):
 def test_the_judge_reads_the_agent_file_without_its_frontmatter():
     text = evaluate.judge_instructions()
     assert "name: review-eval-judge" not in text and "合否" in text
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("check", {"path_globs": ["**"], "added_line_pattern": "x", "message": "m"}),
+        ("title", "Something nobody evaluated"),
+        ("form", "prose"),
+    ],
+)
+def test_a_record_that_disagrees_with_its_artifact_is_refused(three, home, field, value):
+    # The hash covers body.md only; candidate.json must not be able to change what is applied.
+    run_id, split_path, _ = three
+    path = run_dir(home, run_id) / "candidates" / "IC-0001" / "candidate.json"
+    record = json.loads(path.read_text())
+    record[field] = value
+    if field == "form":
+        record.pop("check")
+    records.write_json(path, record)
+    before = (run_dir(home, run_id) / "evaluation.json").read_text()
+    code, _ = evaluate_cli(home, run_id, split_path)
+    assert code == 3
+    assert (run_dir(home, run_id) / "evaluation.json").read_text() == before
+
+
+def test_the_check_applied_is_the_one_in_the_artifact(three, home):
+    run_id, split_path, result = three
+    _, text = candidates.load(run_dir(home, run_id), "IC-0001")
+    _, check, _ = candidates.parse(text)
+    assert check["added_line_pattern"] == r"client\.get\("
+    assert findings_by_pr(result)[41] == [("IC-0001", "human_flagged")]
