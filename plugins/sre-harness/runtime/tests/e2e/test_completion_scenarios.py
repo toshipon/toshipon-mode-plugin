@@ -517,3 +517,16 @@ def test_scenario_an_approver_who_implemented_the_change_is_a_violation(
     assert "approver_is_implementer" in summary["violations"]
     check = iac_read(home, summary["run_id"], "transition-check.json")
     assert "approver_is_implementer" in [item["code"] for item in check["violations"]]
+
+
+# The README's first steps ------------------------------------------------------------------
+
+
+def test_readme_the_review_script_writes_the_evaluation_scenario(tmp_path, home, clock, capsys):
+    """README の最初に試す手順: 合成応答の script が評価まで通る fixture を書く。"""
+    from examples.synthetic import github_responses
+
+    github_responses.main([str(tmp_path / "fx"), "--scenario", "evaluation"])
+    written = json.loads(capsys.readouterr().out)
+    code, summary = collect_fixture(written["fixture"], home)
+    assert code == 0 and summary["pulls"] == 16
