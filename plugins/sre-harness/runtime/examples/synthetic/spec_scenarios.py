@@ -17,8 +17,8 @@ What the default workspace holds (later PRs reuse these ids):
   effect. ADR-0008 is proposed and carries an injected instruction to approve it. ADR-0009
   says approved but names no approver.
 - Requirements: REQ-0001 log retention (400 days, measurable, the requirement the parallel-PR
-  scenario changes), REQ-0002 vague and without acceptance criteria, REQ-0003 compound and
-  pointing at ADR-0099 which does not exist, REQ-0004 an HTTP timeout tied to ADR-0002, and
+  scenario changes; `- retention_days: 400` is its structured key), REQ-0002 vague and without acceptance criteria, REQ-0003 compound and
+  pointing at ADR-0099 which does not exist, REQ-0004 an HTTP timeout tied to ADR-0002 (`- timeout_seconds: 10`), and
   REQ-0005 from the Confluence export.
 - Minutes with one decision and one requirement only a model (or the stub) can infer.
 - A Slack export and a Confluence export in the shapes the README describes.
@@ -122,6 +122,8 @@ REQUIREMENTS = f"""\
 Category: compliance
 Decisions: ADR-0006
 
+- retention_days: {RETENTION_DAYS}
+
 受入条件:
 
 - Given 保持期間の設定が適用されている
@@ -152,6 +154,8 @@ Outbound HTTP calls must time out after 10 s.
 
 Category: availability
 Decisions: {HTTP_CLIENT_OLD}
+
+- timeout_seconds: 10
 
 Given a dependency that never answers
 When the client calls it
