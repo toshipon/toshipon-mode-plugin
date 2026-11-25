@@ -1,0 +1,277 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:iac-delivery",
+  "title": "IaC delivery: the state-transition and evidence contract (checked, never advanced)",
+  "description": "The record a delivery process keeps for one change. sre-harness only checks it (`iac validate`); it has no command that writes or advances one. The legal transitions and the evidence each state needs are tables in sre_harness/iac/contract.py.",
+  "$ref": "#/$defs/delivery",
+  "$defs": {
+    "state": {
+      "enum": [
+        "requirement_approved",
+        "designed",
+        "implemented",
+        "staging_verified",
+        "pr_opened",
+        "privileged_approved",
+        "deployed",
+        "rejected",
+        "rolled_back"
+      ]
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "role"],
+      "$comment": "`not: pattern \\n` refuses the trailing newline a `$` lets through in Python's re.search.",
+      "properties": {
+        "name": {
+          "description": "Who the record says acted. Self-reported: the harness checks no identity.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$",
+          "not": { "pattern": "\\n" }
+        },
+        "role": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "not": { "pattern": "\\n" }
+        }
+      }
+    },
+    "evidence": {
+      "description": "A file under the --evidence directory and the sha256 of its bytes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "sha256", "locator"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "requirement",
+            "design",
+            "commit",
+            "plan",
+            "test_result",
+            "pull_request",
+            "execution_record",
+            "note"
+          ]
+        },
+        "sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+        "locator": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "at", "actor", "evidence"],
+      "properties": {
+        "from": { "oneOf": [{ "$ref": "#/$defs/state" }, { "type": "null" }] },
+        "to": { "$ref": "#/$defs/state" },
+        "at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "actor": { "$ref": "#/$defs/actor" },
+        "evidence": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/evidence" } }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "change_id", "state", "transitions"],
+      "properties": {
+        "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+        "change_id": { "$ref": "urn:sre-harness:common#/$defs/record_id" },
+        "state": { "$ref": "#/$defs/state" },
+        "transitions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/transition" }
+        }
+      }
+    },
+    "requirement_evidence": {
+      "description": "The content of a `requirement` evidence file.",
+      "type": "object",
+      "required": ["id", "status"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^REQ-[0-9]{4,}$" },
+        "status": { "type": "string" }
+      }
+    },
+    "execution_record": {
+      "description": "The content of an `execution_record` evidence file: which plan was run.",
+      "type": "object",
+      "required": ["plan_sha256", "result"],
+      "properties": {
+        "plan_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+        "result": { "type": "string", "minLength": 1 }
+      }
+    },
+    "plan": {
+      "description": "The part of a `terraform show -json` plan the risk sample reads.",
+      "type": "object",
+      "required": ["resource_changes"],
+      "properties": {
+        "resource_changes": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "type": "object",
+            "required": ["address", "type", "change"],
+            "properties": {
+              "address": { "type": "string", "minLength": 1 },
+              "type": { "type": "string", "minLength": 1 },
+              "change": {
+                "type": "object",
+                "required": ["actions"],
+                "properties": {
+                  "actions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "type": "string", "minLength": 1 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "level": { "enum": ["none", "low", "medium", "high"] },
+    "risk_result": {
+      "description": "What the Rego sample returns for one plan.",
+      "type": "object",
+      "required": ["level", "changes"],
+      "properties": {
+        "level": { "$ref": "#/$defs/level" },
+        "changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["address", "type", "actions", "level", "reasons"],
+            "properties": {
+              "address": { "type": "string" },
+              "type": { "type": "string" },
+              "actions": { "type": "array", "items": { "type": "string" } },
+              "level": { "$ref": "#/$defs/level" },
+              "reasons": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "risk": {
+      "description": "risk.json. Without opa the status is unevaluable and there is no level.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "run_id",
+        "created_at",
+        "plan_sha256",
+        "bound_to_delivery",
+        "status",
+        "engine"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+        "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+        "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "plan_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+        "bound_to_delivery": {
+          "description": "True only when --delivery was given, fits the schema, and its last plan evidence is this plan.",
+          "type": "boolean"
+        },
+        "status": { "enum": ["evaluated", "unevaluable"] },
+        "unevaluable_reason": { "type": "string", "minLength": 1 },
+        "engine": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "policy_sha256", "capabilities_sha256", "query"],
+          "properties": {
+            "name": { "const": "opa" },
+            "policy_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+            "capabilities_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+            "query": { "type": "string" }
+          }
+        },
+        "level": { "$ref": "#/$defs/level" },
+        "changes": { "$ref": "#/$defs/risk_result/properties/changes" }
+      },
+      "oneOf": [
+        { "properties": { "status": { "const": "evaluated" } }, "required": ["level", "changes"] },
+        {
+          "properties": { "status": { "const": "unevaluable" } },
+          "required": ["unevaluable_reason"],
+          "not": { "anyOf": [{ "required": ["level"] }, { "required": ["changes"] }] }
+        }
+      ]
+    },
+    "violation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "code", "transition", "message"],
+      "properties": {
+        "id": { "$ref": "urn:sre-harness:common#/$defs/record_id" },
+        "code": {
+          "enum": [
+            "schema",
+            "bad_start",
+            "broken_chain",
+            "skipped_stage",
+            "went_back",
+            "illegal_transition",
+            "time_went_back",
+            "state_mismatch",
+            "missing_evidence",
+            "evidence_path_refused",
+            "evidence_missing",
+            "evidence_symlink",
+            "evidence_too_large",
+            "evidence_hash_mismatch",
+            "evidence_content_invalid",
+            "requirement_not_approved",
+            "approver_not_privileged",
+            "approver_is_implementer",
+            "plan_not_staged",
+            "plan_hash_mismatch",
+            "plan_mismatch"
+          ]
+        },
+        "transition": { "type": ["integer", "null"], "minimum": 0 },
+        "message": { "type": "string", "minLength": 1 },
+        "locator": { "type": "string" }
+      }
+    },
+    "transition_check": {
+      "description": "transition-check.json: the contract check of one delivery record.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "run_id",
+        "created_at",
+        "status",
+        "change_id",
+        "state",
+        "delivery_sha256",
+        "plan_sha256",
+        "transitions_checked",
+        "violations"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+        "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+        "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "status": { "enum": ["valid", "violations", "not_checked"] },
+        "change_id": { "type": ["string", "null"] },
+        "state": { "type": ["string", "null"] },
+        "delivery_sha256": {
+          "oneOf": [{ "$ref": "urn:sre-harness:common#/$defs/sha256" }, { "type": "null" }]
+        },
+        "plan_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+        "transitions_checked": { "type": "integer", "minimum": 0 },
+        "violations": { "type": "array", "items": { "$ref": "#/$defs/violation" } }
+      }
+    }
+  }
+}
