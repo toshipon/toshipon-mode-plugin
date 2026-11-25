@@ -1,9 +1,15 @@
-"""Structure checks: where a process or a socket could come from, and what the repo carries."""
+"""Structure checks: where a process or a socket could come from, and what the repo carries.
+
+The process and network check is a guard against writing such code by mistake. It reads the
+syntax tree of the package; it is not a sandbox and does not stop code written to evade it.
+"""
 
 import ast
 import json
 import re
 from pathlib import Path
+
+import pytest
 
 from sre_harness import privacy
 
@@ -83,11 +89,64 @@ def test_only_guard_can_start_a_process_or_open_a_socket():
     assert offenders == []
 
 
-def test_the_check_would_catch_an_offender():
-    assert find_offenders("import os\nfrom urllib import request\nos.system('x')\n") == [
-        "import urllib",
-        "os.system",
-    ]
+# Each line is one way to reach a process or the network without going through guard.
+OFFENDING_SOURCES = [
+    "import subprocess",
+    "import socket",
+    "from urllib import request",
+    "import http.client",
+    "import multiprocessing.pool",
+    "import os\nos.system('x')",
+    "import os\nos.posix_spawn('x', [], {})",
+    "import os\nos.fork()",
+    "from os import system",
+    "from os import popen as p",
+    "from posix import system",
+    "import posix",
+    "import os as o\no.system('x')",
+    "import os as o\no.execv('x', [])",
+    "import os\ngetattr(os, 'system')('x')",
+    "import os as o\ngetattr(o, 'fork')()",
+    "import os\nname = 'system'\ngetattr(os, name)('x')",
+    "import importlib",
+    "import importlib.util",
+    "from importlib import import_module",
+    "import concurrent.futures",
+    "from concurrent.futures import ProcessPoolExecutor",
+    "import runpy",
+    "from .guard import subprocess",
+    "from .guard import _run as r",
+    "from ..guard import _executable",
+    "from .guard import shutil",
+    "from . import guard\nguard._run([])",
+    "from .. import guard as g\ng.subprocess.run([])",
+    "eval('1')",
+    "exec('1')",
+    "compile('1', 'x', 'exec')",
+    "__import__('subprocess')",
+]
+
+# Uses the package relies on. They must stay clean or the check is too broad to keep.
+CLEAN_SOURCES = [
+    "import os\nos.environ.get('X')",
+    "import os\nflags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)",
+    "import os\nos.open('x', os.O_RDONLY)",
+    "from os.path import join",
+    "from . import guard\nguard.git('/x', ['rev-parse'])",
+    "from .. import guard, paths\nguard.gh_rest('pulls')",
+    "from .guard import gh_rest, git",
+    "from .errors import BoundaryError",
+]
+
+
+@pytest.mark.parametrize("source", OFFENDING_SOURCES)
+def test_the_check_catches_each_way_around_guard(source):
+    assert find_offenders(source) != []
+
+
+@pytest.mark.parametrize("source", CLEAN_SOURCES)
+def test_the_check_leaves_ordinary_code_alone(source):
+    assert find_offenders(source) == []
 
 
 def tracked_text_files():
