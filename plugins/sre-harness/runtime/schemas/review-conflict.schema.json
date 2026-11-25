@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:review-conflict",
+  "title": "review-conflict",
+  "description": "A candidate relation between a lesson and a line of an existing rule file. It is shown to the person who approves; it never changes a result or an exit code.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "run_id",
+    "created_at",
+    "lesson_id",
+    "classified_id",
+    "existing_ref",
+    "kind",
+    "basis",
+    "quote",
+    "detector"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "id": { "type": "string", "pattern": "^CF-[0-9]{4,}$" },
+    "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+    "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "lesson_id": { "type": "string", "pattern": "^LS-[0-9]{4,}$" },
+    "classified_id": { "type": "string", "pattern": "^CL-[0-9]{4,}$" },
+    "existing_ref": {
+      "description": "<path relative to --existing-rules>#L<line>",
+      "type": "string",
+      "pattern": "^[^\\u0000]+#L[1-9][0-9]*$"
+    },
+    "kind": { "enum": ["contradicts", "duplicates", "narrows"] },
+    "basis": { "type": "string", "minLength": 1 },
+    "quote": { "type": "string", "minLength": 1 },
+    "detector": { "enum": ["llm", "stub"] }
+  }
+}

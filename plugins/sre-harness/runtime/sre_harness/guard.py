@@ -6,6 +6,8 @@ and an AST test keeps process and network imports out of every other module.
 """
 
 import base64
+import json
+import math
 import os
 import re
 import shutil
@@ -13,7 +15,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .errors import BoundaryError, InputError
+from .errors import BoundaryError, InputError, QualityGateError
 
 QUERY_DIR = Path(__file__).resolve().parent / "github" / "queries"
 
@@ -100,6 +102,13 @@ _GIT_CONFIG = (
 )
 
 _BASE_ENV = ("PATH", "LANG", "LC_ALL", "TMPDIR", "SYSTEMROOT")
+
+# Claude CLI: print mode, structured output, no tools, no MCP servers, no slash commands, no
+# saved session, a spend cap per call. Permission-bypass flags are never added.
+CLAUDE_AUTH = {"api-key": "--bare", "subscription": "--safe-mode"}
+CLAUDE_MAX_BUDGET_USD = 100.0
+CLAUDE_TIMEOUT = (30, 3600)
+_CLAUDE_MODEL = re.compile(r"[a-z0-9][a-z0-9.-]{0,63}")
 
 
 def read_token(env_name, env=None):
@@ -380,4 +389,92 @@ def git(git_dir, arguments, *, token=None, host=None, index_file=None, env=None,
         check=False,
         stdin=subprocess.DEVNULL,
     )
+    return result.returncode, result.stdout
+
+
+def _claude_budget(value):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not 0 < value <= CLAUDE_MAX_BUDGET_USD
+    ):
+        raise BoundaryError(
+            f"refused claude budget: it must be above 0 and at most {CLAUDE_MAX_BUDGET_USD} USD."
+        )
+    return f"{value:.4f}"
+
+
+def _claude_env(auth_mode, cwd, env):
+    env = os.environ if env is None else env
+    child = _base_env(env)
+    if auth_mode == "api-key":
+        if not env.get("ANTHROPIC_API_KEY", "").strip():
+            raise InputError("--auth-mode api-key needs ANTHROPIC_API_KEY; nothing was sent.")
+        child["ANTHROPIC_API_KEY"] = env["ANTHROPIC_API_KEY"]
+        child["HOME"] = cwd
+    else:
+        # The subscription login lives under the user's home; nothing else is passed through.
+        if not env.get("HOME"):
+            raise InputError("--auth-mode subscription needs HOME; nothing was sent.")
+        child["HOME"] = env["HOME"]
+        # The login is stored under the account name (the macOS keychain); the CLI needs it.
+        child.update({name: env[name] for name in ("USER", "LOGNAME") if env.get(name)})
+    return child
+
+
+def claude_argv(schema, *, auth_mode, max_budget_usd, model=None):
+    """The fixed argv. The schema loses `$schema` and `$id`, which the CLI does not accept."""
+    if auth_mode not in CLAUDE_AUTH:
+        raise BoundaryError(f"refused claude auth mode {auth_mode!r}: use {sorted(CLAUDE_AUTH)}.")
+    transport = {key: value for key, value in schema.items() if key not in {"$schema", "$id"}}
+    argv = [
+        _executable("claude"),
+        "-p",
+        "--output-format",
+        "json",
+        "--json-schema",
+        json.dumps(transport),
+        CLAUDE_AUTH[auth_mode],
+        "--tools",
+        "",
+        "--disable-slash-commands",
+        "--strict-mcp-config",
+        "--mcp-config",
+        '{"mcpServers":{}}',
+        "--no-session-persistence",
+        "--max-budget-usd",
+        _claude_budget(max_budget_usd),
+    ]
+    if model is not None:
+        argv += ["--model", _checked(_CLAUDE_MODEL, model, "claude model")]
+    return argv
+
+
+def claude(prompt, schema, *, auth_mode, timeout, max_budget_usd, model=None, env=None):
+    """One tool-free Claude call. The prompt goes through stdin; cwd is a new empty directory.
+
+    Returns (exit code, stdout). stderr is never returned or stored.
+    """
+    low, high = CLAUDE_TIMEOUT
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or not low <= timeout <= high:
+        raise BoundaryError(f"refused claude timeout: it must be {low}-{high} seconds.")
+    if not isinstance(prompt, str):
+        raise BoundaryError("refused claude prompt: it must be text.")
+    argv = claude_argv(schema, auth_mode=auth_mode, max_budget_usd=max_budget_usd, model=model)
+    with tempfile.TemporaryDirectory(prefix="sre-harness-claude-") as cwd:
+        child = _claude_env(auth_mode, cwd, env)
+        try:
+            result = _run(
+                argv,
+                input=prompt,
+                env=child,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise QualityGateError(f"claude did not finish within {timeout} seconds.") from None
     return result.returncode, result.stdout

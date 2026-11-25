@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:review-classified",
+  "title": "review-classified",
+  "description": "A lesson that may become an improvement candidate, with the target a fixed rule chose. Lessons kept out of candidacy are `$defs/set_aside` rows in set-aside.jsonl.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "run_id",
+    "created_at",
+    "lesson_id",
+    "target",
+    "rule",
+    "basis"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "id": { "type": "string", "pattern": "^CL-[0-9]{4,}$" },
+    "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+    "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "lesson_id": { "type": "string", "pattern": "^LS-[0-9]{4,}$" },
+    "target": { "$ref": "#/$defs/target" },
+    "rule": { "type": "string", "pattern": "^[a-z_]{1,64}$" },
+    "basis": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "target": {
+      "enum": ["rule", "skill", "policy_as_code", "evaluation", "knowledge", "regression_test"]
+    },
+    "set_aside": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "id", "run_id", "created_at", "lesson_id", "reasons"],
+      "properties": {
+        "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+        "id": { "type": "string", "pattern": "^SA-[0-9]{4,}$" },
+        "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+        "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "lesson_id": { "type": "string", "pattern": "^LS-[0-9]{4,}$" },
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["superseded", "case_specific", "external_only", "bot_only", "untrusted_quote"]
+          }
+        }
+      }
+    }
+  }
+}

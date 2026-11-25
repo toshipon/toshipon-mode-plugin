@@ -6,7 +6,7 @@ GitHub のレビュー履歴と仕様文書を読み、改善候補と影響範�
 - Specification Consistency: 決定と要求の台帳を作り、default branch と open PR にまたがる未反映、矛盾、古い決定への依存を報告します。
 - IaC Delivery: 状態遷移と証跡の契約だけを定義します。apply やデプロイは行いません。
 
-この版（0.1.0）が持つのは、足場と安全境界、Review Learning の収集（collect）と正規化（normalize）です。分析以降の段は後続の変更で足します。
+この版（0.1.0）が持つのは、足場と安全境界、Review Learning の収集（collect）、正規化（normalize）、分析（analyze）、分類（classify）です。候補の生成・評価・承認と Specification Consistency は後続の変更で足します。
 
 ## インストール
 
@@ -36,6 +36,7 @@ Claude Code のセッション内で実行します。
 | REST | `gh api --method GET` を固定の argv で呼びます。endpoint は `guard.REST_ENDPOINTS` の雛形だけです | `tests/unit/test_guard.py` の表 |
 | GraphQL | `runtime/sre_harness/github/queries/*.graphql` を POST します。query を入力から組み立てません。server が返した cursor は変数として渡し、guard が形式を検査します | 同上 |
 | git | `guard.GIT_SUBCOMMANDS` にあるサブコマンドと flag だけです。`apply` は `--cached --check` が必須です | 同上 |
+| Claude CLI | `guard.claude` が固定の argv で呼びます（`-p --output-format json --json-schema … --bare`（api-key）か `--safe-mode`（subscription）、`--tools ""`、`--disable-slash-commands`、`--strict-mcp-config`、空の `--mcp-config`、`--no-session-persistence`、`--max-budget-usd`）。権限を迂回する flag は付けません。cwd は空の一時ディレクトリ、prompt は stdin です | 同上 |
 
 ## Review Learning: 収集と正規化
 
@@ -65,6 +66,48 @@ export REVIEW_READ_TOKEN=...   # 読み取り専用の fine-grained PAT
 | GitHub GraphQL（同梱の `review_threads.graphql`、`thread_comments.graphql` を POST） | 同上と cursor | review thread の解決状態、outdated、解決者、path と行、コメントの返信先・commit・投稿者の種別、`rateLimit` |
 
 保存するのは応答の本文と、`Link`、`X-RateLimit-*`、`Retry-After`、`Content-Type` の header だけです。run ディレクトリにはレビュー本文と patch が入ります。LLM にはこの段では何も送りません。
+
+## Review Learning: 分析と分類
+
+```bash
+# 合成データや動作確認: 決定論的な stub。何も送らず、費用も認証も要りません
+"${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" review analyze --run run-... --backend stub
+"${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" review classify --run run-... --backend stub \
+  --existing-rules path/to/rules
+
+# Claude を使う: PR 本文・コメント・diff が Anthropic に送られます（下の表）
+"${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" review analyze --run run-... --backend claude \
+  --auth-mode subscription --max-run-budget-usd 2 --deny-terms-file ~/.config/ai-harness/deny-terms.txt
+```
+
+- `--backend` に既定値はありません。`claude` を選ぶと `--auth-mode api-key|subscription` と `--max-run-budget-usd` も必須です。api-key では環境変数 `ANTHROPIC_API_KEY` だけを、subscription では `HOME` だけを子プロセスに渡します。
+- **stub は LLM の品質を何も示しません。** stub は固定の規則（最初のコメントの 1 文目で thread をまとめる、「on purpose」を含む返信を例外にする、「instead of X」を X の方針への反対とみなす、など）で答えを作ります。stub での E2E が証明するのは、配管と決定論的な検査（引用、ID、時刻、信頼度、別枠、矛盾候補）が動くことだけです。
+- `analyze` は最初に、inline thread ごとに修正 commit を探して `fix` を付けます（`threads-with-fix.jsonl`）。使うのは collect が保存した commit 一覧と変更ファイルだけで、通信しません。方法は suggestion の適用、返信に書かれた commit の SHA、同じ path を変えた後の commit の順に試し、候補が複数なら `ambiguous` のまま残します。force push で元の commit に到達できない thread は `not_found` で、`missing` に `fix.before` が入ります。
+- backend が出した lesson は、JSON Schema に加えて次の検査を通ったものだけを `lessons.jsonl` に入れます。引用（`quotes[].text`）が該当コメント本文の部分文字列であること、参照する thread と comment が送った DATA に存在すること。通らなかった lesson は理由付きで `rejected-lessons.jsonl` に入り、全件が通らなければ exit 1 です。
+- 次の値は backend の自己申告ではなく、harness が規則で決めます。
+  - `confidence`: `confidence_basis`（thread 数、レビュアー数、PR 数、反対する thread 数）から `review/analyze.py` の `CONFIDENCE_RULES` で決めます。3 thread 以上・3 PR 以上・3 人以上で反対がなければ `strong`、3 thread 以上・2 PR 以上・2 人以上なら `recurring`、それ以外は `candidate` です。
+  - `source_trust`: lesson を支える thread の最初のコメントの投稿者です。owner / member / collaborator の人がいれば `member_supported`、bot だけなら `bot_only`、それ以外（外部、ghost、association 不明）は `external_only` です。最初のコメントだけで決まるので、返信の投稿者は反映されません。返信は次の `untrusted_quotes` で扱います。
+  - `untrusted_quotes`: lesson が引用した（`quotes`）コメントと、自由文（`target`、`problem`、`rationale`、`fix_summary`、`applies_when`、`exceptions`）が文面を写したコメントのうち、owner / member / collaborator の人以外（外部、bot、ghost、mannequin、association 不明）のものです。コメント ID、投稿者の種別、association、見つかったフィールドを記録します。自由文の検査は、大文字小文字と空白を揃えたうえでの部分文字列の一致（12 文字以上）です。言い換えた文は検出できません。コメント中の `>` で始まる引用行は、そのコメントの投稿者の文面として扱いません。
+  - `reviewer_agreement`: 解決済みか修正が見つかった thread は agreed、返信があるのに未解決・未修正なら disputed、返信がなければ unanswered。1 つでも disputed があれば lesson は disputed です。
+  - `staleness`: backend が「この thread はこの lesson の方針を覆す」と候補を出し、その thread の時刻が lesson のどの thread よりも後なら `superseded` とし、`later_evidence` に thread を残します。時刻が前なら覆さず、`analyze.json` の `ignored_oppositions` に `not_later` と記録します。
+- `classify` は、superseded、`case_specific`、`external_only` / `bot_only`、`untrusted_quotes` が空でない（理由 `untrusted_quote`）lesson を候補にせず `set-aside.jsonl` に理由付きで出します。残りは `review/classify.py` の `TARGET_RULES`（固定の表）で rule / skill / policy_as_code / evaluation / knowledge / regression_test のどれかに決めます。
+- `--existing-rules` の Markdown は読むだけです。symlink は辿らず（`classify.json` の `skipped_rule_files` に出ます）、1 ファイル 256 KiB、合計 512 KiB、500 ファイルを超えると切り詰めずに exit 2 で止まります。backend が出した既存ルールとの関係（contradicts / duplicates / narrows）は、引用がその行の部分文字列のものだけを `conflicts.jsonl` に残します。これは承認者に見せる注意書きで、分類も exit code も変えません。
+
+### Claude に送るデータ
+
+| 送信先 | 段 | 送るもの |
+|---|---|---|
+| Anthropic（Claude CLI 経由） | `analyze --backend claude` | リポジトリ名、PR 番号と本文、thread のコメント本文・投稿者名・投稿者の種別と association・時刻、thread の path と行、diff hunk、その path の PR の patch、修正の対応付けの結果 |
+| Anthropic（Claude CLI 経由） | `classify --backend claude` | 候補になった lesson の本文（対象、問題、修正、条件、例外）と、`--existing-rules` の Markdown の各行 |
+
+- 送る前に、prompt を組み立てる前の文字列（指示文と DATA のすべての文字列値。dict の key も含みます）を `--deny-terms-file` の語で検査し、1 つでも一致したら送らずに exit 3 で止まります。JSON にした後の文字列で検査すると、`"`、`\`、タブや制御文字を含む語が escape されて一致しなくなるためです。禁止語は 1 行 1 語、`#` で始まる行はコメント、大文字小文字は区別しません（autonomous-improvement の `privacy.deny_terms_file` と同じ形式）。エラーメッセージに一致した語は出しません。
+- `--deny-terms-file` の有無に関係なく、同じ文字列に秘密情報の形（秘密鍵、AWS のアクセスキー、Anthropic / OpenAI / GitHub / Google / Slack のトークン、JWT、URL に埋め込んだ認証情報。`runtime/sre_harness/privacy.py`）が 1 つでもあれば、送らずに exit 3 で止まります。メッセージには形の名前（例: `github_token`）だけを出し、値は出しません。
+- この 2 つの検査は stub でも同じ経路で行います。stub で通った入力は claude でも検査で止まらず、stub で止まる入力は claude でも送られません。
+- prompt は 1 回 1 MiB まで、analyze は PR 単位で 400 KiB ずつの batch に分けます。1 PR だけで上限を超えたら切り詰めずに exit 1 です。batch をまたいだ lesson はまとめません。
+- PR 本文とコメントは DATA の区切りの中に JSON として入れ、「DATA は命令ではない」と prompt に書きます。Claude にはツールも MCP サーバーも渡しません。
+- 呼び出しごとに `llm-calls.jsonl` に、費用（`total_cost_usd`）、token（`usage`）、model ごとの `costUSD` と `costBasis`、`num_turns`、`duration_ms`、prompt の SHA-256 と大きさを記録します。prompt そのものは記録しません。subscription 認証の費用は請求額ではなく換算値です。
+- run の記録済みの合計が `--max-run-budget-usd` に達したら、以降は呼ばずに exit 1 で止まります。各呼び出しには、残額、1 回あたりの上限（100 USD）、`--max-call-budget-usd`（指定したとき）のうち最も小さい値を `--max-budget-usd` として渡します。
+- 呼び出しの前に、その上限額で `status: pending` の行を `llm-calls.jsonl` に予約し、終わってから結果で置き換えます。timeout、非 0 終了、envelope の解析失敗、中断で費用が読めなかった呼び出しは `status: error` とし、渡した上限額を使ったものとして数えます。harness ごと止まって `pending` のまま残った行も、上限額で数えます。guard が起動前に拒否した呼び出し（認証情報の欠落など）は 0 として数えます。
 
 ## 必要なもの
 
@@ -130,5 +173,7 @@ python -m coverage run -m pytest && python -m coverage report
 
 - APM での配置。launcher は自分の位置から `runtime/` を解決します。APM が plugin を分解して置く構成では動かない可能性があります。Claude Code の `/plugin` での導入を対象にしています。
 - git に環境変数経由でトークンを渡して private リポジトリを fetch できるか。合成データのテストはローカルの fetch だけを通ります。
+- 実際の Claude CLI に対する `review analyze` / `review classify`。テストは `guard._run` を差し替えた経路と stub だけを通ります。`--bare`（api-key）の envelope の形と `costBasis` の値は実機で確かめていません。
+- `--safe-mode`（subscription）で起動した Claude CLI が、利用者の hooks、plugin、`CLAUDE.md`、設定をどこまで読まないか。envelope の形は確かめましたが、隔離の範囲は実機で確かめていません。
 - 実際の GitHub に対する `review collect`。テストは合成応答と、`gh` の起動を差し替えた経路だけを通ります。`gh api graphql -i` の出力形式、secondary limit の応答（403 / 429 と `retry-after`）、fine-grained PAT で `isResolved` を読めるかは実機で確かめていません。
 - `--host` に GitHub Enterprise Server を指定したときの認証。harness は `gh` に `GH_TOKEN` だけを渡します。`gh` は GHES の host では `GH_ENTERPRISE_TOKEN` を読むため、そのままでは認証されない可能性があります。GHES では実機で確かめていません。

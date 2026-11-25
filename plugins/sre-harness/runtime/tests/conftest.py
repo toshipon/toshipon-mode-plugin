@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -5,7 +6,7 @@ import pytest
 from sre_harness import guard
 from sre_harness.github.fixture import FixtureTransport, graphql_key
 from sre_harness.review import cli as review_cli
-from tests.helpers import FakeClock
+from tests.helpers import FakeClock, envelope, prompt_parts
 
 
 @pytest.fixture
@@ -48,6 +49,30 @@ def fake_gh(monkeypatch):
             else:
                 key = argv[-1]
             return SimpleNamespace(returncode=0, stdout=served.answer(key), stderr="noise")
+
+        monkeypatch.setattr(guard, "_run", run)
+        monkeypatch.setattr(guard, "_executable", lambda name: f"/usr/bin/{name}")
+        return seen
+
+    return install
+
+
+@pytest.fixture
+def fake_claude(monkeypatch):
+    """Answer claude's argv with an envelope instead of starting it. `answer` is the structured
+    output, or a function of the prompt's DATA value. Returns the list of calls."""
+    seen = []
+
+    def install(answer, cost=0.01, returncode=0, raw=None):
+        def run(argv, **options):
+            prompt = options["input"]
+            seen.append(SimpleNamespace(argv=list(argv), prompt=prompt, **options))
+            if raw is not None:
+                stdout = raw
+            else:
+                output = answer(prompt_parts(prompt)[1]) if callable(answer) else answer
+                stdout = json.dumps(envelope(output, cost))
+            return SimpleNamespace(returncode=returncode, stdout=stdout, stderr="secret noise")
 
         monkeypatch.setattr(guard, "_run", run)
         monkeypatch.setattr(guard, "_executable", lambda name: f"/usr/bin/{name}")

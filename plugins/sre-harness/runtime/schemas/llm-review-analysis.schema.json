@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:llm-review-analysis",
+  "title": "llm-review-analysis",
+  "description": "What `review analyze` asks a backend for. Self-contained (no external $ref) because the Claude CLI receives it as --json-schema. Confidence, trust, agreement and staleness are not here: the harness computes them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["lessons", "oppositions"],
+  "properties": {
+    "lessons": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "thread_ids",
+          "target",
+          "problem",
+          "rationale",
+          "fix_summary",
+          "applies_when",
+          "exceptions",
+          "quotes",
+          "scope"
+        ],
+        "properties": {
+          "key": { "type": "string", "pattern": "^L[0-9]{1,4}$" },
+          "thread_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 200,
+            "items": { "type": "string", "pattern": "^RT-[0-9]{4,}$" }
+          },
+          "target": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "problem": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "rationale": { "type": "string", "maxLength": 2000 },
+          "fix_summary": { "type": "string", "maxLength": 1000 },
+          "applies_when": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+          },
+          "exceptions": {
+            "type": "array",
+            "maxItems": 20,
+            "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+          },
+          "quotes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["comment_id", "text"],
+              "properties": {
+                "comment_id": { "type": "string", "pattern": "^[A-Za-z0-9_=+/-]{1,200}$" },
+                "text": { "type": "string", "minLength": 1, "maxLength": 1000 }
+              }
+            }
+          },
+          "scope": { "enum": ["general", "repo_specific", "case_specific"] }
+        }
+      }
+    },
+    "oppositions": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["lesson", "opposed_by_thread_ids", "basis"],
+        "properties": {
+          "lesson": { "type": "string", "pattern": "^L[0-9]{1,4}$" },
+          "opposed_by_thread_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "items": { "type": "string", "pattern": "^RT-[0-9]{4,}$" }
+          },
+          "basis": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        }
+      }
+    }
+  }
+}

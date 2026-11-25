@@ -1,10 +1,12 @@
 import os
+from pathlib import Path
+from subprocess import TimeoutExpired
 from types import SimpleNamespace
 
 import pytest
 
 from sre_harness import guard
-from sre_harness.errors import BoundaryError, InputError
+from sre_harness.errors import BoundaryError, InputError, QualityGateError
 
 SHA = "a" * 40
 OTHER = "b" * 40
@@ -363,6 +365,168 @@ def test_the_repository_path_must_be_absolute(calls):
     with pytest.raises(BoundaryError):
         guard.git("relative", ["rev-parse", "--verify", SHA])
     assert calls == []
+
+
+# Claude CLI -------------------------------------------------------------------------------
+
+SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "urn:sre-harness:example",
+    "type": "object",
+}
+KEY_VALUE = "synthetic-anthropic-credential"
+
+
+@pytest.fixture
+def claude_calls(monkeypatch):
+    """Record the claude process instead of starting it, and what its cwd held at that time."""
+    seen = []
+
+    def fake_run(argv, **options):
+        seen.append(SimpleNamespace(argv=argv, listing=os.listdir(options["cwd"]), **options))
+        return SimpleNamespace(returncode=0, stdout='{"is_error": false}', stderr="secret noise")
+
+    monkeypatch.setattr(guard, "_run", fake_run)
+    monkeypatch.setattr(guard, "_executable", lambda name: f"/usr/bin/{name}")
+    return seen
+
+
+def isolated_argv(flag, budget):
+    return [
+        "/usr/bin/claude",
+        "-p",
+        "--output-format",
+        "json",
+        "--json-schema",
+        '{"type": "object"}',
+        flag,
+        "--tools",
+        "",
+        "--disable-slash-commands",
+        "--strict-mcp-config",
+        "--mcp-config",
+        '{"mcpServers":{}}',
+        "--no-session-persistence",
+        "--max-budget-usd",
+        budget,
+    ]
+
+
+ALLOWED_CLAUDE = [
+    ({"auth_mode": "subscription", "max_budget_usd": 0.5}, isolated_argv("--safe-mode", "0.5000")),
+    ({"auth_mode": "api-key", "max_budget_usd": 2}, isolated_argv("--bare", "2.0000")),
+    (
+        {"auth_mode": "subscription", "max_budget_usd": 0.25, "model": "haiku"},
+        isolated_argv("--safe-mode", "0.2500") + ["--model", "haiku"],
+    ),
+    (
+        {"auth_mode": "subscription", "max_budget_usd": 1, "model": "claude-sonnet-4-5"},
+        isolated_argv("--safe-mode", "1.0000") + ["--model", "claude-sonnet-4-5"],
+    ),
+]
+
+REFUSED_CLAUDE = [
+    {"auth_mode": "bypass", "max_budget_usd": 1},
+    {"auth_mode": None, "max_budget_usd": 1},
+    {"auth_mode": "subscription", "max_budget_usd": 0},
+    {"auth_mode": "subscription", "max_budget_usd": -1},
+    {"auth_mode": "subscription", "max_budget_usd": True},
+    {"auth_mode": "subscription", "max_budget_usd": "1"},
+    {"auth_mode": "subscription", "max_budget_usd": float("nan")},
+    {"auth_mode": "subscription", "max_budget_usd": 10_000},
+    {"auth_mode": "subscription", "max_budget_usd": 1, "timeout": 5},
+    {"auth_mode": "subscription", "max_budget_usd": 1, "timeout": True},
+    {"auth_mode": "subscription", "max_budget_usd": 1, "model": "--dangerously-skip-permissions"},
+    {"auth_mode": "subscription", "max_budget_usd": 1, "model": "haiku; echo x"},
+    {"auth_mode": "subscription", "max_budget_usd": 1, "model": ""},
+]
+
+
+def claude_env():
+    return {
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "HOME": "/home/someone",
+        "ANTHROPIC_API_KEY": KEY_VALUE,
+        "GH_TOKEN": TOKEN,
+        "AWS_PROFILE": "ambient",
+        "CLAUDE_CONFIG_DIR": "/home/someone/.claude",
+    }
+
+
+@pytest.mark.parametrize("options, argv", ALLOWED_CLAUDE)
+def test_claude_runs_isolated_with_a_fixed_argv(claude_calls, options, argv):
+    code, stdout = guard.claude("PROMPT", SCHEMA, timeout=60, env=claude_env(), **options)
+    assert (code, stdout) == (0, '{"is_error": false}')
+    (call,) = claude_calls
+    assert call.argv == argv
+    assert call.input == "PROMPT"  # the prompt goes through stdin, never argv
+    assert call.listing == []  # cwd is a new, empty directory
+    assert not Path(call.cwd).exists()  # and it is gone afterwards
+    assert call.timeout == 60 and call.check is False and call.text is True
+    assert not any("dangerously" in part or "permission" in part for part in call.argv)
+
+
+def test_subscription_keeps_home_and_drops_the_api_key(claude_calls):
+    guard.claude(
+        "P", SCHEMA, auth_mode="subscription", timeout=60, max_budget_usd=1, env=claude_env()
+    )
+    env = claude_calls[0].env
+    assert env == {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": "/home/someone"}
+
+
+def test_api_key_mode_passes_only_the_key_and_an_empty_home(claude_calls):
+    guard.claude("P", SCHEMA, auth_mode="api-key", timeout=60, max_budget_usd=1, env=claude_env())
+    call = claude_calls[0]
+    assert call.env["ANTHROPIC_API_KEY"] == KEY_VALUE
+    assert call.env["HOME"] == call.cwd
+    assert set(call.env) == {"PATH", "LANG", "HOME", "ANTHROPIC_API_KEY"}
+    assert KEY_VALUE not in " ".join(call.argv)
+
+
+@pytest.mark.parametrize(
+    "mode, missing", [("api-key", "ANTHROPIC_API_KEY"), ("subscription", "HOME")]
+)
+def test_missing_credentials_stop_before_a_process_starts(claude_calls, mode, missing):
+    env = claude_env()
+    del env[missing]
+    with pytest.raises(InputError) as stopped:
+        guard.claude("P", SCHEMA, auth_mode=mode, timeout=60, max_budget_usd=1, env=env)
+    assert claude_calls == []
+    assert KEY_VALUE not in str(stopped.value)
+
+
+@pytest.mark.parametrize("options", REFUSED_CLAUDE)
+def test_claude_refuses_values_outside_the_table(claude_calls, options):
+    options = {"timeout": 60, **options}
+    with pytest.raises(BoundaryError):
+        guard.claude("P", SCHEMA, env=claude_env(), **options)
+    assert claude_calls == []
+
+
+def test_claude_stderr_is_not_returned_and_a_timeout_is_a_quality_failure(monkeypatch):
+    def slow(argv, **options):
+        raise TimeoutExpired(argv, options["timeout"], stderr="secret noise")
+
+    monkeypatch.setattr(guard, "_run", slow)
+    monkeypatch.setattr(guard, "_executable", lambda name: f"/usr/bin/{name}")
+    with pytest.raises(QualityGateError) as stopped:
+        guard.claude(
+            "P", SCHEMA, auth_mode="subscription", timeout=60, max_budget_usd=1, env=claude_env()
+        )
+    assert "secret noise" not in str(stopped.value)
+
+
+def test_the_subscription_login_gets_the_user_name_it_is_stored_under(tmp_path):
+    # On macOS the login sits in the keychain under the account name; without USER the CLI
+    # answers "Not logged in". Checked against the real CLI on 2026-11-25.
+    ambient = {"HOME": "/home/alice", "USER": "alice", "LOGNAME": "alice", "PATH": "/usr/bin"}
+    for name in ("ANTHROPIC_API_KEY", "GH_TOKEN", "AWS_PROFILE"):
+        ambient[name] = "ambient"
+    child = guard._claude_env("subscription", str(tmp_path), ambient)
+    assert child == {"HOME": "/home/alice", "USER": "alice", "LOGNAME": "alice", "PATH": "/usr/bin"}
+    with_key = guard._claude_env("api-key", str(tmp_path), ambient)
+    assert "USER" not in with_key and with_key["HOME"] == str(tmp_path)
 
 
 REMOTE_HOSTS = [

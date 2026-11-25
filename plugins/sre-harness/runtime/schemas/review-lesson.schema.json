@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:review-lesson",
+  "title": "review-lesson",
+  "description": "A reusable point drawn from review threads. Text fields come from a backend; quotes were checked against the comments, untrusted_quotes lists the outside speakers the lesson quotes or copies, and confidence, source_trust, reviewer_agreement and staleness were computed by fixed rules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "run_id",
+    "created_at",
+    "thread_ids",
+    "prs",
+    "target",
+    "problem",
+    "rationale",
+    "fix_summary",
+    "applies_when",
+    "exceptions",
+    "quotes",
+    "untrusted_quotes",
+    "confidence",
+    "confidence_basis",
+    "scope",
+    "source_trust",
+    "staleness",
+    "reviewer_agreement",
+    "generated_by"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "id": { "type": "string", "pattern": "^LS-[0-9]{4,}$" },
+    "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+    "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "thread_ids": { "$ref": "#/$defs/thread_ids", "minItems": 1 },
+    "prs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "integer", "minimum": 1 }
+    },
+    "target": { "type": "string", "minLength": 1 },
+    "problem": { "type": "string", "minLength": 1 },
+    "rationale": { "type": "string" },
+    "fix_summary": { "type": "string" },
+    "applies_when": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "exceptions": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "quotes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["comment_id", "text"],
+        "properties": {
+          "comment_id": { "$ref": "urn:sre-harness:review-thread#/$defs/node_id" },
+          "text": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "untrusted_quotes": {
+      "description": "Comments by anyone but an owner / member / collaborator person (outside accounts, bots, ghosts, mannequins) that the lesson quotes or whose words its free text copies. Not empty means classify sets the lesson aside.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["comment_id", "author_type", "found_in"],
+        "properties": {
+          "comment_id": { "$ref": "urn:sre-harness:review-thread#/$defs/node_id" },
+          "author_type": { "$ref": "urn:sre-harness:review-thread#/$defs/author_type" },
+          "author_association": {
+            "$ref": "urn:sre-harness:review-thread#/$defs/comment/properties/author_association"
+          },
+          "found_in": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "quotes",
+                "target",
+                "problem",
+                "rationale",
+                "fix_summary",
+                "applies_when",
+                "exceptions"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "confidence": { "enum": ["candidate", "recurring", "strong"] },
+    "confidence_basis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["threads", "distinct_reviewers", "distinct_prs", "contradicting_threads"],
+      "properties": {
+        "threads": { "type": "integer", "minimum": 1 },
+        "distinct_reviewers": { "type": "integer", "minimum": 0 },
+        "distinct_prs": { "type": "integer", "minimum": 1 },
+        "contradicting_threads": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "scope": { "enum": ["general", "repo_specific", "case_specific"] },
+    "source_trust": { "enum": ["member_supported", "external_only", "bot_only"] },
+    "staleness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "later_evidence"],
+      "properties": {
+        "status": { "enum": ["current", "possibly_outdated", "superseded"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "later_evidence": { "$ref": "#/$defs/thread_ids" }
+      },
+      "if": { "properties": { "status": { "const": "superseded" } } },
+      "then": { "properties": { "later_evidence": { "minItems": 1 } } },
+      "else": { "properties": { "later_evidence": { "maxItems": 0 } } }
+    },
+    "reviewer_agreement": { "enum": ["agreed", "disputed", "unanswered"] },
+    "generated_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend", "call_id"],
+      "properties": {
+        "backend": { "enum": ["claude", "stub"] },
+        "call_id": { "type": "string", "pattern": "^LC-[0-9]{4,}$" }
+      }
+    }
+  },
+  "$defs": {
+    "thread_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^RT-[0-9]{4,}$" }
+    }
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:llm-call",
+  "title": "llm-call",
+  "description": "One backend call, as a line of llm-calls.jsonl. Cost and tokens come from the Claude CLI result envelope; the prompt itself is not stored, only its hash and size.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "run_id",
+    "created_at",
+    "stage",
+    "backend",
+    "status",
+    "cost_usd",
+    "cost_known",
+    "charged_usd",
+    "prompt_sha256",
+    "prompt_bytes"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "id": { "type": "string", "pattern": "^LC-[0-9]{4,}$" },
+    "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+    "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "stage": { "enum": ["analyze", "classify"] },
+    "backend": { "enum": ["claude", "stub"] },
+    "auth_mode": { "enum": ["api-key", "subscription"] },
+    "model": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "status": {
+      "description": "pending: reserved before the process started and never settled (the harness stopped); it is charged at its cap.",
+      "enum": ["ok", "error", "pending"]
+    },
+    "error": { "type": "string", "maxLength": 200 },
+    "max_budget_usd": { "type": "number", "exclusiveMinimum": 0 },
+    "cost_usd": { "type": ["number", "null"], "minimum": 0 },
+    "cost_known": { "type": "boolean" },
+    "charged_usd": {
+      "description": "What the run budget counts: the reported cost, or the call's cap when the cost is unknown.",
+      "type": "number",
+      "minimum": 0
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "cache_creation_input_tokens": { "type": "integer", "minimum": 0 },
+        "cache_read_input_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "model_usage": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z0-9._\\[\\]-]{1,80}$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "cost_usd": { "type": "number", "minimum": 0 },
+          "cost_basis": { "type": "string", "maxLength": 64 }
+        }
+      }
+    },
+    "num_turns": { "type": "integer", "minimum": 0 },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "prompt_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+    "prompt_bytes": { "type": "integer", "minimum": 0 }
+  }
+}

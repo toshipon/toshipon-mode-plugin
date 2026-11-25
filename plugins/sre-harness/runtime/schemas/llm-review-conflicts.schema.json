@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:llm-review-conflicts",
+  "title": "llm-review-conflicts",
+  "description": "What `review classify` asks a backend for: candidate relations between lessons and existing rules. Self-contained for the Claude CLI.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["conflicts"],
+  "properties": {
+    "conflicts": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["lesson_id", "existing_ref", "kind", "basis", "quote"],
+        "properties": {
+          "lesson_id": { "type": "string", "pattern": "^LS-[0-9]{4,}$" },
+          "existing_ref": { "type": "string", "minLength": 1, "maxLength": 600 },
+          "kind": { "enum": ["contradicts", "duplicates", "narrows"] },
+          "basis": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "quote": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        }
+      }
+    }
+  }
+}
