@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:sre-harness:review-lesson",
   "title": "review-lesson",
-  "description": "A reusable point drawn from review threads. Text fields come from a backend; quotes were checked against the comments, and confidence, source_trust, reviewer_agreement and staleness were computed by fixed rules.",
+  "description": "A reusable point drawn from review threads. Text fields come from a backend; quotes were checked against the comments, untrusted_quotes lists the outside speakers the lesson quotes or copies, and confidence, source_trust, reviewer_agreement and staleness were computed by fixed rules.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,6 +19,7 @@
     "applies_when",
     "exceptions",
     "quotes",
+    "untrusted_quotes",
     "confidence",
     "confidence_basis",
     "scope",
@@ -55,6 +56,38 @@
         "properties": {
           "comment_id": { "$ref": "urn:sre-harness:review-thread#/$defs/node_id" },
           "text": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "untrusted_quotes": {
+      "description": "Comments by anyone but an owner / member / collaborator person (outside accounts, bots, ghosts, mannequins) that the lesson quotes or whose words its free text copies. Not empty means classify sets the lesson aside.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["comment_id", "author_type", "found_in"],
+        "properties": {
+          "comment_id": { "$ref": "urn:sre-harness:review-thread#/$defs/node_id" },
+          "author_type": { "$ref": "urn:sre-harness:review-thread#/$defs/author_type" },
+          "author_association": {
+            "$ref": "urn:sre-harness:review-thread#/$defs/comment/properties/author_association"
+          },
+          "found_in": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "quotes",
+                "target",
+                "problem",
+                "rationale",
+                "fix_summary",
+                "applies_when",
+                "exceptions"
+              ]
+            }
+          }
         }
       }
     },

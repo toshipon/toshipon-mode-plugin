@@ -3,16 +3,24 @@
 Approval is the one step that turns a candidate into something future agents may read as an
 instruction, so it is held to a terminal:
 
-- The command line refuses to run without a TTY on stdin and stdout (exit 3). There is no flag
-  or environment variable that skips this. An agent's shell has no TTY, so an agent cannot
-  approve; a person at a terminal can. This is not proof of who the person is.
+- The command line refuses to run without a TTY on stdin and stdout (exit 3), for approve and
+  retire. There is no flag or environment variable that skips this. It stops an approval from
+  a pipe or a non-interactive run by accident; a program that opens a pty gets through, so it
+  proves neither that a person is there nor who they are. The approval is trusted through the
+  review of the repository the person commits the registry's diff to.
 - The screen shows what will be recorded (form, title and check parsed from body.md), the
   artifact, its lint notes, every source comment with its author's type and association, the
   conflicts with existing rules and the evaluation. External text is escaped or fenced.
 - Only body.md, which the hash covers, defines what is recorded. A candidate.json whose form,
   title or check disagree with it is refused (exit 3).
 - The person types the first PREFIX_LENGTH characters of the artifact's SHA-256.
-- The candidate must have been evaluated with exactly that hash (exit 3 otherwise).
+- The evaluation, the run's split.json and the split hash analyze and generate recorded must
+  agree, and the evaluation's criteria_hash must be the one its split and criteria give (exit
+  3). This catches approving on a stale or mismatched evaluation by mistake. It is no defence
+  against someone who edits the run's files: they are the user's own files, with no signature.
+- The candidate must have been evaluated with exactly that hash, and the evaluation must have
+  status `evaluated`: an `unevaluable` one (fewer than 30 evaluation PRs) approves nothing
+  (exit 3 otherwise).
 
 Activation stops at the registry record and, when asked, a Unified Diff that adds the artifact
 to a path the person names in their repository. The harness never writes into a work tree and
@@ -25,7 +33,8 @@ from pathlib import PurePosixPath
 
 from .. import paths, records
 from ..errors import BoundaryError, InputError
-from . import candidates, registry
+from . import candidates, metrics, registry
+from . import split as split_stage
 from .markdown import code_block, escape
 
 PREFIX_LENGTH = 12
@@ -66,6 +75,31 @@ def _person(reviewer, reason):
     return reviewer.strip(), reason.strip()
 
 
+def check_consistent(run_dir, evaluation):
+    """The evaluation, the split and the stages that used it must name the same split."""
+    try:
+        split = split_stage.load(paths.child(run_dir, split_stage.FILE))
+    except InputError as error:
+        raise BoundaryError(f"the run's split.json cannot back an approval: {error}") from None
+    expected = metrics.criteria_hash(
+        split["sha256"],
+        evaluation["criteria"]["metrics"],
+        evaluation["criteria"]["thresholds"],
+        evaluation["criteria"]["labels"],
+    )
+    found = {"evaluation.json": evaluation["split_sha256"]}
+    for name in ("analyze.json", "generate.json"):
+        found[name] = records.read_json(paths.child(run_dir, name)).get("split_sha256")
+    stale = sorted(name for name, value in found.items() if value != split["sha256"])
+    if evaluation["criteria_hash"] != expected:
+        stale.append("evaluation.json criteria_hash")
+    if stale:
+        raise BoundaryError(
+            f"{', '.join(stale)} do not match the run's split.json; run the stages again with "
+            "this split before approving. Nothing was recorded."
+        )
+
+
 def evaluated(run_dir, record, text):
     """(evaluation, its entry for this candidate, the evaluation file's hash), or exit 3."""
     digest = candidates.content_sha256(text)
@@ -77,6 +111,12 @@ def evaluated(run_dir, record, text):
     if not path.is_file():
         raise BoundaryError(f"{record['id']} has not been evaluated; run `review evaluate` first.")
     evaluation = records.validate("review-evaluation", records.read_json(path))
+    check_consistent(run_dir, evaluation)
+    if evaluation["status"] != "evaluated":
+        raise BoundaryError(
+            f"the evaluation is {evaluation['status']} ({evaluation['unevaluable_reason']}); "
+            "nothing can be approved on it. Split a period with enough evaluation PRs."
+        )
     entry = next(
         (
             item
@@ -133,7 +173,8 @@ def screen(record, text, content, evaluation, entry):
             if evaluation["status"] != "evaluated"
             else ""
         ),
-        f"- criteria_hash: `{evaluation['criteria_hash']}`; evaluation PRs: {evaluation['n_prs']}",
+        f"- criteria_hash: `{evaluation['criteria_hash']}`; evaluation PRs: {evaluation['n_prs']} "
+        f"({evaluation['n_prs_with_units']} with hunks)",
         f"- findings of this candidate: {entry['findings']}",
     ]
     if entry["config"] is not None:
@@ -200,6 +241,14 @@ def _place(root, run_dir, candidate_id):
     return entry_id, found.get(entry_id, [])
 
 
+def _generation(split_path):
+    """What the rule was learned from, so later evaluations can keep it off those PRs."""
+    if not split_path.is_file():
+        return {}
+    split = records.read_json(split_path)
+    return {"generation": {"prs": split["generation"]["prs"], "t1": split["t1"]}}
+
+
 def _version(root, run_dir, candidate_id, content, status, evaluation, decision, text, path=None):
     """Write one registry version. Every recorded value comes from body.md (`content`, the
     hash), the run (repository, lineage) or the person (decision); none from candidate.json."""
@@ -211,6 +260,7 @@ def _version(root, run_dir, candidate_id, content, status, evaluation, decision,
         "artifact_file": registry.version_name(number, "md"),
     }
     collect = records.read_json(paths.child(run_dir, "collect.json"))
+    split_path = paths.child(run_dir, split_stage.FILE)
     version = {
         "schema_version": records.SCHEMA_VERSION,
         "id": entry_id,
@@ -219,6 +269,7 @@ def _version(root, run_dir, candidate_id, content, status, evaluation, decision,
         "status": status,
         "repo": collect["repo"],
         "lineage": {"run_id": run_dir.name, "candidate_id": candidate_id},
+        **_generation(split_path),
         "candidate": block,
         "evaluation": evaluation,
         "decision": decision,

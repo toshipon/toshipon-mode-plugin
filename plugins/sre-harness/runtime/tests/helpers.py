@@ -108,7 +108,9 @@ def prompt_parts(prompt):
 RULES_TEXT = "# HTTP\n\n- Every outbound HTTP client call must set a timeout.\n"
 
 
-def generated_run(tmp_path, env, fixture, *, split=True, t1=None, name="fx", generate=True):
+def generated_run(
+    tmp_path, env, fixture, *, split=True, t1=None, name="fx", generate=True, untrusted=False
+):
     """collect -> normalize -> [split] -> analyze -> classify -> generate, all with stub.
 
     Returns (run id, split path or None)."""
@@ -131,7 +133,9 @@ def generated_run(tmp_path, env, fixture, *, split=True, t1=None, name="fx", gen
     code, result = run_cli(argv, env)
     assert code == 0, result
     if generate:
-        code, result = run_cli(["review", "generate", "--run", run_id, *stub, *extra], env)
+        flag = ["--include-untrusted"] if untrusted else []
+        argv = ["review", "generate", "--run", run_id, *stub, *extra, *flag]
+        code, result = run_cli(argv, env)
         assert code == 0, result
     return run_id, split_path
 
