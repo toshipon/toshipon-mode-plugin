@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "classification": "synthetic",
+  "items": [
+    {
+      "kind": "user_note",
+      "task_key": "billing-reconciliation",
+      "domain_tag": "back-office",
+      "text": "やり直しの大半は、後工程で初めて入力の不備が分かることから起きている気がする"
+    },
+    {
+      "kind": "friction",
+      "task_key": "editor-setup",
+      "domain_tag": "tooling",
+      "label": "slow-completion",
+      "text": "エディタの補完候補が出るまで数秒かかる",
+      "occurrences": 4
+    }
+  ]
+}

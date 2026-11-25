@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "insight-discovery/ledger.schema.json",
+  "title": "One record of the Insight Discovery ledger. Same envelope and hash chain as the foundation's ledger; only the record types differ.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "run_id", "seq", "created_at", "type", "data", "prev", "hash"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "seq": { "type": "integer", "minimum": 1 },
+    "created_at": { "type": "string", "minLength": 1 },
+    "type": {
+      "enum": [
+        "ingested", "cycle_started", "stage_recorded", "budget_exhausted", "candidate_registered",
+        "handoff_recorded", "cycle_finished", "prior_recorded", "prior_skipped", "weekly_reported",
+        "selected", "resolved", "search_approved", "prior_art_recorded"
+      ]
+    },
+    "data": { "type": "object" },
+    "prev": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "ingested" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "required": ["adapter", "evidence", "stats"],
+            "properties": { "evidence": { "type": "array", "items": { "$ref": "evidence.schema.json" } } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "cycle_started" } } },
+      "then": { "properties": { "data": { "required": ["cycle_id", "evidence_ids", "fresh"] } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "stage_recorded" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "required": ["cycle_id", "stage", "accepted", "rejected"],
+            "properties": { "stage": { "enum": ["observe", "structure", "hypothesize", "audit", "assess"] } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "candidate_registered" } } },
+      "then": { "properties": { "data": { "$ref": "insight.schema.json" } } }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["selected", "search_approved"] } } },
+      "then": {
+        "properties": {
+          "data": {
+            "required": ["insight_id", "approval"],
+            "properties": {
+              "approval": {
+                "type": "object",
+                "required": ["reviewer", "reason"],
+                "properties": {
+                  "reviewer": { "type": "string", "minLength": 1 },
+                  "reason": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "resolved" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "required": ["insight_id", "status", "reason"],
+            "properties": { "status": { "enum": ["rejected", "tested"] }, "reason": { "type": "string", "minLength": 1 } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "handoff_recorded" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "required": ["insight_id", "target", "reason", "evidence_refs"],
+            "properties": { "target": { "enum": ["evolution", "improvement"] } }
+          }
+        }
+      }
+    }
+  ]
+}
