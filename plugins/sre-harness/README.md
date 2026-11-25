@@ -478,7 +478,7 @@ trace-link は Decision → Requirement → Design → IaC → Test のつなが
 | 指摘 | patch | 出さない場合 |
 |---|---|---|
 | `contradiction` | 指摘が引用した行（Markdown の `- key: value` か front-matter の `key: value`）の値を台帳の値にする | 台帳に値が無い（ファイル同士の食い違い。どちらが正しいかは人が決めます） |
-| `superseded_dependency` | 置換された決定を名指す行を、後継の決定の ID にする（`ADR-0002` → `ADR-0005`。内部 ID なら内部 ID）。台帳が根拠の指摘（`requirements.json#REQ-0004`）は、その要求の元の section の行から探します | `superseded_by` を辿った先が 1 つの approved な決定にならない |
+| `superseded_dependency` | 置換された決定を名指す行を、後継の決定の ID にする（`ADR-0002` → `ADR-0005`）。置き換えるのは文書が書く ID（`external_id`）だけで、harness が振る `DEC-…` の番号は文書の参照先ではないので置き換えません。台帳が根拠の指摘（`requirements.json#REQ-0004`）は、その要求の元の section の行から探します | `superseded_by` を辿った先が 1 つの approved な決定にならない |
 
 `semantic_conflict`、`not_reflected`、`missing_test`、`ambiguous_requirement`、`input_missing`、`impact`、`stale_sha` には patch を出しません。
 
@@ -499,7 +499,7 @@ patch の対象:
 適用の手順（harness は適用しません）:
 
 1. `impact-report.md` と `patches/<PT-id>.diff` を人が読みます。
-2. 適用する直前に `spec check-patch --run <run_id> --patch <PT-id> (--auth-env NAME | --fixture <dir> --git-source <絶対 path>)` を実行します。PR 向けなら open PR の一覧を読み直して ref を fetch し直し、default branch 向けならその ref を fetch し直して、今の head を `target_head_sha` と比べます。違えば exit 3（古い SHA への修正は出しません。`spec analyze` と `spec report` をやり直してください）。fetch の前に、sidecar の `id`、`target_pr`、`target_head_sha`、`content_sha256`、`paths`、`preimage_blob_shas` が `impact-report.json` の `patches[]` の同じ id の項目と一致することも確かめ、食い違うか報告に無い patch なら exit 3 です。head が同じでも、今の head での対象ファイルの blob SHA が `preimage_blob_shas` と違えば exit 3 です。PR が open でなくなっていても exit 3 です。patch ファイルの `content_sha256` が sidecar と違う、sidecar と patch の path が違う、gate を通らないときも exit 3 です。同じなら一時 index で `git apply --cached --check` をやり直し、結果を標準出力に出します（通れば exit 0、通らなければ exit 1）。`--auth-env` の変数が空なら何も起動せず exit 2、`--patch` が `PT-0001` の形でなければ exit 3、run に無い patch は exit 2 です。
+2. 適用する直前に `spec check-patch --run <run_id> --patch <PT-id> (--auth-env NAME | --fixture <dir> --git-source <絶対 path>) [--host H]` を実行します（`--host` は analyze と同じく、fetch してよい host として guard に渡ります）。PR 向けなら open PR の一覧を読み直して ref を fetch し直し、default branch 向けならその ref を fetch し直して、今の head を `target_head_sha` と比べます。違えば exit 3（古い SHA への修正は出しません。`spec analyze` と `spec report` をやり直してください）。fetch の前に、sidecar の `id`、`target_pr`、`target_head_sha`、`content_sha256`、`paths`、`preimage_blob_shas` が `impact-report.json` の `patches[]` の同じ id の項目と一致することも確かめ、食い違うか報告に無い patch なら exit 3 です。head が同じでも、今の head での対象ファイルの blob SHA が `preimage_blob_shas` と違えば exit 3 です。PR が open でなくなっていても exit 3 です。patch ファイルの `content_sha256` が sidecar と違う、sidecar と patch の path が違う、gate を通らないときも exit 3 です。同じなら一時 index で `git apply --cached --check` をやり直し、結果を標準出力に出します（通れば exit 0、通らなければ exit 1）。`--auth-env` の変数が空なら何も起動せず exit 2、`--patch` が `PT-0001` の形でなければ exit 3、run に無い patch は exit 2 です。
 3. 通ったら、人が自分の checkout で `git apply patches/<PT-id>.diff` を実行し、commit します。
 
 この照合が防ぐのは、古い SHA 向けの patch をうっかり当てることです。同じ利用者権限で run の中のファイル（sidecar と `impact-report.json`）を両方書き換える偽造は防げません。その場合でも、対象ファイルが変わっていれば `preimage_blob_shas` の照合で止まり、許可リストの外の path は gate で止まります。

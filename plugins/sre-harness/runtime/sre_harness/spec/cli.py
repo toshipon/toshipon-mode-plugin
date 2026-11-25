@@ -166,6 +166,7 @@ def _check_patch(args, env, out):
         "source": source,
         "token": token,
         "root": root,
+        "host": args.host,
     }
     output, code = patch_stage.check(run_dir, name, context)
     print(json.dumps(output, indent=2, ensure_ascii=False), file=out)

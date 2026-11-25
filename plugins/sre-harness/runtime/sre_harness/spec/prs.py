@@ -244,7 +244,8 @@ class Repository:
             code, out = self.run(["cat-file", "-p", tree.group(1).decode()], allowed=range(0, 256))
         if code != 0:
             return None
-        for line in out.decode("utf-8", "replace").splitlines():
+        # Tree lines end at "\n" only; `splitlines` would also cut a name at U+2028 or \x0c.
+        for line in out.decode("utf-8", "replace").split("\n"):
             meta, _, name = line.partition("\t")
             fields = meta.split(" ")
             if name == base and len(fields) == 3 and fields[1] == "blob":
