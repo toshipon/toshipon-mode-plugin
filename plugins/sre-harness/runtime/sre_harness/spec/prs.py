@@ -139,10 +139,11 @@ def _decode(data, what):
 class Repository:
     """One harness-owned bare repository. Counts the git commands it runs."""
 
-    def __init__(self, git_dir, source, token=None):
+    def __init__(self, git_dir, source, token=None, host=None):
         self.git_dir = git_dir
         self.source = source
         self._token = token
+        self._host = host  # the GitHub host the user named; the guard allows no other
         self.calls = 0
         self._blobs = {}
 
@@ -150,12 +151,12 @@ class Repository:
         return f"Repository({str(self.git_dir)!r})"  # the token never appears
 
     @classmethod
-    def open(cls, root, owner, name, source, token=None):
+    def open(cls, root, owner, name, source, token=None, host=None):
         """The cache entry for (repository, fetch source), created on first use."""
         key = records.sha256(f"{owner}/{name}\n{source}")[:12]
         git_dir = paths.child(root, "cache", "git", f"{owner}--{name}--{key}.git")
         marker = paths.child(root, "cache", "git", f"{owner}--{name}--{key}.json")
-        repository = cls(git_dir, source, token)
+        repository = cls(git_dir, source, token, host)
         if not (git_dir / "HEAD").is_file():
             records.write_json(marker, {"repo": f"{owner}/{name}", "source": source})
             repository.run(["init", "--bare", "--quiet"])
@@ -164,7 +165,7 @@ class Repository:
     def run(self, arguments, allowed=(0,)):
         """(exit code, stdout). An exit code outside `allowed` stops the stage."""
         self.calls += 1
-        code, out = guard.git(self.git_dir, arguments, token=self._token)
+        code, out = guard.git(self.git_dir, arguments, token=self._token, host=self._host)
         if code not in allowed:
             raise QualityGateError(f"git {arguments[0]} failed with exit code {code}.")
         return code, out

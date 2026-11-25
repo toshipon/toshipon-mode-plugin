@@ -748,7 +748,12 @@ def analyze(run_dir, context):
         raise InputError("the default branch is unknown: pass --default-branch.")
     branch = git_prs.branch_name(branch)
     repository = git_prs.Repository.open(
-        context["root"], owner, name, context["source"], context.get("token")
+        context["root"],
+        owner,
+        name,
+        context["source"],
+        context.get("token"),
+        context.get("host"),
     )
     fetched = repository.fetch_open(branch, [pull["number"] for pull in pulls])
     main_sha = repository.rev_parse(git_prs.main_ref(branch))
