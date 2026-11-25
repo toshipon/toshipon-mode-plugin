@@ -254,6 +254,18 @@ class DispatchTest(EvolutionCase):
         self.assertIn("classified internal may not be sent", result["result"]["error"])
         self.assertFalse(marker.exists())
 
+    def test_jobs_of_another_skill_stay_queued_until_its_handlers_are_passed(self):
+        self.write_config(schedule=[{"kind": "insight_daily", "hour": 3, "minute": 0}])
+        self.queue.enqueue("insight_daily:slot", "insight_daily", {}, self.clock)
+        self.queue.enqueue("report", "weekly_report", {}, self.clock)
+        (result,) = self.work()
+        self.assertEqual((result["kind"], result["status"]), ("weekly_report", "done"))
+        waiting = self.queue.jobs()["insight_daily:slot"]
+        self.assertEqual((waiting["status"], waiting["attempts"]), ("pending", 0))
+        handlers = {**dispatch.HANDLERS, "insight_daily": lambda context, job: {"action": "ran"}}
+        (result,) = self.work(handlers=handlers)
+        self.assertEqual((result["status"], result["result"]), ("done", {"action": "ran"}))
+
     def test_failing_job_is_retried_then_buried_and_shown_in_status(self):
         self.queue.enqueue("job", "evolve", {}, self.clock)
         calls = []

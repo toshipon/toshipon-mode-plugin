@@ -21,6 +21,9 @@ from .store import (
 )
 
 AGENT_KINDS = ("audit", "evolve")
+# Kinds a skill built on this one handles (insight-discovery). Its entry point passes the
+# handlers; started without them, the jobs stay queued instead of failing.
+EXTERNAL_KINDS = ("insight_daily", "insight_weekly")
 
 
 def slot_for(entry, local):
@@ -137,7 +140,8 @@ def dispatch(home, config, dry_run=False, max_jobs=None, clock=utcnow, handlers=
     budget = config["budget"]
     limit = min(max_jobs or budget["max_jobs_per_dispatch"], budget["max_jobs_per_dispatch"])
     queue = Queue(home, config["queue"])
-    results, started, skip = [], time.monotonic(), ()
+    unhandled = tuple(kind for kind in EXTERNAL_KINDS if kind not in handlers)
+    results, started, skip = [], time.monotonic(), unhandled
     with locked(Path(home) / "dispatch.lock", blocking=False):
         while (
             len(results) < limit and time.monotonic() - started < budget["max_seconds_per_dispatch"]
@@ -168,7 +172,7 @@ def dispatch(home, config, dry_run=False, max_jobs=None, clock=utcnow, handlers=
                 # Jobs that need no agent still run.
                 queue.release(job["id"], clock(), str(waiting))
                 results.append({**entry, "status": "deferred", "reason": str(waiting)})
-                skip = AGENT_KINDS
+                skip = (*unhandled, *AGENT_KINDS)
                 continue
             except agents.WouldRun as planned:
                 outcome = {"action": "would_run", "reason": str(planned)}
