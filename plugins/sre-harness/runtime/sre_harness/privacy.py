@@ -37,7 +37,8 @@ def load_deny_terms(path):
         lines = Path(path).expanduser().read_text(encoding="utf-8").splitlines()
     except OSError as error:
         raise InputError(f"cannot read the deny-terms file: {error.strerror}") from None
-    return [line.strip().lower() for line in lines if line.strip() and not line.startswith("#")]
+    terms = (line.strip() for line in lines)
+    return [term.lower() for term in terms if term and not term.startswith("#")]
 
 
 def find_deny_terms(text, terms):
