@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:requirement",
+  "title": "requirement",
+  "description": "One entry of the Requirement Registry (requirements.json); `$defs/registry` is the file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "run_id",
+    "created_at",
+    "statement",
+    "acceptance_criteria",
+    "rationale",
+    "evidence",
+    "decision_refs",
+    "nfr_category",
+    "ambiguity",
+    "basis",
+    "confidence"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "id": { "type": "string", "pattern": "^REQ-[0-9]{4,}$" },
+    "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+    "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "external_id": { "type": "string", "pattern": "^REQ-[0-9]{4,}$" },
+    "title": { "type": "string", "maxLength": 300 },
+    "statement": { "type": "string", "minLength": 1 },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "given", "when", "then", "measurable"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^AC[0-9]{1,4}$" },
+          "given": { "type": "string" },
+          "when": { "type": "string" },
+          "then": { "type": "string", "minLength": 1 },
+          "measurable": { "type": "boolean" },
+          "metric": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "target": { "type": "number" },
+          "unit": { "type": "string", "minLength": 1, "maxLength": 20 }
+        }
+      }
+    },
+    "rationale": { "type": "string" },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "urn:sre-harness:common#/$defs/evidence" }
+    },
+    "decision_refs": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^DEC-[0-9]{4,}$" }
+    },
+    "nfr_category": {
+      "enum": [
+        "availability",
+        "performance",
+        "security",
+        "operability",
+        "cost",
+        "compliance",
+        null
+      ]
+    },
+    "ambiguity": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "detector"],
+        "properties": {
+          "kind": { "enum": ["vague_term", "no_metric", "no_criteria", "unbounded", "compound"] },
+          "span": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "field": { "type": "string", "pattern": "^(statement|acceptance_criteria\\[[0-9]+\\]\\.(given|when|then))$" },
+          "detector": { "enum": ["rule", "llm"] }
+        }
+      }
+    },
+    "basis": { "$ref": "urn:sre-harness:common#/$defs/basis" },
+    "confidence": { "$ref": "urn:sre-harness:common#/$defs/confidence" },
+    "generated_by": { "$ref": "urn:sre-harness:decision#/properties/generated_by" }
+  },
+  "$defs": {
+    "registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "run_id", "created_at", "requirements", "input_missing"],
+      "properties": {
+        "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+        "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+        "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "requirements": { "type": "array", "items": { "$ref": "urn:sre-harness:requirement" } },
+        "input_missing": {
+          "type": "array",
+          "items": { "$ref": "urn:sre-harness:decision#/$defs/ref_missing" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:decision",
+  "title": "decision",
+  "description": "One entry of the Decision Registry (decisions.json). `status` is computed by the harness from `stated_status` and the supersession graph; `$defs/registry` is the file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "run_id",
+    "created_at",
+    "title",
+    "content",
+    "rationale",
+    "status",
+    "stated_status",
+    "approvers",
+    "decided_at",
+    "evidence",
+    "scope",
+    "supersedes",
+    "superseded_by",
+    "basis",
+    "confidence",
+    "issues"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "id": { "$ref": "#/$defs/decision_id" },
+    "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+    "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "external_id": {
+      "description": "The id the source used, such as an ADR number.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "title": { "type": "string", "maxLength": 300 },
+    "content": { "type": "string" },
+    "rationale": { "type": "string" },
+    "status": { "$ref": "#/$defs/status" },
+    "stated_status": {
+      "description": "What the source said, before the harness applied the invariants.",
+      "$ref": "#/$defs/status"
+    },
+    "approvers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "role"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "role": { "type": "string", "minLength": 1, "maxLength": 100 }
+        }
+      }
+    },
+    "decided_at": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "$ref": "urn:sre-harness:common#/$defs/evidence" }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["systems", "components", "environments"],
+      "properties": {
+        "systems": { "$ref": "#/$defs/names" },
+        "components": { "$ref": "#/$defs/names" },
+        "environments": { "$ref": "#/$defs/names" }
+      }
+    },
+    "supersedes": { "type": "array", "items": { "$ref": "#/$defs/decision_id" } },
+    "superseded_by": { "type": "array", "items": { "$ref": "#/$defs/decision_id" } },
+    "basis": { "$ref": "urn:sre-harness:common#/$defs/basis" },
+    "confidence": { "$ref": "urn:sre-harness:common#/$defs/confidence" },
+    "issues": {
+      "description": "Why `status` differs from `stated_status`, or why a stated relation had no effect.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "detail"],
+        "properties": {
+          "kind": {
+            "enum": [
+              "approval_incomplete",
+              "no_approved_successor",
+              "cannot_supersede",
+              "inferred_not_approvable",
+              "unknown_status"
+            ]
+          },
+          "detail": { "type": "string", "maxLength": 300 }
+        }
+      }
+    },
+    "generated_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend", "call_id"],
+      "properties": {
+        "backend": { "enum": ["claude", "stub"] },
+        "call_id": { "type": "string", "pattern": "^LC-[0-9]{4,}$" }
+      }
+    }
+  },
+  "$defs": {
+    "decision_id": { "type": "string", "pattern": "^DEC-[0-9]{4,}$" },
+    "status": { "enum": ["proposed", "approved", "rejected", "superseded", "unresolved"] },
+    "names": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+    },
+    "ref_missing": {
+      "description": "A reference to a decision that is not in the registry. Recorded, never guessed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "from", "ref"],
+      "properties": {
+        "kind": { "const": "decision_ref" },
+        "from": { "type": "string", "pattern": "^(DEC|REQ)-[0-9]{4,}$" },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 64 }
+      }
+    },
+    "registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "run_id", "created_at", "decisions", "active", "input_missing"],
+      "properties": {
+        "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+        "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+        "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "decisions": { "type": "array", "items": { "$ref": "urn:sre-harness:decision" } },
+        "active": {
+          "description": "Approved and not superseded.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/decision_id" }
+        },
+        "input_missing": { "type": "array", "items": { "$ref": "#/$defs/ref_missing" } }
+      }
+    }
+  }
+}

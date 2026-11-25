@@ -24,7 +24,7 @@
     "id": { "type": "string", "pattern": "^LC-[0-9]{4,}$" },
     "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
     "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
-    "stage": { "enum": ["analyze", "classify"] },
+    "stage": { "enum": ["analyze", "classify", "extract"] },
     "backend": { "enum": ["claude", "stub"] },
     "auth_mode": { "enum": ["api-key", "subscription"] },
     "model": { "type": "string", "minLength": 1, "maxLength": 64 },

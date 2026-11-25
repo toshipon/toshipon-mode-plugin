@@ -7,6 +7,7 @@ import sys
 from . import __version__, paths
 from .errors import EXIT_INPUT, EXIT_OK, HarnessError
 from .review import cli as review_cli
+from .spec import cli as spec_cli
 
 
 def _runs_list(args, env, out):
@@ -22,7 +23,7 @@ def _register_runs(groups):
     listing.set_defaults(handler=_runs_list)
 
 
-REGISTRARS = [_register_runs, review_cli.register]
+REGISTRARS = [_register_runs, review_cli.register, spec_cli.register]
 
 
 class _Parser(argparse.ArgumentParser):
