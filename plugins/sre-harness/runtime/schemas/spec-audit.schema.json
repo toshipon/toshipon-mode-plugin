@@ -1,0 +1,389 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:spec-audit",
+  "title": "spec-audit",
+  "description": "audit.json, written by `spec audit`. `findings` and `limitations` have the outer shape of the v2 audit.schema.json. `axes`, `status` and `blocking` are computed by rule from the kept findings: critical or high block, an axis with only medium or low is concerns, an axis with no finding is pass when it was assessed and not_assessed otherwise.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "created_at",
+    "backend",
+    "status",
+    "input_sha256",
+    "max_iterations",
+    "attempts",
+    "findings",
+    "limitations",
+    "not_assessed",
+    "rejected_findings",
+    "axes",
+    "blocking"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "urn:sre-harness:common#/$defs/schema_version"
+    },
+    "run_id": {
+      "$ref": "urn:sre-harness:common#/$defs/run_id"
+    },
+    "created_at": {
+      "$ref": "urn:sre-harness:common#/$defs/timestamp"
+    },
+    "backend": {
+      "enum": [
+        "claude",
+        "stub"
+      ]
+    },
+    "status": {
+      "description": "passed: an answer was accepted and nothing blocks. blocked: an accepted answer has a critical or high finding. failed: no answer was accepted within max_iterations.",
+      "enum": [
+        "passed",
+        "blocked",
+        "failed"
+      ]
+    },
+    "input_sha256": {
+      "description": "Fingerprint of the audit input (findings, PRs, registry, trace, documents). `spec report` shows the audit as stale when the run's input no longer has it.",
+      "$ref": "urn:sre-harness:common#/$defs/sha256"
+    },
+    "max_iterations": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "attempt",
+          "call_id",
+          "outcome",
+          "problems"
+        ],
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "call_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^LC-[0-9]{4,}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outcome": {
+            "description": "accepted; refused: schema-valid but the limitations check, a duplicate id or a dropped critical or high finding refused it; error: no schema-valid answer.",
+            "enum": [
+              "accepted",
+              "refused",
+              "error"
+            ]
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    },
+    "not_assessed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "axis",
+          "reason"
+        ],
+        "properties": {
+          "axis": {
+            "enum": [
+              "coverage",
+              "correctness",
+              "consistency",
+              "traceability",
+              "verifiability",
+              "clarity",
+              "feasibility",
+              "operability"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        }
+      }
+    },
+    "rejected_findings": {
+      "description": "Findings of the accepted answer that the validator dropped, with the reasons.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "category",
+          "severity",
+          "reasons"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^F[0-9]+$"
+          },
+          "category": {
+            "enum": [
+              "coverage",
+              "correctness",
+              "consistency",
+              "traceability",
+              "verifiability",
+              "clarity",
+              "feasibility",
+              "operability"
+            ]
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        }
+      }
+    },
+    "axes": {
+      "$ref": "#/$defs/axes"
+    },
+    "blocking": {
+      "description": "Ids of the kept critical and high findings.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^F[0-9]+$"
+      }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "description": "One audit finding. The outer shape is the one of the Autonomous Improvement Harness v2 audit.schema.json; only `category` differs (the eight axes).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "severity",
+        "category",
+        "claim",
+        "evidence",
+        "next_experiment"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^F[0-9]+$"
+        },
+        "severity": {
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "category": {
+          "enum": [
+            "coverage",
+            "correctness",
+            "consistency",
+            "traceability",
+            "verifiability",
+            "clarity",
+            "feasibility",
+            "operability"
+          ]
+        },
+        "claim": {
+          "description": "What is wrong, in one or two sentences.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "evidence": {
+          "description": "Ids from the audit input (FD-0001, DEC-0001, REQ-0001, TL-0001, PT-0001, DOC-0001, DOC-0001#S1), each optionally followed by ': ' and a quote copied from that item. The harness checks that the id exists and the quote is in its text.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          }
+        },
+        "counter_evidence": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "alternative_hypothesis": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "next_experiment": {
+          "description": "What to read or change next to confirm or resolve the finding.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      }
+    },
+    "axis_status": {
+      "enum": [
+        "pass",
+        "concerns",
+        "fail",
+        "not_assessed"
+      ]
+    },
+    "axis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "finding_ids"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/axis_status"
+        },
+        "finding_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^F[0-9]+$"
+          }
+        }
+      }
+    },
+    "axes": {
+      "description": "Every axis, its status by rule and the ids of its kept findings. No score.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coverage",
+        "correctness",
+        "consistency",
+        "traceability",
+        "verifiability",
+        "clarity",
+        "feasibility",
+        "operability"
+      ],
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/axis"
+        },
+        "correctness": {
+          "$ref": "#/$defs/axis"
+        },
+        "consistency": {
+          "$ref": "#/$defs/axis"
+        },
+        "traceability": {
+          "$ref": "#/$defs/axis"
+        },
+        "verifiability": {
+          "$ref": "#/$defs/axis"
+        },
+        "clarity": {
+          "$ref": "#/$defs/axis"
+        },
+        "feasibility": {
+          "$ref": "#/$defs/axis"
+        },
+        "operability": {
+          "$ref": "#/$defs/axis"
+        }
+      }
+    },
+    "report_view": {
+      "description": "impact-report.json `audit`. ref is null and status not_run when no audit.json exists; stale when audit.json was made from another input. In both cases every axis is not_assessed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "status",
+        "axes",
+        "blocking"
+      ],
+      "properties": {
+        "ref": {
+          "anyOf": [
+            {
+              "const": "audit.json"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "blocked",
+            "failed",
+            "not_run",
+            "stale"
+          ]
+        },
+        "axes": {
+          "$ref": "#/$defs/axes"
+        },
+        "blocking": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^F[0-9]+$"
+          }
+        }
+      }
+    }
+  }
+}

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:sre-harness:impact-report",
   "title": "impact-report",
-  "description": "impact-report.json, written by `spec report` from findings.json (`$defs/findings_file`, written by `spec analyze`). Severity is fixed per kind; a finding whose evidence is all inferred is at most medium. `patches` and `patch_rejections` are filled by `spec report`; `audit` by a later stage.",
+  "description": "impact-report.json, written by `spec report` from findings.json (`$defs/findings_file`, written by `spec analyze`). Severity is fixed per kind; a finding whose evidence is all inferred is at most medium. `patches`, `patch_rejections` and `audit` are filled by `spec report`; `audit` shows audit.json (`spec audit`) or, without a current one, every axis as not_assessed.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -59,7 +59,7 @@
       "type": "array",
       "items": { "$ref": "urn:sre-harness:spec-patch#/$defs/rejection" }
     },
-    "audit": { "type": "object" },
+    "audit": { "$ref": "urn:sre-harness:spec-audit#/$defs/report_view" },
     "limitations": { "type": "array", "items": { "type": "string", "maxLength": 2000 } }
   },
   "$defs": {
