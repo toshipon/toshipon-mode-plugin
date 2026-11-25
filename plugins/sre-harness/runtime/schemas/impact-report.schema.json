@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:impact-report",
+  "title": "impact-report",
+  "description": "impact-report.json, written by `spec report` from findings.json (`$defs/findings_file`, written by `spec analyze`). Severity is fixed per kind; a finding whose evidence is all inferred is at most medium. `patches` and `audit` are filled by later stages.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "generated_at",
+    "criteria_hash",
+    "repo",
+    "status",
+    "default_branch",
+    "prs",
+    "findings",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+    "generated_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "criteria_hash": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+    "repo": { "type": "string", "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$" },
+    "status": { "$ref": "#/$defs/status" },
+    "default_branch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha", "moved_since_analysis"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "sha": { "$ref": "urn:sre-harness:common#/$defs/git_sha" },
+        "moved_since_analysis": {
+          "description": "Whether the default branch moved after `spec analyze` read it. `spec report` does not fetch; it is false until a later stage checks it.",
+          "type": "boolean"
+        }
+      }
+    },
+    "prs": { "type": "array", "items": { "$ref": "#/$defs/pr" } },
+    "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "explicit", "inferred"],
+      "properties": {
+        "ref": { "const": "trace.json" },
+        "explicit": { "type": "integer", "minimum": 0 },
+        "inferred": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "patches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "finding_id", "target_pr", "target_head_sha", "paths", "apply_check"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^PT-[0-9]{4,}$" },
+          "finding_id": { "type": "string", "pattern": "^FD-[0-9]{4,}$" },
+          "target_pr": { "type": "integer", "minimum": 1 },
+          "target_head_sha": { "$ref": "urn:sre-harness:common#/$defs/git_sha" },
+          "paths": { "type": "array", "items": { "type": "string" } },
+          "preimage_blob_shas": { "type": "object" },
+          "apply_check": { "enum": ["passed", "failed"] }
+        }
+      }
+    },
+    "audit": { "type": "object" },
+    "limitations": { "type": "array", "items": { "type": "string", "maxLength": 2000 } }
+  },
+  "$defs": {
+    "status": {
+      "description": "complete; partial when a PR could not be read; stale when a PR head moved between the list and the fetch.",
+      "enum": ["complete", "partial", "stale"]
+    },
+    "pr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "head_sha", "merge_base", "analyzed_head_sha", "stale"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string", "maxLength": 300 },
+        "head_sha": {
+          "description": "The head the PR list gave.",
+          "anyOf": [{ "$ref": "urn:sre-harness:common#/$defs/git_sha" }, { "type": "null" }]
+        },
+        "merge_base": {
+          "anyOf": [{ "$ref": "urn:sre-harness:common#/$defs/git_sha" }, { "type": "null" }]
+        },
+        "analyzed_head_sha": {
+          "description": "The head that was fetched; null when nothing arrived.",
+          "anyOf": [{ "$ref": "urn:sre-harness:common#/$defs/git_sha" }, { "type": "null" }]
+        },
+        "stale": { "type": "boolean" },
+        "missing": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "ref", "basis"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^E[0-9]{1,4}$" },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "basis": { "$ref": "urn:sre-harness:common#/$defs/basis" },
+        "note": {
+          "description": "Copied from the source (DATA). The Markdown report shows it in a code block.",
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "severity",
+        "entities",
+        "prs",
+        "evidence",
+        "basis",
+        "explanation"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^FD-[0-9]{4,}$" },
+        "kind": {
+          "enum": [
+            "impact",
+            "not_reflected",
+            "contradiction",
+            "superseded_dependency",
+            "missing_test",
+            "semantic_conflict",
+            "ambiguous_requirement",
+            "input_missing",
+            "stale_sha"
+          ]
+        },
+        "severity": { "enum": ["critical", "high", "medium", "low", "info"] },
+        "entities": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "prs": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+        "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidence" } },
+        "basis": { "$ref": "urn:sre-harness:common#/$defs/basis" },
+        "explanation": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "key": {
+          "description": "The structured key of a contradiction or a semantic conflict.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "missing": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "explained_by": {
+          "description": "template, or the llm-calls.jsonl id of the call that wrote the explanation.",
+          "type": "string",
+          "pattern": "^(template|LC-[0-9]{4,})$"
+        },
+        "patch_ref": { "type": "string", "pattern": "^PT-[0-9]{4,}$" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "basis": { "const": "inferred" } } },
+          "then": { "properties": { "severity": { "enum": ["medium", "low", "info"] } } }
+        }
+      ]
+    },
+    "findings_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "run_id",
+        "created_at",
+        "status",
+        "repo",
+        "default_branch",
+        "criteria_hash",
+        "prs",
+        "findings",
+        "limitations"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+        "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+        "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "status": { "$ref": "#/$defs/status" },
+        "repo": { "type": "string", "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$" },
+        "default_branch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "sha"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "sha": { "$ref": "urn:sre-harness:common#/$defs/git_sha" }
+          }
+        },
+        "criteria_hash": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+        "prs": { "type": "array", "items": { "$ref": "#/$defs/pr" } },
+        "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+        "limitations": { "type": "array", "items": { "type": "string", "maxLength": 2000 } }
+      }
+    }
+  }
+}
