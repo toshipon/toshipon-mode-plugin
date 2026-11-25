@@ -190,8 +190,8 @@ adapter は `agents.<役割>` に設定します。ローカルコマンド（`a
 - `--restricted --safe-mode`、`--strict-mcp-config` と空の MCP、`--permission-prompts none`、`--no-session-persistence`、`--disable-slash-commands`、`--max-budget-usd` を付けます。shell、ネットワーク、MCP、hook、plugin は使えません。`max_budget_usd` は必須で、呼び出しの前に 1 日の上限の残りと照合します。失敗した呼び出しも、返された費用（読めなければ上限額）を計上します。
 - 監査と仮説はツール無し（`--tools ""`）、候補作成は `Read,Glob,Grep,Edit,Write` を worktree の中だけで使います。
 - `--dangerously-skip-permissions`、`--allow-dangerously-skip-permissions`、`bypassPermissions` を含むコマンドは、評価器・回帰チェック・adapter・runner のどれであっても起動前に拒否します。`claude` を直接呼ぶコマンドでは `--settings`、`--allowedTools`、`--permission-prompt-tool`、`--permission-mode auto` も拒否します。
-- adapter に渡す環境変数は `PATH`、`HOME`、locale、`ANTHROPIC_*`、`CLAUDE_*`、`AI_HARNESS_*` などに絞ります。評価器、回帰チェック、runner は利用者自身のコマンドなので、環境をそのまま引き継ぎます。
-- Harness が呼ぶ git は repository の hook を実行しません（`core.hooksPath=/dev/null`）。
+- adapter と suite の runner に渡す環境変数は `PATH`、`HOME`、locale、`ANTHROPIC_*`、`CLAUDE_*`、`AI_HARNESS_*` などに絞ります。改善ループの評価器と回帰チェックは利用者自身のコマンドなので、環境をそのまま引き継ぎます。
+- Harness が呼ぶ git は、repository の hook、fsmonitor、外部 diff、textconv を実行しません。候補版の worktree では、`.git` が作成時の指し先のままであることを確かめてから git を呼びます。書き換えられていれば候補を拒否します。
 - adapter の stderr は保存しません。入力の抜粋や認証情報が含まれうるためです。
 - 入力はデータ分類（spec と suite の `data_classification`、既定 `internal`）を持ち、`llm_policy.allowed_classifications`（既定 `public`、`synthetic`）に無い分類は adapter に渡しません。payload は、元になった記録と suite のうち最も厳しい分類で判定します。実作業の記録を自動で監査・分析させるには、利用者が `internal` を明示的に足す必要があります。
 
@@ -288,6 +288,7 @@ ruff check . && ruff format --check . && pyright
 - 許可回避オプションの拒否は、コマンドの引数に対して働きます。script の内部で付けた場合は検出できません。
 - 秘密情報の検出は既知の形に対する正規表現です。形の決まっていない秘密（裸の AWS secret key、独自形式の token）は検出できません。禁止語ファイルで補ってください。
 - 回帰ガードが見るのは git が報告する変更です。gitignore されたファイルへの変更は、評価器ファイルとして列挙したもの以外は検出も差し戻しもできません。
+- OS レベルの sandbox はありません。runner と `argv` の adapter は利用者と同じ権限で動くので、状態 home を読み書きできます。候補版が書いた内容を実行する runner を使う場合は、runner の側で隔離してください。`claude` の adapter がファイルを worktree の外で読めないことは、CLI の `--restricted` に依存しています（実起動は未検証）。
 - dry-run は状態 home の写しの上で動きますが、候補版と現行版の worktree は対象 repository に一時的に登録され、終了時に外されます。状態 home の中の symlink は写しません。
 - 比較評価の統計は、試行間の平均の差と標準誤差だけです。試行回数とケース数の下限は suite で決めます。
 - 候補版の隔離は git worktree です。対象が git repository でない場合は使えません。

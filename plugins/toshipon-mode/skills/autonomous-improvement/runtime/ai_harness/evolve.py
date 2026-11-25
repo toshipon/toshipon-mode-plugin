@@ -311,7 +311,32 @@ def _worktree(home, repo, name, sha):
     path = private_dir(root(home) / "worktrees") / name
     if not path.exists():
         git(repo, "worktree", "add", "--detach", str(path), sha)
+        # Remember where the work tree points. The agent that edits it can rewrite `.git`.
+        write_private(_link_record(path), (path / ".git").read_text(encoding="utf-8"))
     return path
+
+
+def _link_record(worktree):
+    return worktree.parent.parent / "worktree-links" / worktree.name
+
+
+def _assert_link(worktree):
+    """Refuse to run git in a work tree whose `.git` no longer points where we created it.
+
+    A repointed link would make git read a config of the editor's choosing, and git config
+    can name programs to run.
+    """
+    link, record = worktree / ".git", _link_record(worktree)
+    intact = (
+        link.is_file()
+        and not link.is_symlink()
+        and record.is_file()
+        and link.read_text(encoding="utf-8") == record.read_text(encoding="utf-8")
+    )
+    if not intact:
+        raise HarnessError(
+            "the git link of the candidate worktree was altered; discard the candidate"
+        )
 
 
 def candidate_create(home, hypothesis_id):
@@ -322,6 +347,7 @@ def candidate_create(home, hypothesis_id):
 
 
 def _candidate_patch(worktree, baseline_sha):
+    _assert_link(worktree)
     git(worktree, "add", "-A")
     return git(worktree, "diff", "--cached", "--binary", "--no-renames", baseline_sha)
 
@@ -372,8 +398,13 @@ def _trial(suite, suite_dir, version, version_dir, case, index):
         "AI_HARNESS_CASE_PATH": str(suite_dir / case["path"]) if "path" in case else "",
         "AI_HARNESS_TRIAL": str(index),
     }
+    # The runner works on content a candidate wrote: it gets the adapter environment, not the user's.
     result = run_command(
-        suite["runner"]["argv"], suite_dir, suite["runner"].get("timeout_seconds", 600), env=env
+        suite["runner"]["argv"],
+        suite_dir,
+        suite["runner"].get("timeout_seconds", 600),
+        env=env,
+        minimal_env=True,
     )
     trial = {
         "version": version,

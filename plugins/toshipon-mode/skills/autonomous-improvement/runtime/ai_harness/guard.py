@@ -12,15 +12,23 @@ from .store import ACTIVE_ENV, HarnessError, sha256, write_private
 OUTPUT_TAIL = 1000
 
 
+# Settings that make git start other programs are switched off for every call: the harness
+# runs git inside work trees that an agent, or a rejected experiment, has just written to.
+SAFE_CONFIG = ("core.hooksPath=/dev/null", "core.fsmonitor=false", "core.pager=cat")
+
+
 def _git(project, *args):
-    """Every git call: paths are literal (never globs), repository hooks do not run, and the
-    child carries the recursion guard like any other process the harness starts."""
+    """Every git call: literal paths (never globs), no repository hooks, no external diff or
+    textconv programs, and the recursion guard like any other process the harness starts."""
+    if args and args[0] == "diff":
+        args = ("diff", "--no-ext-diff", "--no-textconv", *args[1:])
+    settings = [part for setting in SAFE_CONFIG for part in ("-c", setting)]
     return subprocess.run(
-        ["git", "--literal-pathspecs", "-c", "core.hooksPath=/dev/null", "-C", str(project), *args],
+        ["git", "--literal-pathspecs", *settings, "-C", str(project), *args],
         capture_output=True,
         text=True,
         check=False,
-        env={**os.environ, ACTIVE_ENV: "1"},
+        env={**os.environ, ACTIVE_ENV: "1", "GIT_EXTERNAL_DIFF": ""},
     )
 
 

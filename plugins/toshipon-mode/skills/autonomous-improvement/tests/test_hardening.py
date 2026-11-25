@@ -524,3 +524,56 @@ class EvolutionHardeningTest(EvolutionCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorktreeIntegrityTest(EvolutionCase):
+    def setUp(self):
+        super().setUp()
+        self.approve_suite()
+        self.tool_failures()
+        evolve.analyze(self.home, self.config)
+        self.hypothesis_id = evolve.hypothesis_add(
+            self.home,
+            {
+                "pattern": "tool_failure:Bash",
+                "cause": "skill",
+                "statement": "s",
+                "falsification": "f",
+            },
+            self.tick(),
+        )
+        self.worktree = evolve.candidate_create(self.home, self.hypothesis_id)
+        (self.worktree / "skill.md").write_text(BETTER)
+
+    def test_a_candidate_that_repoints_its_git_link_is_refused_before_git_runs(self):
+        marker = self.tmp / "executed"
+        fake = self.tmp / "fake-gitdir"
+        git(self.tmp, "init", "-q", "--bare", str(fake))
+        git(fake, "config", "core.fsmonitor", f"touch {marker}; false")
+        (self.worktree / ".git").write_text(f"gitdir: {fake}\n")
+        with self.assertRaisesRegex(HarnessError, "git link of the candidate worktree was altered"):
+            evolve.candidate_freeze(self.home, self.hypothesis_id, self.tick())
+        self.assertFalse(marker.exists())
+
+    def test_git_runs_with_command_running_settings_switched_off(self):
+        marker = self.tmp / "executed"
+        git(self.subject, "config", "core.fsmonitor", f"touch {marker}; false")
+        git(self.subject, "config", "diff.external", f"touch {marker}")
+        evolve.candidate_freeze(self.home, self.hypothesis_id, self.tick())
+        self.assertFalse(marker.exists())
+
+    def test_suite_runner_gets_the_minimal_environment(self):
+        runner = self.evo / "runner.py"
+        runner.write_text(
+            runner.read_text().replace(
+                '"passed": passed,', '"passed": passed and "DEPLOY_TOKEN" not in os.environ,'
+            )
+        )
+        self.approve_suite()
+        evolve.close(self.home, self.hypothesis_id, "abandoned", "suite changed", self.tick())
+        self.tool_failures(count=3, tool="Edit")
+        hypothesis_id = self.manual_candidate(BETTER, pattern="tool_failure:Edit")
+        with mock.patch.dict(os.environ, {"DEPLOY_TOKEN": "visible"}):
+            self.assertEqual(
+                evolve.compare(self.home, hypothesis_id, self.tick())["verdict"], "propose"
+            )
