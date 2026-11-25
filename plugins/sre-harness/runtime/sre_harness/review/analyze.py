@@ -21,6 +21,7 @@ import re
 from .. import paths, records
 from ..errors import InputError, QualityGateError
 from . import fix
+from . import split as split_stage
 
 STAGE = "analyze"
 OUTPUT_SCHEMA = "llm-review-analysis"
@@ -383,11 +384,17 @@ def _read_threads(run_dir):
     return threads
 
 
-def analyze(run_dir, session):
-    """Run the stage. Returns the summary; raises QualityGateError when every lesson failed."""
+def analyze(run_dir, session, split=None):
+    """Run the stage. Returns the summary; raises QualityGateError when every lesson failed.
+
+    With a split (`review split`), only generation-side events before its t1 are used.
+    """
     run_id, now = run_dir.name, records.iso()
     threads = _read_threads(run_dir)
     contexts = fix.pull_contexts(run_dir)
+    left_out = None
+    if split is not None:
+        threads, contexts, left_out = split_stage.restrict(threads, contexts, split)
     linked = fix.attach(run_dir, threads, contexts)
     records.write_jsonl(paths.child(run_dir, "threads-with-fix.jsonl"), linked)
     fixes = {status: 0 for status in ("found", "not_found", "ambiguous")}
@@ -446,6 +453,8 @@ def analyze(run_dir, session):
         "calls": call_ids,
         "oppositions": kept,
         "ignored_oppositions": ignored,
+        "split_sha256": None if split is None else split["sha256"],
+        "split_left_out": left_out,
     }
     records.write_json(paths.child(run_dir, "analyze.json"), detail)
     if drafts and not lessons:

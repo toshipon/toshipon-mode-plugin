@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:review-split",
+  "title": "review-split",
+  "description": "A time split fixed once: generation uses events before t1, evaluation uses PRs created at or after evaluation_from (t1 + gap_days). sha256 is the hash of every other field except created_at.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "created_at",
+    "repo",
+    "period",
+    "t1",
+    "gap_days",
+    "evaluation_from",
+    "generation",
+    "evaluation",
+    "excluded",
+    "sha256"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+    "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "repo": { "type": "string", "minLength": 3 },
+    "period": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["since", "until"],
+      "properties": {
+        "since": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "until": { "$ref": "urn:sre-harness:common#/$defs/timestamp" }
+      }
+    },
+    "t1": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "gap_days": { "type": "integer", "minimum": 0, "maximum": 365 },
+    "evaluation_from": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prs", "dropped"],
+      "properties": {
+        "prs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "dropped": {
+          "description": "Events of generation PRs at or after t1 (or without a time), which generation must not use.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["comments", "commits", "undated_comments", "undated_commits"],
+          "properties": {
+            "comments": { "type": "integer", "minimum": 0 },
+            "commits": { "type": "integer", "minimum": 0 },
+            "undated_comments": { "type": "integer", "minimum": 0 },
+            "undated_commits": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prs"],
+      "properties": {
+        "prs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "excluded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gap_prs", "undated_prs"],
+      "properties": {
+        "gap_prs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "undated_prs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" }
+  }
+}

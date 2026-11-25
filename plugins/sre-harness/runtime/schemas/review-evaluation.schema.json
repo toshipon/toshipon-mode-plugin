@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:review-evaluation",
+  "title": "review-evaluation",
+  "description": "The result of `review evaluate`. criteria_hash freezes the split, the metric definitions and the thresholds; changing any of them is a different evaluation. Metric values are null when fewer than min_prs evaluation PRs exist (status unevaluable).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "created_at",
+    "status",
+    "unevaluable_reason",
+    "criteria_hash",
+    "criteria",
+    "split_sha256",
+    "adjudication_sha256",
+    "n_prs",
+    "n_units",
+    "labels",
+    "candidates",
+    "configs",
+    "effort",
+    "cost",
+    "evidence",
+    "baseline_rules",
+    "failures",
+    "units",
+    "threads_without_hunk",
+    "findings",
+    "rejected_flags"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+    "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "status": { "enum": ["evaluated", "unevaluable"] },
+    "unevaluable_reason": { "type": ["string", "null"] },
+    "criteria_hash": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+    "criteria": { "type": "object" },
+    "split_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+    "adjudication_sha256": {
+      "oneOf": [{ "$ref": "urn:sre-harness:common#/$defs/sha256" }, { "type": "null" }]
+    },
+    "n_prs": { "type": "integer", "minimum": 0 },
+    "n_units": { "type": "integer", "minimum": 0 },
+    "labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["human_flagged", "human_missed_valid", "clean", "disputed", "ambiguous"],
+      "properties": {
+        "human_flagged": { "type": "integer", "minimum": 0 },
+        "human_missed_valid": { "type": "integer", "minimum": 0 },
+        "clean": { "type": "integer", "minimum": 0 },
+        "disputed": { "type": "integer", "minimum": 0 },
+        "ambiguous": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "content_sha256", "version", "form", "status", "findings", "config"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^IC-[0-9]{4,}$" },
+          "content_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+          "version": { "type": "integer", "minimum": 1 },
+          "form": { "enum": ["declarative_check", "prose"] },
+          "status": { "enum": ["evaluated", "check_failed"] },
+          "reason": { "type": "string" },
+          "findings": { "type": "integer", "minimum": 0 },
+          "config": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/config" }] }
+        }
+      }
+    },
+    "configs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline", "with_candidates"],
+      "properties": {
+        "baseline": { "$ref": "#/$defs/config" },
+        "with_candidates": { "$ref": "#/$defs/config" }
+      }
+    },
+    "units": { "type": "array", "items": { "type": "object" } },
+    "findings": { "type": "array", "items": { "type": "object" } },
+    "rejected_flags": { "type": "array", "items": { "type": "object" } },
+    "effort": { "type": "object" },
+    "cost": { "type": "object" },
+    "evidence": { "type": "array", "items": { "$ref": "urn:sre-harness:common#/$defs/evidence" } },
+    "baseline_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "content_sha256"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^RG-[0-9]{4,}$" },
+          "content_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" }
+        }
+      }
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule_id", "reason"],
+        "properties": { "rule_id": { "type": "string" }, "reason": { "type": "string" } }
+      }
+    },
+    "threads_without_hunk": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^RT-[0-9]{4,}$" }
+    }
+  },
+  "$defs": {
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "ci95", "defined"],
+      "properties": {
+        "value": { "type": ["number", "null"] },
+        "ci95": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" } }
+          ]
+        },
+        "defined": { "type": "boolean" },
+        "reason": { "type": "string" }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rules", "counts", "metrics"],
+      "properties": {
+        "rules": { "type": "array", "items": { "type": "string" } },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "true_positives",
+            "findings",
+            "findings_on_clean",
+            "confirmed_false_positives",
+            "unconfirmed_findings",
+            "positives",
+            "clean_cells"
+          ],
+          "properties": {
+            "true_positives": { "type": "integer", "minimum": 0 },
+            "findings": { "type": "integer", "minimum": 0 },
+            "findings_on_clean": { "type": "integer", "minimum": 0 },
+            "confirmed_false_positives": { "type": "integer", "minimum": 0 },
+            "unconfirmed_findings": { "type": "integer", "minimum": 0 },
+            "positives": { "type": "integer", "minimum": 0 },
+            "clean_cells": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "precision_lower",
+            "precision_confirmed",
+            "recall",
+            "f1",
+            "false_positive_rate"
+          ],
+          "properties": {
+            "precision_lower": { "$ref": "#/$defs/metric" },
+            "precision_confirmed": { "$ref": "#/$defs/metric" },
+            "recall": { "$ref": "#/$defs/metric" },
+            "f1": { "$ref": "#/$defs/metric" },
+            "false_positive_rate": { "$ref": "#/$defs/metric" }
+          }
+        }
+      }
+    }
+  }
+}
