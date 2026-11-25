@@ -16,6 +16,7 @@
     "split_sha256",
     "adjudication_sha256",
     "n_prs",
+    "n_prs_with_units",
     "n_units",
     "labels",
     "candidates",
@@ -42,7 +43,16 @@
     "adjudication_sha256": {
       "oneOf": [{ "$ref": "urn:sre-harness:common#/$defs/sha256" }, { "type": "null" }]
     },
-    "n_prs": { "type": "integer", "minimum": 0 },
+    "n_prs": {
+      "description": "Evaluation PRs in the split.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "n_prs_with_units": {
+      "description": "Evaluation PRs with at least one hunk (unit). The 30-PR minimum and the bootstrap use these.",
+      "type": "integer",
+      "minimum": 0
+    },
     "n_units": { "type": "integer", "minimum": 0 },
     "labels": {
       "type": "object",

@@ -11,7 +11,9 @@
    hunks a rule flags: labels, metrics and status are computed here.
 4. Labels per hunk and rule (`metrics`), adjudication applied, then counts, metrics and PR-level
    bootstrap for the baseline, baseline + all candidates, and baseline + each candidate.
-   With fewer than `min_prs` evaluation PRs no metric value is given (`unevaluable`).
+   A PR is counted, and drawn by the bootstrap, only when it has at least one unit: with fewer
+   than `min_prs` such PRs no metric value is given (`unevaluable`). `n_prs` is the split's
+   count and `n_prs_with_units` the counted one.
 5. `evaluation.json`, `evaluation.md`; evaluated candidates move to `evaluated` with the
    criteria hash. A body edited since generate becomes a new version first. When the result is
    `unevaluable`, candidates stay (or go back to) `proposed`, without a criteria hash, and the
@@ -358,7 +360,8 @@ def evaluate(run_dir, root, split, session, adjudication_path=None, thresholds=N
     base_ids = [rule["id"] for rule in baseline if rule["id"] in findings]
     candidate_ids = [rule["id"] for rule in proposed if rule["id"] in findings]
     cells, invalid = label_cells(units, threads, working, verdicts)
-    prs = sorted(split["evaluation"]["prs"])
+    prs = sorted({unit["pr"] for unit in units})  # an evaluation PR without a hunk adds nothing
+    n_split = len(split["evaluation"]["prs"])
     universe = set(base_ids + candidate_ids)
     configs = {
         "baseline": _config(base_ids, universe, cells, findings, invalid, units, prs, thresholds),
@@ -369,7 +372,10 @@ def evaluate(run_dir, root, split, session, adjudication_path=None, thresholds=N
     status, reason = "evaluated", None
     if len(prs) < thresholds["min_prs"]:
         status = "unevaluable"
-        reason = f"insufficient evaluation PRs: {len(prs)} < {thresholds['min_prs']}"
+        reason = (
+            f"insufficient evaluation PRs with hunks: {len(prs)} < {thresholds['min_prs']} "
+            f"({n_split} in the split)"
+        )
     elif not universe:
         status, reason = "unevaluable", "no rule could be applied (no candidate, no baseline)"
     criteria = {
@@ -415,7 +421,8 @@ def evaluate(run_dir, root, split, session, adjudication_path=None, thresholds=N
         "criteria": criteria,
         "split_sha256": split["sha256"],
         "adjudication_sha256": adjudication_sha,
-        "n_prs": len(prs),
+        "n_prs": n_split,
+        "n_prs_with_units": len(prs),
         "n_units": len(units),
         "labels": labels,
         "candidates": entries,
@@ -496,8 +503,8 @@ def report(evaluation, records_by_id):
             else ""
         ),
         f"- criteria_hash: `{evaluation['criteria_hash']}`",
-        f"- split: `{evaluation['split_sha256']}`; evaluation PRs (n): {evaluation['n_prs']}; "
-        f"hunks: {evaluation['n_units']}",
+        f"- split: `{evaluation['split_sha256']}`; evaluation PRs: {evaluation['n_prs']}; "
+        f"with hunks (n): {evaluation['n_prs_with_units']}; hunks: {evaluation['n_units']}",
         "- precision_lower counts every finding no person confirmed as wrong; "
         "precision_confirmed uses only findings a reviewer raised or a person adjudicated.",
         "- Intervals are 95% percentile intervals from resampling evaluation PRs "
@@ -568,7 +575,8 @@ def evaluator_output(evaluation):
             *evaluation["evidence"],
         ],
         "notes": (
-            f"sre-harness review evaluate; n={evaluation['n_prs']} evaluation PRs, "
+            f"sre-harness review evaluate; n={evaluation['n_prs_with_units']} evaluation PRs "
+            f"with hunks ({evaluation['n_prs']} in the split), "
             f"{evaluation['n_units']} hunks; metrics without a prefix are baseline + candidates."
         ),
     }
@@ -588,7 +596,7 @@ def evaluator_output(evaluation):
             output["metrics"][prefix + name] = {
                 "value": metric["value"],
                 "rationale": (
-                    f"{metrics.METRICS[name]}; n={evaluation['n_prs']} PRs; 95% CI "
+                    f"{metrics.METRICS[name]}; n={evaluation['n_prs_with_units']} PRs; 95% CI "
                     f"{metric['ci95']} by PR bootstrap (seed {thresholds['seed']}, "
                     f"{thresholds['resamples']} resamples)"
                 ),
@@ -605,6 +613,7 @@ def summary(evaluation):
         "unevaluable_reason": evaluation["unevaluable_reason"],
         "criteria_hash": evaluation["criteria_hash"],
         "n_prs": evaluation["n_prs"],
+        "n_prs_with_units": evaluation["n_prs_with_units"],
         "n_units": evaluation["n_units"],
         "labels": evaluation["labels"],
         "candidates": [

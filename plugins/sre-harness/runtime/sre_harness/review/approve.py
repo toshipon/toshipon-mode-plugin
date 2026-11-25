@@ -140,7 +140,8 @@ def screen(record, text, content, evaluation, entry):
             if evaluation["status"] != "evaluated"
             else ""
         ),
-        f"- criteria_hash: `{evaluation['criteria_hash']}`; evaluation PRs: {evaluation['n_prs']}",
+        f"- criteria_hash: `{evaluation['criteria_hash']}`; evaluation PRs: {evaluation['n_prs']} "
+        f"({evaluation['n_prs_with_units']} with hunks)",
         f"- findings of this candidate: {entry['findings']}",
     ]
     if entry["config"] is not None:
