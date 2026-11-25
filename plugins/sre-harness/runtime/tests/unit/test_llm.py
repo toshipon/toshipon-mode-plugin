@@ -202,3 +202,127 @@ def test_the_stub_starts_nothing_and_costs_nothing(run, monkeypatch):
 def test_stub_output_is_held_to_the_same_schema(run):
     with pytest.raises(QualityGateError):
         llm.Session(run, "stub").ask("analyze", "x", {}, SCHEMA, stub=lambda data: {"lessons": 1})
+
+
+# Checks run on the raw strings, before JSON escapes them ----------------------------------
+
+ESCAPED_TERMS = [
+    ('say "falcon"', {"body": 'We say "falcon" here.'}),  # a quote becomes \"
+    ("c:\\falcon", {"body": "Path c:\\falcon\\x."}),  # a backslash becomes \\
+    ("falcon\tteam", {"body": "The falcon\tteam owns it."}),  # a tab becomes \t
+    ("falcon\x01", {"body": "Control falcon\x01 char."}),  # a control character becomes \u0001
+    ("falcon team", {"nested": [{"Falcon Team": "key, not value"}]}),  # dict keys count too
+]
+
+
+@pytest.mark.parametrize("backend", ["claude", "stub"])
+@pytest.mark.parametrize(
+    "term, data", ESCAPED_TERMS, ids=["quote", "backslash", "tab", "control", "key"]
+)
+def test_a_denied_term_is_found_before_json_escapes_it(
+    run, home, tmp_path, fake_claude, backend, term, data
+):
+    calls = fake_claude(EMPTY)
+    options = {"deny_terms": [term]}
+    if backend == "claude":
+        options.update(
+            auth_mode="subscription", max_run_budget_usd=1.0, env=with_home(home, tmp_path)
+        )
+    chosen = llm.Session(run, backend, **options)
+    with pytest.raises(BoundaryError):
+        chosen.ask("analyze", "Do the thing.", data, SCHEMA, stub=lambda d: EMPTY)
+    assert calls == [] and not (run / llm.CALLS_FILE).exists()
+
+
+def test_a_denied_term_in_the_instructions_is_found_too(run):
+    chosen = llm.Session(run, "stub", deny_terms=['say "falcon"'])
+    with pytest.raises(BoundaryError):
+        chosen.ask("analyze", 'Never say "falcon".', {}, SCHEMA, stub=lambda d: EMPTY)
+
+
+# Built at runtime so this file carries no secret-shaped text.
+GITHUB_TOKEN = "gh" + "p_" + "A1b2C3d4" * 5
+PRIVATE_KEY = "-----BEGIN " + "RSA PRIVATE KEY-----"
+
+
+@pytest.mark.parametrize("backend", ["claude", "stub"])
+@pytest.mark.parametrize(
+    "data, shape",
+    [
+        ({"body": f"use {GITHUB_TOKEN} to push"}, "github_token"),
+        ({"comments": [{"body": f'key "{PRIVATE_KEY}"'}]}, "private_key"),
+        ({GITHUB_TOKEN: "in a key"}, "github_token"),
+    ],
+    ids=["value", "nested_quoted", "key"],
+)
+def test_secret_shaped_text_is_never_sent(run, home, tmp_path, fake_claude, backend, data, shape):
+    calls = fake_claude(EMPTY)
+    options = {}  # no deny-terms file: the secret gate does not depend on one
+    if backend == "claude":
+        options.update(
+            auth_mode="subscription", max_run_budget_usd=1.0, env=with_home(home, tmp_path)
+        )
+    chosen = llm.Session(run, backend, **options)
+    with pytest.raises(BoundaryError) as refused:
+        chosen.ask("analyze", "Do the thing.", data, SCHEMA, stub=lambda d: EMPTY)
+    assert refused.value.exit_code == 3
+    message = str(refused.value)
+    assert shape in message
+    assert GITHUB_TOKEN not in message and "BEGIN" not in message
+    assert calls == [] and not (run / llm.CALLS_FILE).exists()
+
+
+# A call that raised still counts against the run budget -----------------------------------
+
+
+def test_timed_out_calls_are_charged_and_the_budget_still_stops(run, home, tmp_path, monkeypatch):
+    from subprocess import TimeoutExpired
+
+    started = []
+
+    def slow(argv, **options):
+        started.append(argv)
+        raise TimeoutExpired(argv, options["timeout"])
+
+    monkeypatch.setattr(guard, "_run", slow)
+    monkeypatch.setattr(guard, "_executable", lambda name: f"/usr/bin/{name}")
+    chosen = session(
+        run, with_home(home, tmp_path), max_run_budget_usd=1.0, max_call_budget_usd=0.5
+    )
+    for _ in range(2):
+        with pytest.raises(QualityGateError):
+            ask(chosen)
+    rows = read_jsonl(run / llm.CALLS_FILE)
+    assert [(row["status"], row["cost_known"], row["charged_usd"]) for row in rows] == [
+        ("error", False, 0.5),
+        ("error", False, 0.5),
+    ]
+    for row in rows:
+        assert records.violations("llm-call", row) == []
+    assert llm.spent_usd(run) == 1.0
+    with pytest.raises(QualityGateError) as stopped:
+        ask(chosen)
+    assert "budget" in str(stopped.value)
+    assert len(started) == 2
+
+
+def test_a_call_left_pending_counts_at_its_cap(run, home, tmp_path, monkeypatch):
+    def interrupted(argv, **options):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(guard, "_run", interrupted)
+    monkeypatch.setattr(guard, "_executable", lambda name: f"/usr/bin/{name}")
+    with pytest.raises(KeyboardInterrupt):
+        ask(session(run, with_home(home, tmp_path), max_run_budget_usd=0.3))
+    (row,) = read_jsonl(run / llm.CALLS_FILE)
+    assert row["status"] == "error" and row["charged_usd"] == 0.3
+    assert llm.spent_usd(run) == 0.3
+
+
+def test_a_call_refused_before_starting_costs_nothing(run, home, tmp_path, fake_claude):
+    calls = fake_claude(EMPTY)
+    env = with_home(home, tmp_path)
+    del env["HOME"]
+    with pytest.raises(InputError):
+        ask(session(run, env))
+    assert calls == [] and llm.spent_usd(run) == 0
