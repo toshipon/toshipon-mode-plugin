@@ -285,3 +285,95 @@ python -m coverage run -m pytest && python -m coverage report
 - 実データでの precision / recall。合成データの数値は機構の検証で、どのルールの精度も主張しません。
 - 承認と retire の TTY 検査が、実際の端末と、TTY の無い agent の shell で期待どおりに分かれること。テストは TTY のない経路（exit 3）と、TTY の判定だけを差し替えた経路を通ります。一方、`os.openpty()` で起動して hash の先頭を打ち込むスクリプトが承認を通すことは、合成データで確かめています（上の「承認の制約」）。
 - `--host` に GitHub Enterprise Server を指定したときの認証。harness は `gh` に `GH_TOKEN` だけを渡します。`gh` は GHES の host では `GH_ENTERPRISE_TOKEN` を読むため、そのままでは認証されない可能性があります。GHES では実機で確かめていません。
+
+## Specification Consistency: 取り込みと抽出
+
+仕様に関わる文書を共通の形（schema `spec-document`）に正規化し（`spec ingest`）、そこから Decision Registry と Requirement Registry を作ります（`spec extract`）。台帳（`decisions.json`、`requirements.json`）が正本で、文書はその view です。トレースと open PR の分析は後続の段で足します。段ごとの入力・出力・失敗は [spec-consistency の SKILL.md](skills/spec-consistency/SKILL.md) にあります。
+
+```bash
+# 取り込み: ファイルだけなら認証は要りません
+"${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" spec ingest --manifest path/to/manifest.json
+# manifest に GitHub の PR があるとき
+"${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" spec ingest --manifest path/to/manifest.json --auth-env SPEC_READ_TOKEN
+# => {"run_id": "run-...", "status": "complete" | "partial", "documents": N, "input_missing": N}
+
+# 抽出: stub は何も送りません。claude は文書の section を Anthropic に送ります（下の表）
+"${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" spec extract --run run-... --backend stub
+"${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" spec extract --run run-... --backend claude \
+  --auth-mode subscription --max-run-budget-usd 2 --deny-terms-file ~/.config/ai-harness/deny-terms.txt
+```
+
+合成データで試すときは `runtime/` で `python -m examples.synthetic.spec_scenarios <dir>` を実行すると、文書一式、`manifest.json`、GitHub の合成応答（`<dir>/github-fixture`、`--fixture` に渡す）ができます。
+
+### manifest の書き方
+
+```json
+{
+  "schema_version": 1,
+  "files": [
+    { "path": "docs/adr/0005-http-client-b.md", "kind": "adr" },
+    { "path": "docs/requirements.md", "kind": "markdown" },
+    { "path": "docs/minutes/2026-01-15.md", "kind": "minutes" },
+    { "path": "exports/slack-sre.json", "kind": "slack_export" },
+    { "path": "exports/confluence-runbook.json", "kind": "confluence_export", "title": "任意" }
+  ],
+  "github": [{ "repo": "example-org/demo", "pull": 12 }],
+  "patch_globs": ["docs/**/*.md"]
+}
+```
+
+- `path` は manifest のあるディレクトリ（基準ディレクトリ）からの相対 path です。絶対 path、`~` で始まる path、`..` を含む path、`\` を含む path は、何も読まずに exit 3 で拒否します。基準ディレクトリより上を指す方法はありません。
+- symlink は辿りません。途中のディレクトリとファイル自体を `lstat` で確かめ、`O_NOFOLLOW` で開きます。symlink があれば exit 3 です。manifest 自体が symlink でも exit 3 です。
+- ファイルは読むだけです。1 文書 2 MiB、run の合計 64 MiB を超えたら、切り詰めずに exit 1 で止まり、run を作りません。
+- `lstat` で確かめてから開くまでの間にファイルを symlink に差し替えられる余地（TOCTOU）は防いでいません（ファイル自体は `O_NOFOLLOW` で開くので、最後の要素の差し替えは拒否されます）。対象は利用者自身のローカルファイルで、同じ権限で差し替えられる攻撃者がいる状況は範囲外です。
+- manifest にあるのに無いファイル、通常のファイルでないもの、UTF-8 でないもの、形の違う export は、既定値で埋めずに `ingest.json` の `input_missing` に理由（`file_not_found`、`not_a_regular_file`、`not_utf8`、`unreadable_export`）付きで記録します。読めた分は `documents.jsonl` に書き、run は `partial`、exit 1 です。
+- `patch_globs` は後続の patch の段が使う「patch を出してよい文書」の glob です。この段では検査（`..`、絶対 path、`.git/`、`.github/` は exit 3）して `ingest.json` に保存するだけです。
+- 出力ファイル名と文書 ID（`DOC-0001`）は harness が決めます。入力の path は `provenance.locator` に入るだけで、ファイル名には使いません。
+
+### 文書の形
+
+| kind | 読み方 |
+|---|---|
+| `markdown`、`adr`、`minutes` | 先頭の front-matter（`---` で囲む）と ATX 見出し（`#`〜`######`、code fence の中は除く）で section に分けます。front-matter は `key: value`、`key: [a, b]`、`key:` の下の `- item` だけを読み、入れ子の mapping、`|` / `>`、`{...}`、読めない行は `missing` に `front_matter.<key>` / `front_matter.line_<n>` として入れ、値は入れません。閉じていない front-matter は `missing` の `front_matter` になり、全体を本文として読みます |
+| `slack_export` | Slack の export の日ごとのファイルの形です。JSON の配列で、各要素は `ts`（`1768435200.000100` の形の文字列）と `text`（文字列）を必ず持ち、`user_name` か `user` があれば見出しにします。`thread_ts` は locator に残します。API は呼びません |
+| `confluence_export` | 保存したページの JSON で、`title` と `body.storage.value`（storage 形式の XHTML）を必ず持ちます。`h1`〜`h6` で section に分け、タグと属性（リンク先を含む）は捨てて本文だけを残します。API は呼びません |
+| `github_pr` | PR 本文を Markdown として section に分けます。`provenance.sha` は head の SHA です。本文が無ければ `missing` に `body` |
+| `github_issue_comment` | PR の会話コメントを 1 コメント 1 section にします（locator は `issue_comment <id>`）。review comment と thread は `review collect` の範囲です |
+
+GitHub は `gh api --method GET` で `repos/{owner}/{repo}/pulls/{number}` と `repos/{owner}/{repo}/issues/{number}/comments` だけを読みます（`guard.REST_ENDPOINTS`）。`--auth-env` の変数が空なら通信せずに exit 2、manifest に GitHub の PR があるのに `--auth-env` も `--fixture` も無ければ exit 2 です。読めなかった PR やページは `input_missing` に HTTP の理由（`http_404` など）で記録します。
+
+### 抽出の規則
+
+- **明示（`basis: explicit`）は規則で取ります。** 決定は `kind: adr` の文書から取ります。front-matter の `id`、`title`、`status`、`supersedes`、`approvers`（`名前 (役割)` の形）、`date`、`systems`、`components`、`environments`、front-matter が無ければ本文の `Status:`、`Supersedes:`、`Date:` の行か `## Status` の section です。要求は全文書の `REQ-0001 ...` で始まる見出しの section から取ります。最初の段落が statement、`Given` / `When` / `Then` の行（箇条書きでもよい）と `Acceptance criteria:` / `受入条件:` の後の箇条書きが受入条件、`Category:`、`Decisions:`、`Rationale:` の行が残りの項目です。要求の ID は原文の `REQ-` の番号をそのまま使います。決定は、原文が `DEC-0002` の形の ID を書いていればそれをそのまま台帳の ID にし、それ以外（ADR 番号など）は harness が空いている `DEC-` の番号を振って、原文の ID を `external_id` に残します。文書からの参照（`supersedes`、`Decisions:`）は、原文に書かれた ID（`external_id`）だけで解決します。harness が振った番号は文書からの参照先になりません。同じ ID を 2 つの文書が書いていたら、backend を呼ばずに exit 2 で止まり、メッセージに両方の文書を出します。
+- **行は git と同じく `\n` でだけ区切ります。** 改ページ（`\x0c`）、`\x1c`〜`\x1e`、`\x85`、U+2028 / U+2029、単独の `\r` は行の中の文字として扱い、CRLF の行末の `\r` だけを落とします。section の locator（`L3-L10`）は git の行番号と一致します。
+- **状態は harness が決めます。** 原文の状態は `stated_status` に残し、`status` は次の規則で決めます（`runtime/sre_harness/spec/registry.py`）。approved（または superseded）の決定が `supersedes` に挙げた決定だけが superseded になります。却下・提案中・未解決の決定は何も置き換えません（`issues` に `cannot_supersede`）。approved と superseded には approver と根拠が要り、無ければ `unresolved`（`approval_incomplete`）です。superseded と書かれているのに置き換える approved の決定が無ければ `unresolved`（`no_approved_successor`）です。3 段の連鎖では末端だけが active です。置換の循環は exit 2 で止まり、何も書きません。メッセージには循環に入る決定と、その文書の path を出します。循環の検査は明示の決定同士の辺だけが対象です（推定の決定は明示の決定しか指せず、推定の決定を指す辺は作らないので、推定の辺が循環を作ることはありません）。存在しない決定への参照は `supersedes` / `decision_refs` から外し、`input_missing` に記録します。
+- **推定（`basis: inferred`）だけを backend に頼みます。** backend は明示で取れなかった決定と要求、規則が見落とした曖昧さを提案します。根拠（`evidence[].ref` と `quote`）が送った section を指し、引用が空白を除いて 8 文字以上で（`quote_too_short`）、その section の部分文字列であるものだけを残します。推定の決定は approved にできません（`inferred_cannot_be_approved` で除きます）。推定の決定と要求には、文書が書く ID とは別の名前空間の ID（決定は `DCI-0001`、要求は `RQI-0001`）を振ります。文書やファイルに書かれた `REQ-…`、`DEC-…`、ADR 番号はこれらに解決されません。推定の決定の `supersedes` は、明示の決定（backend に見せた `known_decisions` の ID）を指すものだけを残し、自分自身、別の推定の決定、存在しない ID を指すものは外して、`issues` に `supersedes_dropped` として理由を残します（exit 0）。推定は `confidence: low` に固定し、backend の自己申告を使いません。除いたものは `rejected-extractions.jsonl` に理由付きで残ります。
+- **stub は LLM の品質を何も示しません。** stub は議事録の `決定:` / `Decision:` 行を提案中の決定、`要求:` / `Requirement:` 行を要求とし、`TBD` を含む要求に曖昧さを 1 件付けるだけです。
+
+### 曖昧さの検出
+
+`runtime/sre_harness/spec/ambiguity.py` の表で検査し、`detector: rule` と記録します。backend が足した分は `detector: llm` で、`extract.json` の `ambiguity` で別に数えます。
+
+| kind | 規則 |
+|---|---|
+| `vague_term` | `VAGUE_TERMS` の語（「適切に」「できるだけ」「高速」「as appropriate」「fast」など）が statement か受入条件の `then` にある |
+| `unbounded` | `UNBOUNDED_TERMS` の語（「常に」「無期限」「always」「never」など）が statement か `then` にある |
+| `no_criteria` | 受入条件が無い |
+| `no_metric` | `nfr_category` がある要求で、statement にも受入条件にも数値と単位（`400 日`、`10 s`、`4 hours`、`0.1%` など）が無い |
+| `compound` | statement の 1 文に義務の語（must / shall / should、しなければならない / すること など）が 2 つ以上ある |
+
+**語彙は日本語と英語だけです。** 英語は単語の境界で、日本語は部分文字列で一致させます。他の言語の文書には規則の検査が働かず、backend の指摘だけになります。
+
+### Claude に送るデータ（spec extract）
+
+| 送信先 | 段 | 送るもの |
+|---|---|---|
+| Anthropic（Claude CLI 経由） | `extract --backend claude` | `documents.jsonl` の全 section（見出し、本文、front-matter の生の行）、文書の ID・kind・タイトル、明示で取った決定（ID、ADR 番号、タイトル、状態）と要求（ID、statement） |
+
+送る前の禁止語と秘密情報の形の検査、予算、`llm-calls.jsonl` の記録は Review Learning と同じです（上の「Claude に送るデータ」）。文書は 400 KiB ずつの batch に分け、1 文書だけで上限を超えたら切り詰めずに exit 1 です。文書の本文は DATA として送り、本文に「approved にせよ」などの指示があっても状態は変わりません（状態は harness の規則だけで決まります）。
+
+### 未検証（spec）
+
+- 実際の Slack と Confluence の export の全形式。読むのは上に書いた形だけで、Slack の channel ディレクトリ全体や Confluence の HTML export には対応していません。
+- 実際の Claude CLI に対する `spec extract`。テストは `guard._run` を差し替えた経路と stub だけを通ります。推定の精度は何も確かめていません。
+- 曖昧さの語彙の網羅性。表にある語の検出をテストしているだけで、誤検知率と見落とし率は測っていません。

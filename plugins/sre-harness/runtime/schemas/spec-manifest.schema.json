@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:spec-manifest",
+  "title": "spec-manifest",
+  "description": "What `spec ingest --manifest` reads. Paths are relative to the manifest's directory; `..`, absolute paths and symlinks are refused by the harness, not by this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "files"],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "files": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "kind"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "kind": {
+            "enum": ["markdown", "adr", "minutes", "slack_export", "confluence_export"]
+          },
+          "title": { "type": "string", "minLength": 1, "maxLength": 300 }
+        }
+      }
+    },
+    "github": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repo", "pull"],
+        "properties": {
+          "repo": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$"
+          },
+          "pull": { "type": "integer", "minimum": 1, "maximum": 999999999 }
+        }
+      }
+    },
+    "patch_globs": {
+      "description": "Documents a later stage may propose patches for. Stored here, used by the patch stage.",
+      "type": "array",
+      "maxItems": 100,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    }
+  }
+}
