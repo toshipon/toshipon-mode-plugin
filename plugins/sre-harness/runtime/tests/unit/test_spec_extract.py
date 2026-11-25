@@ -273,9 +273,8 @@ def test_a_model_answer_is_checked_before_it_is_kept(tmp_path, home, run_id, fak
     requirements = read(home, run_id, "requirements.json")
     inferred = [d for d in decisions["decisions"] if d["basis"] == "inferred"]
     assert [d["status"] for d in inferred] == ["proposed"]  # D2 kept, D1 refused
-    assert {"kind": "decision_ref", "from": inferred[0]["id"], "ref": MISSING_ADR} in decisions[
-        "input_missing"
-    ]
+    assert inferred[0]["supersedes"] == []  # ADR-0099 is no decision: dropped, not missing
+    assert [i["kind"] for i in inferred[0]["issues"]] == ["supersedes_dropped"]
     adr = by_external(decisions)
     assert adr[INJECTED_ADR]["status"] == "proposed"
 
@@ -390,7 +389,8 @@ def test_two_documents_with_one_written_id_stop_extract_with_exit_2(tmp_path, ho
     run_id = ingested(home, small_workspace(tmp_path / "ws", files))
     code, _ = extract(home, run_id)
     assert code == 2
-    assert "ADR-0001" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "ADR-0001" in error and "docs/adr/a.md" in error and "docs/adr/b.md" in error
     assert not (run_dir(home, run_id) / "decisions.json").exists()
 
 

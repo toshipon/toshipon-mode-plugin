@@ -9,16 +9,24 @@ Order of work:
    the first paragraph is the statement; `Given / When / Then` lines (bulleted or not) and the
    bullets after an `Acceptance criteria:` / `受入条件:` line are the criteria; `Category:`,
    `Decisions:` and `Rationale:` lines fill the rest. These are `basis: explicit`.
+   A requirement keeps its `REQ-` id. A decision whose document writes a `DEC-` id keeps it;
+   the others get the next free `DEC-` number, and the id the document writes (an ADR number)
+   is `external_id`. A document's references are resolved by those written ids only.
 2. The explicit decisions go through `registry.build` before anything is sent, so a
-   supersession cycle stops the stage (exit 2) without a model call.
+   supersession cycle, or one id written by two documents, stops the stage (exit 2) without a
+   model call. The message names the documents.
 3. The documents go to the backend as DATA, whole documents per batch. It may propose
    decisions and requirements the documents imply, and ambiguity the rules missed. Each
    proposal is kept only if every evidence ref names a section that was sent and every quote
    is a substring of that section, and, for a decision, if its status is not `approved`
    (an inferred decision cannot be approved). Ambiguity is kept only if it names a known
-   requirement and its span is in that requirement's text. Kept proposals are
-   `basis: inferred`, `confidence: low`, ambiguity `detector: llm`. The others go to
-   `rejected-extractions.jsonl` with reasons.
+   requirement and its span is in that requirement's text. A quote has at least
+   `MIN_QUOTE` characters besides spaces. Kept proposals are `basis: inferred`,
+   `confidence: low`, ambiguity `detector: llm`, and get ids of their own namespace (`DCI-`,
+   `RQI-`) that no document writes, so a reference in a document never reaches one. An
+   inferred decision's `supersedes` keeps only ids of explicit decisions; the rest (its own
+   id, another inferred one, an unknown id) is dropped with an issue `supersedes_dropped`.
+   The others go to `rejected-extractions.jsonl` with reasons.
 4. Everything is built into the registries again and held to `registry.check` and the schemas.
 
 Document text is external input: it travels as DATA and is never an instruction.
@@ -29,11 +37,14 @@ import re
 from .. import paths, records
 from ..errors import InputError, QualityGateError
 from . import ambiguity, registry
-from .ingest_file import FRONT_MATTER_HEADING
+from .ingest_file import FRONT_MATTER_HEADING, text_lines
 
 STAGE = "extract"
 OUTPUT_SCHEMA = "llm-spec-extract"
 MAX_BATCH_BYTES = 400 * 1024
+MIN_QUOTE = 8  # characters besides spaces in a backend's quote
+INFERRED_PREFIX = {"decision": "DCI", "requirement": "RQI"}
+_DEC_ID = re.compile(r"DEC-[0-9]{4,}")
 
 STATUS_WORDS = {
     "proposed": "proposed",
@@ -101,7 +112,8 @@ extracted by fixed rules; do not repeat them.
 - decisions: decisions a document records in prose (meeting minutes, threads). For each give
   key (D1, D2, ...), title, content, rationale, status (proposed, rejected or unresolved; the
   harness refuses approved for anything it did not read from an explicit record), supersedes
-  (ids from known_decisions it replaces, if the text says so), scope, and evidence.
+  (ids from known_decisions it replaces, if the text says so; nothing else), scope, and
+  evidence.
 - requirements: obligations a document states outside a `REQ-` section. Give key (R1, ...),
   statement, rationale, nfr_category or null, decision_refs (ids from known_decisions),
   acceptance_criteria (given, when, then; empty when the text gives none), and evidence.
@@ -110,8 +122,9 @@ extracted by fixed rules; do not repeat them.
   requirement's text.
 
 evidence is a list of {ref, quote}: ref is a section ref from DATA (DOC-0001#S2), quote is text
-copied exactly from that section. Proposals with a ref that was not sent, or a quote that is
-not in that section, are dropped. Do not judge approval, priority or correctness."""
+copied exactly from that section, at least 8 characters besides spaces. Proposals with a ref
+that was not sent, or a quote that is shorter or not in that section, are dropped. Do not
+judge approval, priority or correctness."""
 
 
 # Explicit decisions -----------------------------------------------------------------------
@@ -141,7 +154,7 @@ def _body_lines(document):
     for section in document["sections"]:
         if section["heading"] == FRONT_MATTER_HEADING:
             continue
-        for line in section["text"].splitlines():
+        for line in text_lines(section["text"]):
             match = _LINE.fullmatch(line)
             if match is None:
                 continue
@@ -156,7 +169,7 @@ def _front_matter_line(document, key):
     section = document["sections"][0] if document["sections"] else None
     if section is None or section["heading"] != FRONT_MATTER_HEADING:
         return None, None
-    for line in section["text"].splitlines():
+    for line in text_lines(section["text"]):
         if line.lower().startswith(f"{key}:"):
             return section, line.strip()
     return section, None
@@ -184,7 +197,7 @@ def explicit_decision(document):
     elif "status" in lines:
         raw_status, status_section, status_line = lines["status"]
     elif (section := _named(document, "status")) is not None and section["text"].strip():
-        raw_status = section["text"].strip().splitlines()[0]
+        raw_status = text_lines(section["text"].strip())[0]
         status_section, status_line = section, raw_status.strip()
     word = raw_status.split()[0].lower() if raw_status else None
     status = STATUS_WORDS.get(word or "")
@@ -209,7 +222,7 @@ def explicit_decision(document):
         (s for s in document["sections"] if s["heading"] != FRONT_MATTER_HEADING), None
     )
     content = content_section["text"] if content_section else ""
-    first = next((line.strip() for line in content.splitlines() if line.strip()), None)
+    first = next((line.strip() for line in text_lines(content) if line.strip()), None)
     if content_section is not None and first:
         evidence.append(
             {"id": f"E{len(evidence) + 1}", "ref": _ref(document, content_section), "quote": first}
@@ -274,7 +287,7 @@ def parse_requirement(text):
             criteria.append(made)
         current = {}
 
-    for raw in text.splitlines():
+    for raw in text_lines(text):
         line = raw.strip()
         if not line:
             if mode == "statement" and statement:
@@ -402,7 +415,7 @@ def stub_extract(data):
         if document["kind"] != "minutes":
             continue
         for section in document["sections"]:
-            for line in section["text"].splitlines():
+            for line in text_lines(section["text"]):
                 evidence = None
                 decision = _STUB_DECISION.fullmatch(line.strip())
                 wanted = _STUB_REQUIREMENT.fullmatch(line.strip())
@@ -445,12 +458,17 @@ def stub_extract(data):
 # Checks -----------------------------------------------------------------------------------
 
 
-def _evidence_problems(evidence, sections):
+def _evidence_problems(evidence, sections, minimum=0):
     reasons = []
     for index, item in enumerate(evidence):
         text = sections.get(item["ref"])
         if text is None:
             reasons.append(f"unknown_section: evidence[{index}] names {item['ref']}, not sent")
+        elif minimum and len("".join(item["quote"].split())) < minimum:
+            reasons.append(
+                f"quote_too_short: evidence[{index}] has fewer than {minimum} characters "
+                "besides spaces"
+            )
         elif not item["quote"].strip() or item["quote"] not in text:
             reasons.append(
                 f"quote_not_found: evidence[{index}] is not a substring of {item['ref']}"
@@ -467,10 +485,12 @@ def _numbered_evidence(evidence):
 class _Extraction:
     """Accumulates drafts, rejections and ids across explicit rules and backend answers."""
 
-    def __init__(self, run_id, now, sections):
+    def __init__(self, run_id, now, sections, reserved=()):
         self.run_id, self.now, self.sections = run_id, now, sections
         self.decisions, self.requirements, self.rejected = [], [], []
         self.llm_ambiguity = []  # (requirement id, entry)
+        self.reserved = set(reserved)  # DEC- ids that documents write
+        self.sources = {}  # decision id -> the path of its document
 
     def reject(self, key, reasons, call_id=None, draft=None):
         row = {"key": key, "reasons": reasons}
@@ -480,40 +500,65 @@ class _Extraction:
             row["draft"] = draft
         self.rejected.append(row)
 
-    def add_decision(self, draft, key, call_id=None):
-        reasons = _evidence_problems(draft["evidence"], self.sections)
+    def _decision_id(self, draft):
+        if draft["basis"] == "inferred":
+            return self._inferred_id("decision", self.decisions)
+        external = draft.get("external_id") or ""
+        if _DEC_ID.fullmatch(external):
+            return external
+        taken = self.reserved | {d["id"] for d in self.decisions}
+        number = 1
+        while records.record_id("DEC", number) in taken:
+            number += 1
+        return records.record_id("DEC", number)
+
+    @staticmethod
+    def _inferred_id(kind, made):
+        count = sum(1 for item in made if item["basis"] == "inferred")
+        return records.record_id(INFERRED_PREFIX[kind], count + 1)
+
+    @staticmethod
+    def _minimum(draft):
+        return MIN_QUOTE if draft["basis"] == "inferred" else 0
+
+    def add_decision(self, draft, key, call_id=None, source=None):
         external = draft.get("external_id")
-        if external and any(d.get("external_id") == external for d in self.decisions):
-            reasons.insert(0, f"duplicate_id: {external} is defined by an earlier document")
+        first = next(
+            (d for d in self.decisions if external and d.get("external_id") == external), None
+        )
+        if first is not None:
+            raise InputError(
+                f"two decisions write the id {external}: {self.sources.get(first['id'])} and "
+                f"{source}; fix the documents. Nothing was written."
+            )
+        reasons = _evidence_problems(draft["evidence"], self.sections, self._minimum(draft))
         if reasons:
             self.reject(key, reasons, call_id, draft)
             return None
         made = {
             "schema_version": records.SCHEMA_VERSION,
-            "id": records.record_id("DEC", len(self.decisions) + 1),
+            "id": self._decision_id(draft),
             "run_id": self.run_id,
             "created_at": self.now,
             **draft,
         }
         self.decisions.append(made)
+        if source:
+            self.sources[made["id"]] = source
         return made
-
-    def next_requirement_id(self):
-        numbers = [int(r["id"].split("-")[1]) for r in self.requirements]
-        return records.record_id("REQ", max(numbers, default=0) + 1)
 
     def add_requirement(self, draft, call_id=None):
         key = draft.pop("key")
         reasons = []
         if not draft["statement"]:
             reasons.append("no_statement: the section has no statement before its criteria")
-        reasons += _evidence_problems(draft["evidence"], self.sections)
+        reasons += _evidence_problems(draft["evidence"], self.sections, self._minimum(draft))
         if any(r["id"] == draft.get("id") for r in self.requirements):
             reasons.insert(0, f"duplicate_id: {draft['id']} is defined by an earlier section")
         if reasons:
             self.reject(key, reasons, call_id, draft)
             return None
-        draft.setdefault("id", self.next_requirement_id())
+        draft.setdefault("id", self._inferred_id("requirement", self.requirements))
         made = {
             "schema_version": records.SCHEMA_VERSION,
             "run_id": self.run_id,
@@ -523,6 +568,25 @@ class _Extraction:
         self.requirements.append(made)
         return made
 
+    def _explicit_supersedes(self, refs):
+        """(registry ids of explicit decisions, issues for the refs dropped). The backend was
+        shown both the registry id and the written id of each explicit decision."""
+        known = {}
+        for item in self.decisions:
+            if item["basis"] == "explicit":
+                known[item["id"]] = item["id"]
+                if item.get("external_id"):
+                    known.setdefault(item["external_id"], item["id"])
+        kept, issues = [], []
+        for ref in refs:
+            target = known.get(ref)
+            if target is None:
+                detail = f"{ref}: not an explicit decision; an inferred one supersedes only those"
+                issues.append({"kind": "supersedes_dropped", "detail": detail[:300]})
+            elif target not in kept:
+                kept.append(target)
+        return kept, issues
+
     def answer(self, output, call_id, backend):
         """Hold one backend answer to the evidence, status and reference checks."""
         generated = {"backend": backend, "call_id": call_id}
@@ -531,10 +595,11 @@ class _Extraction:
             reasons = []
             if draft["status"] == "approved":
                 reasons.append("inferred_cannot_be_approved: only an explicit record is approved")
-            reasons += _evidence_problems(draft["evidence"], self.sections)
+            reasons += _evidence_problems(draft["evidence"], self.sections, MIN_QUOTE)
             if reasons:
                 self.reject(key, reasons, call_id, draft)
                 continue
+            supersedes, issues = self._explicit_supersedes(draft["supersedes"])
             self.add_decision(
                 {
                     "title": draft["title"],
@@ -545,10 +610,10 @@ class _Extraction:
                     "decided_at": None,
                     "evidence": _numbered_evidence(draft["evidence"]),
                     "scope": draft["scope"],
-                    "supersedes": draft["supersedes"],
+                    "supersedes": supersedes,
                     "basis": "inferred",
                     "confidence": "low",
-                    "issues": [],
+                    "issues": issues,
                     "generated_by": generated,
                 },
                 key,
@@ -613,17 +678,22 @@ def _decision_drafts(extraction):
 
 
 def _finish_requirements(extraction, decisions):
-    index = {}
+    """A document's `Decisions:` line reaches an explicit decision by its written id; the
+    backend's `decision_refs` may also use the registry ids it was shown."""
+    written, assigned = {}, {}
     for item in decisions:
-        index[item["id"]] = item["id"]
+        if item["basis"] != "explicit":
+            continue
+        assigned[item["id"]] = item["id"]
         if item.get("external_id"):
-            index.setdefault(item["external_id"], item["id"])
+            written[item["external_id"]] = item["id"]
     missing, out = [], []
     extra = {}
     for name, entry in extraction.llm_ambiguity:
         extra.setdefault(name, []).append(entry)
     for item in extraction.requirements:
         refs = []
+        index = written if item["basis"] == "explicit" else {**assigned, **written}
         for ref in item.pop("refs"):
             target = index.get(ref)
             if target is None:
@@ -647,14 +717,20 @@ def extract(run_dir, session):
     run_id, now = run_dir.name, records.iso()
     documents, ingest_missing = _read_documents(run_dir)
     sections = {_ref(d, s): s["text"] for d in documents for s in d["sections"]}
-    extraction = _Extraction(run_id, now, sections)
+    adrs = [(d, explicit_decision(d)) for d in documents if d["kind"] == "adr"]
+    reserved = {
+        draft["external_id"]
+        for _, draft in adrs
+        if _DEC_ID.fullmatch(draft.get("external_id") or "")
+    }
+    extraction = _Extraction(run_id, now, sections, reserved)
+    for document, draft in adrs:
+        extraction.add_decision(draft, document["id"], source=document["provenance"]["locator"])
     for document in documents:
-        if document["kind"] == "adr":
-            draft = explicit_decision(document)
-            extraction.add_decision(draft, f"{document['id']}")
         for draft in explicit_requirements(document):
             extraction.add_requirement(draft)
-    registry.build(_decision_drafts(extraction))  # a cycle stops here, before any call
+    # a cycle or a written id claimed twice stops here, before any call
+    registry.build(_decision_drafts(extraction), extraction.sources)
 
     known = {
         "known_decisions": [
@@ -674,7 +750,7 @@ def extract(run_dir, session):
         extraction.answer(output, session.last_call_id, session.backend)
     extraction.sections = sections
 
-    built = registry.build(_decision_drafts(extraction))
+    built = registry.build(_decision_drafts(extraction), extraction.sources)
     requirements, requirement_missing = _finish_requirements(extraction, built["decisions"])
     problems = registry.check(built["decisions"])
     for item in built["decisions"]:
