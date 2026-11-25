@@ -106,6 +106,44 @@ def test_approval_reads_the_status_of_the_evaluation_itself(evaluated, home):
     assert registry.entries(root(home)) == {}
 
 
+OTHER_SHA = "0" * 64
+
+
+def _set(path, **fields):
+    value = json.loads(path.read_text())
+    value.update(fields)
+    records.write_json(path, value)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda d: _set(d / "evaluation.json", criteria_hash=OTHER_SHA),
+        lambda d: _set(d / "evaluation.json", split_sha256=OTHER_SHA),
+        lambda d: _set(d / "analyze.json", split_sha256=OTHER_SHA),
+        lambda d: _set(d / "generate.json", split_sha256=OTHER_SHA),
+        lambda d: (d / "split.json").unlink(),
+        lambda d: _set(d / "split.json", t1="2026-01-02T00:00:00Z"),  # hash no longer holds
+    ],
+    ids=[
+        "evaluation criteria_hash",
+        "evaluation split",
+        "analyze split",
+        "generate split",
+        "split missing",
+        "split edited",
+    ],
+)
+def test_approval_needs_the_evaluation_split_and_stages_to_agree(evaluated, home, change):
+    # Guards against approving on a stale or mismatched evaluation by mistake, not forgery.
+    run_id, _ = evaluated
+    change(run_dir(home, run_id))
+    with pytest.raises(BoundaryError) as refused:
+        decide(home, run_id)
+    assert refused.value.exit_code == 3
+    assert registry.entries(root(home)) == {}
+
+
 def test_a_wrong_hash_prefix_records_nothing(evaluated, home):
     run_id, _ = evaluated
     with pytest.raises(BoundaryError, match="typed hash does not match"):
