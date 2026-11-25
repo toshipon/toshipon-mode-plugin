@@ -327,10 +327,25 @@ def test_reject_and_retire_are_recorded_as_versions(evaluated, home):
 
 
 def test_reject_through_the_command_line(evaluated, home):
+    # Rejecting only takes a candidate out of use, so it needs no terminal.
     run_id, _ = evaluated
     argv = ["review", "reject", "--run", run_id, "--candidate", "IC-0002"]
     code, summary = run_cli([*argv, "--reviewer", "bob", "--reason", "No."], home)
     assert code == 0 and summary["registry_id"] == "RG-0001"
+
+
+def test_retire_needs_a_terminal_like_approve(evaluated, home, monkeypatch):
+    # An approved rule is not taken back from a pipe or an agent's shell either.
+    run_id, _ = evaluated
+    decide(home, run_id)
+    argv = ["review", "retire", "--entry", "RG-0001", "--reviewer", "bob", "--reason", "Old."]
+    code, _ = run_cli(argv, home)
+    assert code == 3
+    assert [v["status"] for v in registry.entries(root(home))["RG-0001"]] == ["approved"]
+    monkeypatch.setattr(review_cli, "_is_terminal", lambda stream: True)
+    code = cli.main(argv, env=home, out=io.StringIO())
+    assert code == 0
+    assert [v["status"] for v in registry.entries(root(home))["RG-0001"]] == ["approved", "retired"]
 
 
 @pytest.mark.parametrize("reviewer, reason", [("", REASON), ("alice", " "), ("a" * 201, REASON)])
