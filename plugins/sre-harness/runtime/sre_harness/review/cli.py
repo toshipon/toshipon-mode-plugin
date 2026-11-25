@@ -2,13 +2,16 @@
 
 import json
 import re
+import sys
 import time
 from pathlib import Path
 
-from .. import guard, paths
+from .. import guard, llm, paths, privacy
 from ..errors import EXIT_OK, EXIT_QUALITY, InputError
 from ..github.fixture import FixtureTransport
 from ..github.rest import GhTransport, Limiter
+from . import analyze as analyze_stage
+from . import classify as classify_stage
 from . import collect as collect_stage
 from . import normalize as normalize_stage
 
@@ -71,8 +74,78 @@ def _normalize(args, env, out):
     return EXIT_OK
 
 
+SENDING = (
+    "note: --backend claude sends PR bodies, review comments, diffs{rules} to Anthropic "
+    "through the Claude CLI (no tools, no MCP servers, auth mode {mode})."
+)
+
+
+def _session(args, run_dir, env, rules=False):
+    low, high = guard.CLAUDE_TIMEOUT
+    if not low <= args.timeout <= high:
+        raise InputError(f"--timeout must be {low}-{high} seconds.")
+    deny_terms = privacy.load_deny_terms(args.deny_terms_file)
+    session = llm.Session(
+        run_dir,
+        args.backend,
+        auth_mode=args.auth_mode,
+        max_run_budget_usd=args.max_run_budget_usd,
+        deny_terms=deny_terms,
+        timeout=args.timeout,
+        model=args.model,
+        env=env,
+    )
+    if args.backend == "claude":
+        extra = " and existing rule files" if rules else ""
+        print(SENDING.format(rules=extra, mode=args.auth_mode), file=sys.stderr)
+    return session
+
+
+def _analyze(args, env, out):
+    run_dir = paths.open_run(paths.state_root(env), args.run)
+    summary = analyze_stage.analyze(run_dir, _session(args, run_dir, env))
+    print(json.dumps(summary, indent=2), file=out)
+    return EXIT_OK
+
+
+def _classify(args, env, out):
+    run_dir = paths.open_run(paths.state_root(env), args.run)
+    session = _session(args, run_dir, env, rules=True)
+    summary = classify_stage.classify(run_dir, Path(args.existing_rules), session)
+    print(json.dumps(summary, indent=2), file=out)
+    return EXIT_OK
+
+
+def _backend_options(parser):
+    parser.add_argument("--run", required=True, help="run id printed by collect")
+    parser.add_argument(
+        "--backend",
+        required=True,
+        choices=llm.BACKENDS,
+        help="claude sends PR text, comments and diffs to Anthropic; stub is fixed rules, no model",
+    )
+    parser.add_argument("--auth-mode", choices=llm.AUTH_MODES, help="required with claude")
+    parser.add_argument(
+        "--max-run-budget-usd",
+        type=float,
+        help="required with claude: stop calling once the run's recorded spend reaches this",
+    )
+    parser.add_argument(
+        "--deny-terms-file", help="terms that must not leave the machine; a hit stops with exit 3"
+    )
+    parser.add_argument("--model", help="model alias or id passed to the Claude CLI")
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=llm.DEFAULT_TIMEOUT,
+        help=f"seconds per claude call (default {llm.DEFAULT_TIMEOUT})",
+    )
+
+
 def register(groups):
-    review = groups.add_parser("review", help="review learning: collect and normalize")
+    review = groups.add_parser(
+        "review", help="review learning: collect, normalize, analyze, classify"
+    )
     stages = review.add_subparsers(dest="stage", required=True)
 
     collect = stages.add_parser("collect", help="read PRs, reviews and threads into a new run")
@@ -94,3 +167,14 @@ def register(groups):
     normalize = stages.add_parser("normalize", help="raw pages to threads.jsonl")
     normalize.add_argument("--run", required=True, help="run id printed by collect")
     normalize.set_defaults(handler=_normalize)
+
+    analyze = stages.add_parser("analyze", help="threads to lessons.jsonl, checked against quotes")
+    _backend_options(analyze)
+    analyze.set_defaults(handler=_analyze)
+
+    classify = stages.add_parser("classify", help="lessons to targets, set-aside and conflicts")
+    _backend_options(classify)
+    classify.add_argument(
+        "--existing-rules", required=True, help="directory of Markdown rule files (read only)"
+    )
+    classify.set_defaults(handler=_classify)

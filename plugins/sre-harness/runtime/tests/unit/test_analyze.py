@@ -411,3 +411,26 @@ def test_backend_settings_must_be_explicit(tmp_path, home, clock, fake_claude, e
     run_id = prepared_run(tmp_path, home, timeout_fixture())
     code, _ = run_cli(["review", "analyze", "--run", run_id, *extra], home)
     assert code == 2 and calls == []
+
+
+def test_an_opposition_without_a_timestamp_leaves_the_lesson_possibly_outdated():
+    def item(thread_id, created_at):
+        comment = {"id": f"C{thread_id[-1]}", "author_type": "user", "author_login": "bob"}
+        comment.update(author_association="member", body="Use client A for calls.")
+        if created_at:
+            comment["created_at"] = created_at
+        return {
+            "id": thread_id,
+            "kind": "inline_thread",
+            "pr": {"number": 1},
+            "comments": [comment],
+        }
+
+    threads = [item("RT-0001", "2026-01-02T00:00:00Z"), item("RT-0002", None)]
+    proposed = draft("L1", threads[0], text="Use client A")
+    opposition = {"lesson": "L1", "opposed_by_thread_ids": ["RT-0002"], "basis": "B now."}
+    batch = analyze._Batch({"lessons": [proposed], "oppositions": [opposition]}, threads, "LC-0001")
+    lesson = batch.lesson("L1", "run-20260102T000000Z-0123abcd", "2026-01-02T00:00:00Z", "stub")
+    assert lesson["staleness"]["status"] == "possibly_outdated"
+    assert lesson["staleness"]["later_evidence"] == []
+    assert lesson["confidence_basis"]["contradicting_threads"] == 1
