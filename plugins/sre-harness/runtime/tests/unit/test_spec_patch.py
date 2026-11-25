@@ -302,10 +302,10 @@ def test_a_rendered_diff_counts_lines_as_git_does(tmp_path, odd):
     repository = tmp_path / "r"
     run_git(tmp_path, "init", "-q", str(repository))
     (repository / "docs").mkdir()
-    (repository / path).write_text(before, encoding="utf-8", newline="")
-    (tmp_path / "p.diff").write_text(data, encoding="utf-8", newline="")
+    (repository / path).write_bytes(before.encode("utf-8"))
+    (tmp_path / "p.diff").write_bytes(data.encode("utf-8"))
     run_git(repository, "apply", str(tmp_path / "p.diff"))
-    assert (repository / path).read_text(encoding="utf-8", newline="") == after
+    assert (repository / path).read_bytes() == after.encode("utf-8")
 
 
 def test_a_reference_moves_only_the_ids_files_write():
