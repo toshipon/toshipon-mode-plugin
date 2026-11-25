@@ -3,9 +3,11 @@
 Approval is the one step that turns a candidate into something future agents may read as an
 instruction, so it is held to a terminal:
 
-- The command line refuses to run without a TTY on stdin and stdout (exit 3). There is no flag
-  or environment variable that skips this. An agent's shell has no TTY, so an agent cannot
-  approve; a person at a terminal can. This is not proof of who the person is.
+- The command line refuses to run without a TTY on stdin and stdout (exit 3), for approve and
+  retire. There is no flag or environment variable that skips this. It stops an approval from
+  a pipe or a non-interactive run by accident; a program that opens a pty gets through, so it
+  proves neither that a person is there nor who they are. The approval is trusted through the
+  review of the repository the person commits the registry's diff to.
 - The screen shows what will be recorded (form, title and check parsed from body.md), the
   artifact, its lint notes, every source comment with its author's type and association, the
   conflicts with existing rules and the evaluation. External text is escaped or fenced.

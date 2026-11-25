@@ -304,12 +304,13 @@ def test_activation_paths_outside_the_repository_or_into_git_are_refused(evaluat
     assert registry.entries(root(home)) == {}
 
 
-def test_reject_and_retire_are_recorded_as_versions(evaluated, home):
+def test_reject_and_retire_are_recorded_as_versions(evaluated, home, monkeypatch):
     run_id, _ = evaluated
     directory = run_dir(home, run_id)
     assert approve.reject(directory, root(home), "IC-0002", "bob", "Too vague.")["version"] == 1
     assert candidates.load(directory, "IC-0002")[0]["status"] == "rejected"
     decide(home, run_id)
+    monkeypatch.setattr(review_cli, "_is_terminal", lambda stream: True)  # retire needs a TTY
     code, retired = run_cli(
         ["review", "retire", "--entry", "RG-0002", "--reviewer", "bob", "--reason", "Replaced."],
         home,

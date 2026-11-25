@@ -203,7 +203,9 @@ adjudication（`--adjudication <file>`、schema `review-adjudication`）は、`e
 
 ### 承認の制約
 
-- `review approve` は stdin と stdout の両方が TTY のときだけ動きます。TTY がなければ何も記録せず exit 3 です。この検査を迂回する flag や環境変数はありません。agent の shell には TTY がないので、agent は承認できません。**これは本人確認ではありません。** 端末の前にいる人が誰かを確かめる仕組みではなく、`--reviewer` は入力どおりに記録します。
+- `review approve` と `review retire` は stdin と stdout の両方が TTY のときだけ動きます。TTY がなければ何も記録せず exit 3 です。この検査を迂回する flag や環境変数はありません。
+- **TTY と hash の入力は、パイプや非対話の実行からの「うっかりの自動承認」を防ぐためのものです。** pty を開いて起動し、画面の hash の先頭を打ち込むプログラムは通るので、意図的な迂回は防げません。承認者の本人確認でも、改ざん耐性でもありません。`--reviewer` は入力どおりに記録します。**承認の正当性は、registry の diff を置くリポジトリのレビュー（人がその diff を commit する段）で担保してください。**
+- `review reject` は TTY を求めません。候補を使えなくするだけの安全側の操作だからです。承認済みのルールを取り下げる `review retire` は、agent が非対話で実行できないよう TTY を求めます。
 - 承認の画面には、まず registry に記録される内容そのもの（`body.md` から parse した form、title、check）を出し、続けて本文、本文の lint、元になったコメントの引用（コードブロック）と投稿者の種別・association、既存ルールとの関係、評価の結果、リスクとロールバックを出します。外部の文字列は escape し、制御文字は置き換えます。
 - 画面の後で `content_sha256` の先頭 12 文字を入力します。違えば exit 3 です。候補が同じ `content_sha256` で評価されていない（未評価、評価後に本文が変わった、`check_failed`）とき、`evaluation.json` の `status` が `evaluated` でない（`unevaluable`）ときも exit 3 です。
 - 承認の前に、`evaluation.json` の `split_sha256` と `criteria_hash`、run の `split.json` の hash、`analyze.json` と `generate.json` の `split_sha256` が互いに一致することを確かめ、食い違えば exit 3 です。これは古い評価や別の split の評価で**うっかり**承認することを防ぐ検査です。
@@ -280,5 +282,5 @@ python -m coverage run -m pytest && python -m coverage report
 - `--safe-mode`（subscription）で起動した Claude CLI が、利用者の hooks、plugin、`CLAUDE.md`、設定をどこまで読まないか。envelope の形は確かめましたが、隔離の範囲は実機で確かめていません。
 - 実際の GitHub に対する `review collect`。テストは合成応答と、`gh` の起動を差し替えた経路だけを通ります。`gh api graphql -i` の出力形式、secondary limit の応答（403 / 429 と `retry-after`）、fine-grained PAT で `isResolved` を読めるかは実機で確かめていません。
 - 実データでの precision / recall。合成データの数値は機構の検証で、どのルールの精度も主張しません。
-- 承認の TTY 検査が、実際の端末と agent の shell で期待どおりに分かれること。テストは TTY のない経路（exit 3）と、TTY の判定だけを差し替えた経路を通ります。
+- 承認と retire の TTY 検査が、実際の端末と、TTY の無い agent の shell で期待どおりに分かれること。テストは TTY のない経路（exit 3）と、TTY の判定だけを差し替えた経路を通ります。pty を使えば通ることは、レビューの再現で確かめられています（上の「承認の制約」）。
 - `--host` に GitHub Enterprise Server を指定したときの認証。harness は `gh` に `GH_TOKEN` だけを渡します。`gh` は GHES の host では `GH_ENTERPRISE_TOKEN` を読むため、そのままでは認証されない可能性があります。GHES では実機で確かめていません。

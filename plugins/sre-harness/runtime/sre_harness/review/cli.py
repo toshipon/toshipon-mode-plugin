@@ -190,13 +190,22 @@ def _is_terminal(stream):
         return False
 
 
-def _approve(args, env, out):
-    # A person at a terminal approves. There is deliberately no way around this check.
+def _require_terminal(command, out):
+    """Stop an approval or a retirement run from a pipe or a non-interactive shell.
+
+    It keeps such runs from happening by accident. A pty passes it, so it neither proves a
+    person is there nor resists someone who means to get around it.
+    """
     if not (_is_terminal(sys.stdin) and _is_terminal(out)):
         raise BoundaryError(
-            "review approve needs a terminal on stdin and stdout; it cannot run from a pipe, a "
-            "script or an agent. Nothing was recorded."
+            f"review {command} needs a terminal on stdin and stdout; it does not run from a "
+            "pipe or a non-interactive shell. Nothing was recorded."
         )
+
+
+def _approve(args, env, out):
+    # There is deliberately no flag or variable that skips this check.
+    _require_terminal("approve", out)
     root = paths.state_root(env)
     run_dir = paths.open_run(root, args.run)
 
@@ -219,6 +228,7 @@ def _reject(args, env, out):
 
 
 def _retire(args, env, out):
+    _require_terminal("retire", out)
     summary = approve_stage.retire(paths.state_root(env), args.entry, args.reviewer, args.reason)
     print(json.dumps(summary, indent=2), file=out)
     return EXIT_OK
