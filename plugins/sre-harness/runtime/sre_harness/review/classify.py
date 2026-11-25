@@ -1,7 +1,8 @@
 """`review classify`: decide what each lesson could become, and how it relates to existing rules.
 
 1. Lessons that must not become candidates go to `set-aside.jsonl` with every reason that
-   applies (`SET_ASIDE`): superseded, case-specific, or raised only by outside accounts or bots.
+   applies (`SET_ASIDE`): superseded, case-specific, raised only by outside accounts or bots,
+   or quoting / copying the words of anyone but an owner, member or collaborator.
    They are kept for a person to read; later stages do not build candidates from them.
 2. Every other lesson gets a target from `TARGET_RULES`, a fixed table: the first row whose
    pattern and condition hold. No model is involved (`classified.jsonl`).
@@ -34,6 +35,7 @@ SET_ASIDE = (
     ("case_specific", lambda lesson: lesson["scope"] == "case_specific"),
     ("external_only", lambda lesson: lesson["source_trust"] == "external_only"),
     ("bot_only", lambda lesson: lesson["source_trust"] == "bot_only"),
+    ("untrusted_quote", lambda lesson: bool(lesson["untrusted_quotes"])),
 )
 
 # (rule name, target, pattern over target + problem + fix_summary + applies_when, condition).

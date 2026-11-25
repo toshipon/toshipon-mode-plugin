@@ -86,10 +86,11 @@ export REVIEW_READ_TOKEN=...   # 読み取り専用の fine-grained PAT
 - backend が出した lesson は、JSON Schema に加えて次の検査を通ったものだけを `lessons.jsonl` に入れます。引用（`quotes[].text`）が該当コメント本文の部分文字列であること、参照する thread と comment が送った DATA に存在すること。通らなかった lesson は理由付きで `rejected-lessons.jsonl` に入り、全件が通らなければ exit 1 です。
 - 次の値は backend の自己申告ではなく、harness が規則で決めます。
   - `confidence`: `confidence_basis`（thread 数、レビュアー数、PR 数、反対する thread 数）から `review/analyze.py` の `CONFIDENCE_RULES` で決めます。3 thread 以上・3 PR 以上・3 人以上で反対がなければ `strong`、3 thread 以上・2 PR 以上・2 人以上なら `recurring`、それ以外は `candidate` です。
-  - `source_trust`: lesson を支える thread の最初のコメントの投稿者です。owner / member / collaborator の人がいれば `member_supported`、bot だけなら `bot_only`、それ以外（外部、ghost、association 不明）は `external_only` です。
+  - `source_trust`: lesson を支える thread の最初のコメントの投稿者です。owner / member / collaborator の人がいれば `member_supported`、bot だけなら `bot_only`、それ以外（外部、ghost、association 不明）は `external_only` です。最初のコメントだけで決まるので、返信の投稿者は反映されません。返信は次の `untrusted_quotes` で扱います。
+  - `untrusted_quotes`: lesson が引用した（`quotes`）コメントと、自由文（`target`、`problem`、`rationale`、`fix_summary`、`applies_when`、`exceptions`）が文面を写したコメントのうち、owner / member / collaborator の人以外（外部、bot、ghost、mannequin、association 不明）のものです。コメント ID、投稿者の種別、association、見つかったフィールドを記録します。自由文の検査は、大文字小文字と空白を揃えたうえでの部分文字列の一致（12 文字以上）です。言い換えた文は検出できません。コメント中の `>` で始まる引用行は、そのコメントの投稿者の文面として扱いません。
   - `reviewer_agreement`: 解決済みか修正が見つかった thread は agreed、返信があるのに未解決・未修正なら disputed、返信がなければ unanswered。1 つでも disputed があれば lesson は disputed です。
   - `staleness`: backend が「この thread はこの lesson の方針を覆す」と候補を出し、その thread の時刻が lesson のどの thread よりも後なら `superseded` とし、`later_evidence` に thread を残します。時刻が前なら覆さず、`analyze.json` の `ignored_oppositions` に `not_later` と記録します。
-- `classify` は、superseded、`case_specific`、`external_only` / `bot_only` の lesson を候補にせず `set-aside.jsonl` に理由付きで出します。残りは `review/classify.py` の `TARGET_RULES`（固定の表）で rule / skill / policy_as_code / evaluation / knowledge / regression_test のどれかに決めます。
+- `classify` は、superseded、`case_specific`、`external_only` / `bot_only`、`untrusted_quotes` が空でない（理由 `untrusted_quote`）lesson を候補にせず `set-aside.jsonl` に理由付きで出します。残りは `review/classify.py` の `TARGET_RULES`（固定の表）で rule / skill / policy_as_code / evaluation / knowledge / regression_test のどれかに決めます。
 - `--existing-rules` の Markdown は読むだけです。symlink は辿らず（`classify.json` の `skipped_rule_files` に出ます）、1 ファイル 256 KiB、合計 512 KiB、500 ファイルを超えると切り詰めずに exit 2 で止まります。backend が出した既存ルールとの関係（contradicts / duplicates / narrows）は、引用がその行の部分文字列のものだけを `conflicts.jsonl` に残します。これは承認者に見せる注意書きで、分類も exit code も変えません。
 
 ### Claude に送るデータ
