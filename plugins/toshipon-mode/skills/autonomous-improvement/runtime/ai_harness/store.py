@@ -18,6 +18,9 @@ from referencing import Registry, Resource
 from .redact import redact
 
 SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas"
+SCHEMA_NAMESPACE = "autonomous-improvement"
+# Namespace -> schema directory. A skill built on this one adds its own with register_schemas().
+SCHEMA_DIRS = {SCHEMA_NAMESPACE: SCHEMA_DIR}
 ACTIVE_ENV = "AI_HARNESS_ACTIVE"  # set for every child process; hooks and dispatch refuse under it
 AUTOMATED_ENV = "AI_HARNESS_AUTOMATED"  # set by scheduled entry points; human gates refuse under it
 GENESIS = "0" * 64
@@ -155,9 +158,31 @@ def locked(path, blocking=True):
 _validators = {}
 
 
+def register_schemas(namespace, directory):
+    """Make another skill's schemas checkable here, as '<namespace>:<file>#<def>'."""
+    if SCHEMA_DIRS.get(namespace) != Path(directory):
+        SCHEMA_DIRS[namespace] = Path(directory)
+        _validators.clear()
+
+
+def schema_location(name):
+    """(file, $ref) of 'file', 'file#def' or 'namespace:file#def'. No namespace means this skill's."""
+    target, _, definition = name.partition("#")
+    namespace, _, filename = target.rpartition(":")
+    namespace = namespace or SCHEMA_NAMESPACE
+    if namespace not in SCHEMA_DIRS:
+        raise HarnessError(f"unknown schema namespace: {namespace}")
+    reference = f"{namespace}/{filename}.schema.json"
+    if definition:
+        reference += f"#/$defs/{definition}"
+    return SCHEMA_DIRS[namespace] / f"{filename}.schema.json", reference
+
+
 def _registry():
     documents = [
-        json.loads(path.read_text(encoding="utf-8")) for path in SCHEMA_DIR.glob("*.schema.json")
+        json.loads(path.read_text(encoding="utf-8"))
+        for directory in SCHEMA_DIRS.values()
+        for path in sorted(directory.glob("*.schema.json"))
     ]
     pairs = [(document["$id"], Resource.from_contents(document)) for document in documents]
     return Registry().with_resources(pairs)
@@ -166,10 +191,7 @@ def _registry():
 def validate(name, value: Any) -> Any:
     """Validate against schemas/<file>.schema.json, or one of its $defs as '<file>#<def>'."""
     if name not in _validators:
-        filename, _, definition = name.partition("#")
-        reference = f"autonomous-improvement/{filename}.schema.json"
-        if definition:
-            reference += f"#/$defs/{definition}"
+        _, reference = schema_location(name)
         _validators[name] = Draft202012Validator({"$ref": reference}, registry=_registry())
     errors = sorted(_validators[name].iter_errors(value), key=lambda e: list(map(str, e.path)))
     if errors:
@@ -241,7 +263,7 @@ def read_log(path):
     return records
 
 
-def append_log(path, log_id, record_type, data, now):
+def append_log(path, log_id, record_type, data, now, schema="ledger"):
     """Append one redacted, schema-checked record under a lock and return it."""
     path = Path(path)
     with locked(path.with_suffix(".lock")):
@@ -262,7 +284,7 @@ def append_log(path, log_id, record_type, data, now):
             "prev": records[-1]["hash"] if records else GENESIS,
         }
         record["hash"] = _digest(record)
-        validate("ledger", record)
+        validate(schema, record)
         private_dir(path.parent)
         handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         with os.fdopen(handle, "ab") as stream:
