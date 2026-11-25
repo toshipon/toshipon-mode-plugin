@@ -20,8 +20,10 @@ answers with an error, `limit()` for rate-limit answers, `link_host` / `link_pat
 links that point somewhere else, `MISSING` for a field the response leaves out, and
 `author=None` for a deleted (ghost) user.
 
-Run as a script to write the default scenario: `python -m examples.synthetic.github_responses
-OUT_DIR` from `runtime/`.
+Run as a script to write a scenario: `python -m examples.synthetic.github_responses OUT_DIR
+[--scenario default|evaluation]` from `runtime/`. `default` is three PRs for collect and
+normalize; `evaluation` is every Review Learning scenario plus three evaluation-side PRs, to be
+split at `SPLIT_T1` and taken through to `review evaluate`.
 """
 
 import argparse
@@ -850,19 +852,22 @@ def evaluation_scenario(kinds=DEFAULT_EVALUATION, injected_exception=False):
     return fixture
 
 
+SCENARIOS = {"default": default_scenario, "evaluation": evaluation_scenario}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("out", help="directory to write (created if missing)")
+    parser.add_argument("--scenario", choices=sorted(SCENARIOS), default="default")
     args = parser.parse_args(argv)
-    path = default_scenario().write(args.out)
-    print(
-        json.dumps(
-            {
-                "fixture": str(path),
-                "now": datetime.fromtimestamp(NOW, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            }
-        )
-    )
+    path = SCENARIOS[args.scenario]().write(args.out)
+    written = {
+        "fixture": str(path),
+        "now": datetime.fromtimestamp(NOW, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    if args.scenario == "evaluation":
+        written["t1"] = SPLIT_T1
+    print(json.dumps(written))
 
 
 if __name__ == "__main__":
