@@ -12,6 +12,10 @@ instruction, so it is held to a terminal:
 - Only body.md, which the hash covers, defines what is recorded. A candidate.json whose form,
   title or check disagree with it is refused (exit 3).
 - The person types the first PREFIX_LENGTH characters of the artifact's SHA-256.
+- The evaluation, the run's split.json and the split hash analyze and generate recorded must
+  agree, and the evaluation's criteria_hash must be the one its split and criteria give (exit
+  3). This catches approving on a stale or mismatched evaluation by mistake. It is no defence
+  against someone who edits the run's files: they are the user's own files, with no signature.
 - The candidate must have been evaluated with exactly that hash, and the evaluation must have
   status `evaluated`: an `unevaluable` one (fewer than 30 evaluation PRs) approves nothing
   (exit 3 otherwise).
@@ -27,7 +31,7 @@ from pathlib import PurePosixPath
 
 from .. import paths, records
 from ..errors import BoundaryError, InputError
-from . import candidates, registry
+from . import candidates, metrics, registry
 from . import split as split_stage
 from .markdown import code_block, escape
 
@@ -69,6 +73,31 @@ def _person(reviewer, reason):
     return reviewer.strip(), reason.strip()
 
 
+def check_consistent(run_dir, evaluation):
+    """The evaluation, the split and the stages that used it must name the same split."""
+    try:
+        split = split_stage.load(paths.child(run_dir, split_stage.FILE))
+    except InputError as error:
+        raise BoundaryError(f"the run's split.json cannot back an approval: {error}") from None
+    expected = metrics.criteria_hash(
+        split["sha256"],
+        evaluation["criteria"]["metrics"],
+        evaluation["criteria"]["thresholds"],
+        evaluation["criteria"]["labels"],
+    )
+    found = {"evaluation.json": evaluation["split_sha256"]}
+    for name in ("analyze.json", "generate.json"):
+        found[name] = records.read_json(paths.child(run_dir, name)).get("split_sha256")
+    stale = sorted(name for name, value in found.items() if value != split["sha256"])
+    if evaluation["criteria_hash"] != expected:
+        stale.append("evaluation.json criteria_hash")
+    if stale:
+        raise BoundaryError(
+            f"{', '.join(stale)} do not match the run's split.json; run the stages again with "
+            "this split before approving. Nothing was recorded."
+        )
+
+
 def evaluated(run_dir, record, text):
     """(evaluation, its entry for this candidate, the evaluation file's hash), or exit 3."""
     digest = candidates.content_sha256(text)
@@ -80,6 +109,7 @@ def evaluated(run_dir, record, text):
     if not path.is_file():
         raise BoundaryError(f"{record['id']} has not been evaluated; run `review evaluate` first.")
     evaluation = records.validate("review-evaluation", records.read_json(path))
+    check_consistent(run_dir, evaluation)
     if evaluation["status"] != "evaluated":
         raise BoundaryError(
             f"the evaluation is {evaluation['status']} ({evaluation['unevaluable_reason']}); "
