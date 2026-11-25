@@ -242,6 +242,83 @@ def test_a_limitation_that_names_an_id_with_no_finding_is_refused_even_without_f
     ]
 
 
+@pytest.mark.parametrize(
+    "limitation",
+    [
+        "This is a serious, release-stopping problem that was not examined.",
+        "A showstopper may remain in the export.",
+        "看過できない欠落があるかもしれない。",
+    ],
+)
+def test_reworded_severity_in_limitations_is_refused(limitation):
+    problems = audit.check_limitations([limitation], [finding()])
+    assert problems and problems[0].startswith("limitations[0] severity_word")
+
+
+# The analysis's critical and high findings -------------------------------------------------
+
+DATA = {
+    "findings": [
+        {"id": "FD-0001", "severity": "high"},
+        {"id": "FD-0002", "severity": "critical"},
+        {"id": "FD-0003", "severity": "medium"},
+    ]
+}
+
+
+def entry(ref, verdict="disputed"):
+    return {"ref": ref, "verdict": verdict, "note": "Read against the source."}
+
+
+def test_every_severe_analysis_finding_must_be_reviewed_or_cited():
+    assert audit.check_reviewed([], [], DATA) == ["unreviewed: FD-0001", "unreviewed: FD-0002"]
+    cited = [finding(evidence=["FD-0002: anything"])]
+    assert audit.check_reviewed([entry("FD-0001")], cited, DATA) == []
+    # A medium analysis finding need not be treated.
+    assert audit.check_reviewed([entry("FD-0001"), entry("FD-0002")], [], DATA) == []
+
+
+def test_reviewed_names_only_input_findings_and_each_once():
+    both = [entry("FD-0001"), entry("FD-0002")]
+    assert audit.check_reviewed([*both, entry("FD-0009")], [], DATA) == [
+        "unknown_reviewed: FD-0009"
+    ]
+    assert audit.check_reviewed([*both, entry("FD-0001", "upheld")], [], DATA) == [
+        "duplicate_reviewed: FD-0001"
+    ]
+
+
+def test_a_severe_analysis_finding_blocks_unless_the_audit_disputes_it():
+    cited = [finding(evidence=["FD-0002"])]
+    assert audit.analysis_blocking([entry("FD-0001", "upheld")], cited, DATA) == [
+        "FD-0001",
+        "FD-0002",
+    ]
+    assert audit.analysis_blocking([entry("FD-0001"), entry("FD-0002")], cited, DATA) == []
+
+
+OVERALL = [
+    # (an answer was accepted, audit findings block, analysis findings block, assessed axes)
+    (False, False, False, 8, "failed"),
+    (True, True, False, 8, "blocked"),
+    (True, False, True, 8, "blocked"),
+    (True, False, True, 0, "blocked"),
+    (True, False, False, 0, "not_assessed"),
+    (True, False, False, 1, "passed"),
+]
+
+
+@pytest.mark.parametrize(("accepted", "own", "analysis", "assessed", "expected"), OVERALL)
+def test_the_audit_status_follows_one_rule(accepted, own, analysis, assessed, expected):
+    names = list(audit.AXES)
+    axes = {
+        name: {"status": "pass" if index < assessed else "not_assessed", "finding_ids": []}
+        for index, name in enumerate(names)
+    }
+    status = audit.overall(accepted, ["F1"] if own else [], ["FD-0001"] if analysis else [], axes)
+    assert status == expected
+
+
 # Schemas -----------------------------------------------------------------------------------
 
 _LOOSE = {"description", "maxLength", "maxItems", "title"}
@@ -286,24 +363,32 @@ def test_the_model_schema_is_self_contained_and_holds_the_same_finding():
         ours, ours["properties"]["findings"]["items"]
     )
     # Nothing in the model's answer can carry a status, a score or a verdict.
-    assert set(model["properties"]) == {"findings", "limitations", "not_assessed"}
+    assert set(model["properties"]) == {"findings", "limitations", "not_assessed", "reviewed"}
+    verdicts = model["properties"]["reviewed"]["items"]["properties"]["verdict"]["enum"]
+    assert verdicts == ["upheld", "disputed"]  # the auditor's view of a finding, not a pass
     assert model["additionalProperties"] is False
 
 
 def test_an_answer_with_a_verdict_breaks_the_model_schema():
-    answer = {"findings": [], "limitations": [], "not_assessed": [], "verdict": "pass"}
+    answer = {
+        "findings": [],
+        "limitations": [],
+        "not_assessed": [],
+        "reviewed": [],
+        "verdict": "pass",
+    }
     assert records.violations("llm-spec-audit", answer)
-    scored = {"findings": [finding(score=0.9)], "limitations": [], "not_assessed": []}
+    scored = {
+        "findings": [finding(score=0.9)],
+        "limitations": [],
+        "not_assessed": [],
+        "reviewed": [],
+    }
     assert records.violations("llm-spec-audit", scored)
 
 
 def test_the_impact_report_audit_is_the_view_with_every_axis():
-    view = {
-        "ref": None,
-        "status": "not_run",
-        "axes": audit.axes([], set(), set(), completed=False),
-        "blocking": [],
-    }
+    view = audit.view(None, "not_run")
     assert records.violations("spec-audit", view, "report_view") == []
     partial = copy.deepcopy(view)
     partial["axes"].pop("operability")
@@ -311,6 +396,13 @@ def test_the_impact_report_audit_is_the_view_with_every_axis():
     scored = copy.deepcopy(view)
     scored["axes"]["coverage"]["score"] = 3
     assert records.violations("spec-audit", scored, "report_view")
+
+
+def test_the_report_view_names_the_backend_and_the_model_and_keeps_limitations():
+    view = audit.view(None, "not_run")
+    assert view["backend"] is None and view["model"] is None and view["limitations"] == []
+    assert list(view)[list(view).index("axes") + 1] == "limitations"
+    assert "not_assessed" in records.schema("spec-audit")["properties"]["status"]["enum"]
 
 
 def test_the_call_record_knows_the_audit_stage():
