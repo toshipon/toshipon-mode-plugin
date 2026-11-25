@@ -59,10 +59,10 @@ def test_the_review_learning_evaluation_runs_end_to_end(tmp_path, home, clock):
         assert record["artifact"]["content_sha256"] == records.sha256(
             (folder / "body.md").read_bytes()
         )
-    made = [
+    built = [
         json.loads((f / "candidate.json").read_text()) for f in (directory / "candidates").iterdir()
     ]
-    (timeout,) = [record for record in made if record["problem"] == TIMEOUT_FINDING]
+    (timeout,) = [record for record in built if record["problem"] == TIMEOUT_FINDING]
     assert timeout["untrusted_included"] is True
     assert {"imperative_to_agent", "url"} <= {item["kind"] for item in timeout["lint"]}
     stages = [row["stage"] for row in read_jsonl(directory / llm.CALLS_FILE)]
