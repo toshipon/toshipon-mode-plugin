@@ -29,7 +29,7 @@ exit code は 0 成功、1 不完全または品質 gate の不合格、2 入力
 
 ## 手順
 
-1. 対象リポジトリに限定した読み取り専用の fine-grained PAT を、利用者が環境変数に入れる。agent はトークンの値を読まない、表示しない、ファイルに書かない。変数名だけを `--auth-env` に渡す。
+1. PAT は作らない。利用者が `gh auth token` の出力を環境変数に入れる（例: `export REVIEW_READ_TOKEN="$(gh auth token)"`）。agent はトークンの値を読まない、表示しない、ファイルに書かない。変数名だけを `--auth-env` に渡す。
 2. `review collect` を実行し、標準出力の JSON から `run_id` と `status` を読む。`partial` なら `collect.json` の `missing` と `stopped` を利用者に示す。欠落を推測で埋めない。
 3. `review normalize --run <run_id>` を実行する。`threads.jsonl` の `missing` は、取得元が値を返さなかったフィールドの一覧であり、既定値で埋めていない。後段はこれを「不明」として扱う。
 4. 期間内の PR が 0 件でも collect と normalize は成功し、thread は 0 件になる。評価できるかどうかの判断は後段が行う。

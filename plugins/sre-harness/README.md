@@ -147,14 +147,14 @@ exit code の意味はすべての段で同じです。
 ### 読み取り専用の境界
 
 - GitHub への書き込み、push、merge、クラウドの変更は行いません。REST は GET だけ、GraphQL は同梱した query だけ、git は harness 専用の bare リポジトリへの fetch と object の読み取りだけです。
-- 利用者の checkout、git の設定、credential helper、`gh auth login` の認証情報は使いません。
+- 利用者の checkout、git の設定、credential helper は使いません。`gh auth login` の認証情報も harness 自身は読みに行きません。トークンは利用者が `gh auth token` で取り出し、`--auth-env` で明示して渡します。
 - 実行データと生成物をリポジトリの中に書きません。保存先が git の作業ツリーの中にあると、exit 3 で止まります。
 
 読み取り専用は、許可リストとテストで担保しています。
 
 | 層 | 内容 | 検査 |
 |---|---|---|
-| トークン | 本来の境界です。対象リポジトリに限定した fine-grained PAT（Contents: read、Pull requests: read、Metadata: read）を推奨します。書き込めるトークンを渡した場合、防御は下の層だけになります | 利用者の責任 |
+| トークン | PAT は作らず、`gh auth login` 済みのトークン（`gh auth token`）を渡す前提です。このトークンは `repo` などの書き込み scope を持つので、書き込みを防ぐのは下の層です | 利用者の責任（渡す変数は harness を実行するシェルの中だけで設定します） |
 | 子プロセス | プロセスを起動できるのは `runtime/sre_harness/guard.py` だけです | `tests/invariants/test_boundaries.py` が AST で検査 |
 | REST | `gh api --method GET` を固定の argv で呼びます。endpoint は `guard.REST_ENDPOINTS` の雛形だけです | `tests/unit/test_guard.py` の表 |
 | GraphQL | `runtime/sre_harness/github/queries/*.graphql` を POST します。query を入力から組み立てません。server が返した cursor は変数として渡し、guard が形式を検査します | 同上 |
@@ -177,10 +177,10 @@ run にはレビュー本文、diff、文書の section が入ります。消す
 
 ### 認証
 
-GitHub を読む段は `--auth-env <環境変数名>` が必須で、既定値はありません（合成データでは代わりに `--fixture` を使います）。その変数が空なら、通信せずに exit 2 で止まります。
+GitHub を読む段は `--auth-env <環境変数名>` が必須で、既定値はありません（合成データでは代わりに `--fixture` を使います）。その変数が空なら、通信せずに exit 2 で止まります。PAT は作らず、`gh auth token` の出力をその変数に入れます。harness は gh の設定ディレクトリを読まないので、トークンは利用者が明示して渡します。
 
 ```bash
-export REVIEW_READ_TOKEN=...   # 読み取り専用の fine-grained PAT
+export REVIEW_READ_TOKEN="$(gh auth token)"   # gh auth login 済みのトークン。PAT は作らない
 ```
 
 渡した値は、`gh` には `GH_TOKEN` として、`git` には環境変数経由の設定として渡ります。argv、remote の URL、リポジトリの config、ログ、run ディレクトリには書きません。`gh` には空の設定ディレクトリを、`git` には空の global / system 設定を見せます。子プロセスの stderr は保存しません。
@@ -299,7 +299,7 @@ toshipon-mode plugin の Autonomous Improvement Harness v2（`plugins/toshipon-m
 未検証のこと:
 
 - 実際の GitHub に対する `review collect`、`spec ingest` の GitHub の PR、`spec analyze` と `spec check-patch` の fetch。テストは合成応答、`gh` の起動を差し替えた経路、ローカルの合成リポジトリからの fetch だけを通ります。`gh api graphql -i` の出力形式、git に環境変数経由でトークンを渡して private リポジトリの `refs/pull/<n>/head` を fetch できるか、fork が削除された PR の ref がどう見えるかも確かめていません。
-- fine-grained PAT で GraphQL の `reviewThreads.isResolved` を読めるか。読めない場合は `missing[]` に入り、処理は続きます。
+- `gh auth token` のトークンで、review thread のあるリポジトリから GraphQL の `reviewThreads.isResolved` を読めるか（thread が 0 件のリポジトリでの照会だけを確かめています）。読めない場合は `missing[]` に入り、処理は続きます。
 - secondary rate limit の実際の応答（403 / 429 と `retry-after`）。合成の応答は公式資料の記述に基づく形です。
 - `--auth-mode api-key`。`--bare` で起動したときの envelope の形と `costBasis` の値は確かめていません。
 - 上の 1 回の `review analyze` 以外の、本物の Claude に対する実行: `review classify`、`review generate`、`review evaluate` の judge（`review-eval-judge`）、`spec extract`、`spec analyze --backend claude`、`spec audit`。これらはテストで stub と `guard._run` を差し替えた経路だけを通ります。lesson、候補、推定、推定リンクと説明文、監査の質（見落とし、誤った指摘、severity の妥当性）は何も確かめていません。`spec audit` の再試行で答えが良くなるかも確かめていません。
@@ -320,7 +320,7 @@ toshipon-mode plugin の Autonomous Improvement Harness v2（`plugins/toshipon-m
 段ごとの入力・出力・失敗・権限は `skills/review-learning/SKILL.md` の表にあります。
 
 ```bash
-export REVIEW_READ_TOKEN=...   # 読み取り専用の fine-grained PAT
+export REVIEW_READ_TOKEN="$(gh auth token)"   # gh auth login 済みのトークン。PAT は作らない
 "${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" review collect \
   --repo example-org/demo --since 2026-01-01T00:00:00Z --until 2026-03-31T23:59:59Z \
   --auth-env REVIEW_READ_TOKEN
