@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "insight-discovery/evidence.schema.json",
+  "title": "One piece of evidence, as an input adapter normalizes it. Missing fields are listed, never filled with defaults.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "source", "kind", "label", "context", "counts", "classification", "missing"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^EV-[0-9a-f]{12}$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter", "locator", "content_sha256", "retrieved_at"],
+      "properties": {
+        "adapter": { "enum": ["claude_insights", "manual", "ledger", "review"] },
+        "locator": { "description": "Where it came from, with paths and ids hashed.", "type": "string", "minLength": 1, "maxLength": 200 },
+        "content_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "retrieved_at": { "type": "string", "minLength": 1 }
+      }
+    },
+    "kind": {
+      "enum": [
+        "friction", "retry", "failure", "manual_intervention", "constraint", "review_finding",
+        "hypothesis_outcome", "unexpected_success", "user_note"
+      ]
+    },
+    "label": {
+      "description": "Identifier the deterministic signal extraction groups by. Never free text.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.:-]{1,100}$"
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_key", "domain_tag"],
+      "properties": {
+        "task_key": { "description": "Which piece of work this belongs to. Two keys mean two different tasks.", "type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,100}$" },
+        "domain_tag": { "type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,100}$" },
+        "unit": { "description": "Hashed session or record the evidence was seen in.", "type": "string", "pattern": "^[0-9a-f]{8,64}$" }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["occurrences", "sessions"],
+      "properties": {
+        "occurrences": { "type": "integer", "minimum": 1 },
+        "sessions": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "text": { "description": "Redacted body. Absent for sources that are read as structured fields only.", "type": "string", "minLength": 1, "maxLength": 4000 },
+    "classification": { "description": "Same vocabulary as the foundation's llm_policy.", "enum": ["public", "synthetic", "internal", "confidential"] },
+    "missing": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,60}$" } }
+  }
+}

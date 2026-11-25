@@ -577,3 +577,47 @@ class WorktreeIntegrityTest(EvolutionCase):
             self.assertEqual(
                 evolve.compare(self.home, hypothesis_id, self.tick())["verdict"], "propose"
             )
+
+
+class SchemaNamespaceTest(HarnessCase):
+    """A skill built on this one validates and logs through the same path with its own schemas."""
+
+    def setUp(self):
+        super().setUp()
+        self.schemas = self.tmp / "extension" / "schemas"
+        self.schemas.mkdir(parents=True)
+        entry = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "extension/entry.schema.json",
+            "type": "object",
+            "required": ["type"],
+            "properties": {"type": {"const": "noted"}},
+            "$defs": {"word": {"type": "string", "minLength": 1}},
+        }
+        (self.schemas / "entry.schema.json").write_text(json.dumps(entry), encoding="utf-8")
+        store.register_schemas("extension", self.schemas)
+        self.addCleanup(store.SCHEMA_DIRS.pop, "extension", None)
+        self.addCleanup(store._validators.clear)
+
+    def test_registered_namespace_validates_files_and_defs(self):
+        self.assertEqual(store.validate("extension:entry#word", "ok"), "ok")
+        with self.assertRaisesRegex(HarnessError, "extension:entry#word schema violation"):
+            store.validate("extension:entry#word", "")
+        # Names without a namespace still mean this skill's schemas.
+        self.assertEqual(store.validate("config", {}), {})
+
+    def test_unknown_namespace_is_refused(self):
+        with self.assertRaisesRegex(HarnessError, "unknown schema namespace"):
+            store.validate("absent:entry", {})
+
+    def test_log_checks_records_against_the_named_schema(self):
+        path = self.home / "extension" / "ledger.jsonl"
+        record = store.append_log(path, "ext", "noted", {}, self.tick(), schema="extension:entry")
+        self.assertEqual(store.read_log(path), [record])
+        with self.assertRaises(HarnessError):
+            store.append_log(path, "ext", "run_started", {}, self.tick(), schema="extension:entry")
+
+    def test_agent_transport_schema_resolves_the_namespace(self):
+        schema = agents._transport_schema("extension:entry#word")
+        self.assertEqual(schema["type"], "string")
+        self.assertNotIn("$id", agents._transport_schema("extension:entry"))
