@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:collect",
+  "title": "collect",
+  "description": "What `review collect` read: pages, gaps and rate-limit waits. partial means a page is missing or the run stopped early.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "created_at",
+    "status",
+    "repo",
+    "source",
+    "since",
+    "until",
+    "pulls",
+    "page_count",
+    "pages",
+    "missing",
+    "rate_limit"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+    "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "status": { "enum": ["complete", "partial"] },
+    "repo": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["github", "fixture"] },
+        "auth_env": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]{0,127}$" },
+        "host": { "type": "string", "minLength": 1 }
+      }
+    },
+    "since": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "until": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "pulls": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "uniqueItems": true },
+    "page_count": { "type": "integer", "minimum": 0 },
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "request", "status", "sha256", "retrieved_at"],
+        "properties": {
+          "file": { "type": "string", "pattern": "^[0-9]{4,}\\.json$" },
+          "request": { "$ref": "#/$defs/request" },
+          "status": { "type": "integer" },
+          "sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+          "retrieved_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" }
+        }
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["request", "status", "reason"],
+        "properties": {
+          "request": { "$ref": "#/$defs/request" },
+          "status": { "type": ["integer", "null"] },
+          "reason": { "type": "string", "pattern": "^[a-z0-9_]{1,40}$" },
+          "types": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "rate_limit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["waits", "waited_seconds", "max_wait_seconds", "graphql"],
+      "properties": {
+        "waits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["reason", "seconds", "at", "request"],
+            "properties": {
+              "reason": { "enum": ["primary", "secondary", "graphql"] },
+              "seconds": { "type": "integer", "minimum": 1 },
+              "at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+              "request": { "$ref": "#/$defs/request" }
+            }
+          }
+        },
+        "waited_seconds": { "type": "integer", "minimum": 0 },
+        "max_wait_seconds": { "type": "integer", "minimum": 0 },
+        "graphql": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "cost": { "type": "integer" },
+              "remaining": { "type": "integer" },
+              "reset_at": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "stopped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "message"],
+      "properties": {
+        "reason": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["rest", "graphql"] },
+        "endpoint": { "type": "string", "pattern": "^[a-z_]{1,40}$" },
+        "query": { "type": "string", "pattern": "^[a-z_]{1,64}$" },
+        "number": { "type": "integer", "minimum": 1 },
+        "page": { "type": "integer", "minimum": 1 },
+        "cursor": { "type": ["string", "null"] },
+        "thread": { "type": "string" }
+      }
+    }
+  }
+}

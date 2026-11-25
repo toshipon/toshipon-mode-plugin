@@ -235,9 +235,9 @@ def graphql_fields(variables):
 
 
 def gh_graphql(name, variables=None, *, token, host=None, env=None, timeout=60):
-    """POST one bundled query. Returns (exit code, raw stdout)."""
+    """POST one bundled query. Returns (exit code, raw stdout with the status line and headers)."""
     query = graphql_query(name)
-    arguments = ["graphql", *graphql_fields(variables), "-f", f"query={query}"]
+    arguments = ["graphql", "-i", *graphql_fields(variables), "-f", f"query={query}"]
     return _gh(arguments, token, host, env, timeout)
 
 

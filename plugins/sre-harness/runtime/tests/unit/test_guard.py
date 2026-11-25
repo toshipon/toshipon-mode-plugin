@@ -180,9 +180,9 @@ def test_graphql_posts_a_bundled_query_with_variables(calls, queries):
         token=TOKEN,
     )
     argv = calls[0].argv
-    assert argv[:3] == ["/usr/bin/gh", "api", "graphql"]
+    assert argv[:4] == ["/usr/bin/gh", "api", "graphql", "-i"]  # -i: status line and headers
     assert "--method" not in argv  # GraphQL must be a POST; GET returns the whole schema
-    assert argv[3:11] == [
+    assert argv[4:12] == [
         "-f",
         "cursor=Y3Vyc29yOjEw",
         "-f",
@@ -192,7 +192,7 @@ def test_graphql_posts_a_bundled_query_with_variables(calls, queries):
         "-f",
         "owner=example-org",
     ]
-    assert argv[11] == "-f" and argv[12].startswith("query=# review threads")
+    assert argv[12] == "-f" and argv[13].startswith("query=# review threads")
 
 
 @pytest.mark.parametrize("name", ["resolve", "sneaky", "missing", "../threads", "Threads", ""])

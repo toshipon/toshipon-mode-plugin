@@ -1,0 +1,57 @@
+# Review threads of one pull request, one page of threads per call. Read-only.
+# Comments beyond the first page of a thread are read with thread_comments.graphql.
+query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  rateLimit {
+    cost
+    remaining
+    resetAt
+  }
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 50, after: $cursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          isResolved
+          isOutdated
+          path
+          line
+          originalLine
+          resolvedBy {
+            login
+            __typename
+          }
+          comments(first: 50) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+            nodes {
+              id
+              databaseId
+              body
+              createdAt
+              authorAssociation
+              author {
+                login
+                __typename
+              }
+              replyTo {
+                id
+              }
+              originalCommit {
+                oid
+              }
+              commit {
+                oid
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
