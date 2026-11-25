@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
+from examples.synthetic.github_responses import THIRTY_EVALUATION as THIRTY
 from examples.synthetic.github_responses import TIMEOUT_FINDING, evaluation_scenario
 from sre_harness import guard, records
 from sre_harness.review import candidates, evaluate
@@ -25,8 +26,6 @@ REPO = Path(__file__).resolve().parents[5]
 V2_SCHEMA = (
     REPO / "plugins/toshipon-mode/skills/autonomous-improvement/schemas/evaluation.schema.json"
 )
-THIRTY = ("reproduced",) * 12 + ("timeout_set",) * 8 + ("stream_exception",) * 5
-THIRTY += ("missed",) * 3 + ("unflagged",) * 2
 
 
 def v2_output_errors(value):
