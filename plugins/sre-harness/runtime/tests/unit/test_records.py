@@ -76,3 +76,10 @@ def test_unreadable_input_is_an_input_error(tmp_path):
     ):
         with pytest.raises(InputError):
             call()
+
+
+def test_jsonl_lines_end_only_at_a_newline(tmp_path):
+    # json.dumps(ensure_ascii=False) leaves these characters as they are, and
+    # str.splitlines() would cut a row at each of them.
+    rows = [{"body": "a b c\x85d\x0ce\x1cf"}, {"body": "next"}]
+    assert records.read_jsonl(records.write_jsonl(tmp_path / "rows.jsonl", rows)) == rows
