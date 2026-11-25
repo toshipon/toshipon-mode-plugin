@@ -28,6 +28,7 @@ from pathlib import PurePosixPath
 from .. import paths, records
 from ..errors import BoundaryError, InputError
 from . import candidates, registry
+from . import split as split_stage
 from .markdown import code_block, escape
 
 PREFIX_LENGTH = 12
@@ -208,6 +209,14 @@ def _place(root, run_dir, candidate_id):
     return entry_id, found.get(entry_id, [])
 
 
+def _generation(split_path):
+    """What the rule was learned from, so later evaluations can keep it off those PRs."""
+    if not split_path.is_file():
+        return {}
+    split = records.read_json(split_path)
+    return {"generation": {"prs": split["generation"]["prs"], "t1": split["t1"]}}
+
+
 def _version(root, run_dir, candidate_id, content, status, evaluation, decision, text, path=None):
     """Write one registry version. Every recorded value comes from body.md (`content`, the
     hash), the run (repository, lineage) or the person (decision); none from candidate.json."""
@@ -219,6 +228,7 @@ def _version(root, run_dir, candidate_id, content, status, evaluation, decision,
         "artifact_file": registry.version_name(number, "md"),
     }
     collect = records.read_json(paths.child(run_dir, "collect.json"))
+    split_path = paths.child(run_dir, split_stage.FILE)
     version = {
         "schema_version": records.SCHEMA_VERSION,
         "id": entry_id,
@@ -227,6 +237,7 @@ def _version(root, run_dir, candidate_id, content, status, evaluation, decision,
         "status": status,
         "repo": collect["repo"],
         "lineage": {"run_id": run_dir.name, "candidate_id": candidate_id},
+        **_generation(split_path),
         "candidate": block,
         "evaluation": evaluation,
         "decision": decision,

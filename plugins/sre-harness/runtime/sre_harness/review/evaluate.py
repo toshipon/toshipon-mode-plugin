@@ -6,7 +6,8 @@
    thread's `diff_hunk` (the code the reviewer saw, before the fix). Files no thread touched
    contribute the hunks of their patch. A unit's id is a hash of PR, path and hunk.
 3. Rules: approved registry entries of this repository (the baseline) and this run's
-   candidates. Declarative checks run in the interpreter (`apply_rules`); prose rules are
+   candidates. A baseline rule learned from any of this split's evaluation PRs, or approved
+   without a record of its generation side, is left out (`excluded_baseline_rules`). Declarative checks run in the interpreter (`apply_rules`); prose rules are
    applied by `review-eval-judge` (a backend; `stub` is fixed rules). The judge only says which
    hunks a rule flags: labels, metrics and status are computed here.
 4. Labels per hunk and rule (`metrics`), adjudication applied, then counts, metrics and PR-level
@@ -72,6 +73,26 @@ def check_holdout(run_dir, split):
             f"lessons.jsonl refers to evaluation PR(s) {referenced}; generation must not see the "
             "evaluation side."
         )
+
+
+def holdout_baseline(rules, split):
+    """(rules kept, rules left out with the reason). A rule must not be scored on its sources."""
+    evaluation_prs = set(split["evaluation"]["prs"])
+    kept, excluded = [], []
+    for rule in rules:
+        left_out = {"id": rule["id"], "content_sha256": rule["content_sha256"]}
+        generation = rule.get("generation")
+        if generation is None:
+            excluded.append({**left_out, "reason": "no_generation_record"})
+            continue
+        overlap = sorted(set(generation["prs"]) & evaluation_prs)
+        if overlap:
+            excluded.append(
+                {**left_out, "reason": "generated_from_evaluation_prs", "overlapping_prs": overlap}
+            )
+            continue
+        kept.append(rule)
+    return kept, excluded
 
 
 # Units ------------------------------------------------------------------------------------
@@ -343,7 +364,7 @@ def evaluate(run_dir, root, split, session, adjudication_path=None, thresholds=N
     check_holdout(run_dir, split)
     verdicts, adjudication_sha = load_adjudication(adjudication_path, split)
     units, threads, unplaced = build_units(run_dir, split)
-    baseline = registry.active_rules(root, collect["repo"])
+    baseline, excluded = holdout_baseline(registry.active_rules(root, collect["repo"]), split)
     proposed, failures, records_by_id = _candidate_rules(run_dir, now)
     rules = baseline + proposed
 
@@ -430,6 +451,7 @@ def evaluate(run_dir, root, split, session, adjudication_path=None, thresholds=N
         "baseline_rules": [
             {"id": rule["id"], "content_sha256": rule["content_sha256"]} for rule in baseline
         ],
+        "excluded_baseline_rules": excluded,
         "failures": [{"rule_id": key, "reason": value} for key, value in sorted(failures.items())],
         "units": [
             {key: unit[key] for key in ("id", "pr", "path", "hunk_sha256", "source", "thread_ids")}
@@ -542,6 +564,13 @@ def report(evaluation, records_by_id):
             f"| {entry['id']} | {entry['version']} | {entry['form']} | {entry['status']} | "
             f"{entry['findings']} | {len(record['lint'])} | {escape(record['title'], 120)} |"
         )
+    if evaluation["excluded_baseline_rules"]:
+        lines += ["", "## Approved rules left out of the baseline", ""]
+        lines += [
+            f"- {item['id']}: {item['reason']}"
+            + (f" (PRs {item['overlapping_prs']})" if "overlapping_prs" in item else "")
+            for item in evaluation["excluded_baseline_rules"]
+        ]
     if evaluation["failures"]:
         lines += ["", "## Rules that could not be applied", ""]
         lines += [

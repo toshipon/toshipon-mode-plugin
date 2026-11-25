@@ -149,7 +149,7 @@ $H review approve --run run-... --candidate IC-0001 --reviewer alice --reason ".
 ### 評価（evaluate）
 
 - 単位は「hunk × 指摘の種類（ルール）」です。評価用 PR の修正前のコードを使います。thread が付いた hunk は thread の `diff_hunk`（レビュアーが見た時点の hunk）、thread のないファイルは PR の patch の hunk です。
-- ルールは registry の承認済み（このリポジトリ、最新版が approved）を「既存ルール」とし、この run の候補を足して比べます。`with_candidates`（既存 + 全候補）、`baseline`（既存だけ）、候補ごと（既存 + その候補）の 3 種を出します。既存ルールの Markdown（`--existing-rules`）は実行できる形でないので、比較の基準には入りません。
+- ルールは registry の承認済み（このリポジトリ、最新版が approved）を「既存ルール」とし、この run の候補を足して比べます。承認時に registry へ、そのルールを作った run の生成側 PR の番号と `t1`（`generation`）を記録します。生成側 PR が今回の評価用 PR と 1 件でも重なる既存ルールは、自分の生成元で採点されることになるので基準から外し、`evaluation.json` の `excluded_baseline_rules` に理由（`generated_from_evaluation_prs` と重なった PR）を残します。`generation` の記録が無い entry（この記録を始める前に承認したもの）も、生成元が分からないので外します（理由 `no_generation_record`）。`with_candidates`（既存 + 全候補）、`baseline`（既存だけ）、候補ごと（既存 + その候補）の 3 種を出します。既存ルールの Markdown（`--existing-rules`）は実行できる形でないので、比較の基準には入りません。
 - ラベル: thread の最初のコメントがルールの title（`body.md` の見出し）と語を共有する（共有語が min(3, n) 以上かつ title の語の半分以上）とき、その thread はその種類の指摘とみなします。修正が見つかれば `human_flagged`、`fix.status = ambiguous` なら `ambiguous`（正解から外す）、修正がなければ `disputed`（指標から外し件数を出す）、指摘がなく adjudication が valid なら `human_missed_valid`、それ以外は `clean` です。
 - 指標: `precision_lower`（下限。人が確認していない指摘をすべて誤りと数える）、`precision_confirmed`（確認後。レビュアーが指摘したものと adjudication 済みのものだけ）、`recall`、`f1`（下限の precision と recall から）、`false_positive_rate`（clean なセルに出た指摘 / clean なセル数）。分母が 0 の指標は数値を出さず `undefined` です。
 - 95% 区間は評価用 PR を単位にした bootstrap（同じ PR の hunk は独立でないため）で、seed（既定 20260127）と回数（既定 1,000）を `evaluation.json` の `criteria.thresholds` に記録します。n を併記します。
