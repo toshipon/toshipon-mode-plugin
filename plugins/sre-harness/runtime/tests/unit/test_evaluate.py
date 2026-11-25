@@ -228,8 +228,10 @@ def test_the_v2_check_would_catch_a_wrong_shape():
     assert v2_output_errors({"metrics": {}, "unevaluable": ""})
 
 
-def test_an_edited_artifact_is_a_new_version_and_is_evaluated_as_such(three, home):
-    run_id, split_path, first = three
+def test_an_edited_artifact_is_a_new_version_and_is_evaluated_as_such(tmp_path, home, clock):
+    # Thirty evaluation PRs, so the result is `evaluated` and candidates move to evaluated.
+    run_id, split_path = generated_run(tmp_path, home, evaluation_scenario(THIRTY))
+    assert evaluate_cli(home, run_id, split_path)[0] == 0
     directory = run_dir(home, run_id)
     body = directory / "candidates" / "IC-0001" / "body.md"
     body.write_text(body.read_text().replace("client\\\\.get\\\\(", "client\\\\.(?:get|post)\\\\("))

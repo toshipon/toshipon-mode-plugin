@@ -12,7 +12,9 @@ instruction, so it is held to a terminal:
 - Only body.md, which the hash covers, defines what is recorded. A candidate.json whose form,
   title or check disagree with it is refused (exit 3).
 - The person types the first PREFIX_LENGTH characters of the artifact's SHA-256.
-- The candidate must have been evaluated with exactly that hash (exit 3 otherwise).
+- The candidate must have been evaluated with exactly that hash, and the evaluation must have
+  status `evaluated`: an `unevaluable` one (fewer than 30 evaluation PRs) approves nothing
+  (exit 3 otherwise).
 
 Activation stops at the registry record and, when asked, a Unified Diff that adds the artifact
 to a path the person names in their repository. The harness never writes into a work tree and
@@ -77,6 +79,11 @@ def evaluated(run_dir, record, text):
     if not path.is_file():
         raise BoundaryError(f"{record['id']} has not been evaluated; run `review evaluate` first.")
     evaluation = records.validate("review-evaluation", records.read_json(path))
+    if evaluation["status"] != "evaluated":
+        raise BoundaryError(
+            f"the evaluation is {evaluation['status']} ({evaluation['unevaluable_reason']}); "
+            "nothing can be approved on it. Split a period with enough evaluation PRs."
+        )
     entry = next(
         (
             item

@@ -13,7 +13,9 @@
    bootstrap for the baseline, baseline + all candidates, and baseline + each candidate.
    With fewer than `min_prs` evaluation PRs no metric value is given (`unevaluable`).
 5. `evaluation.json`, `evaluation.md`; evaluated candidates move to `evaluated` with the
-   criteria hash. A body edited since generate becomes a new version first.
+   criteria hash. A body edited since generate becomes a new version first. When the result is
+   `unevaluable`, candidates stay (or go back to) `proposed`, without a criteria hash, and the
+   history entry notes why; such a candidate cannot be approved.
 """
 
 import time
@@ -457,10 +459,15 @@ def evaluate(run_dir, root, split, session, adjudication_path=None, thresholds=N
     paths.write_private(paths.child(run_dir, "evaluation.md"), report(evaluation, records_by_id))
 
     for candidate_id, (record, _) in records_by_id.items():
-        if candidate_id not in failures:
+        if candidate_id in failures:
+            pass
+        elif status == "evaluated":
             record["evaluation_ref"] = "evaluation.json"
             record["criteria_hash"] = criteria_hash
             candidates.transition(record, "evaluated", "evaluate", now)
+        else:
+            record["evaluation_ref"] = record["criteria_hash"] = None
+            candidates.transition(record, "proposed", "evaluate", now, f"unevaluable: {reason}")
         candidates.save(run_dir, record)
     return evaluation
 
