@@ -24,7 +24,7 @@ exit code は 0 成功、1 不完全または品質 gate の不合格、2 入力
 ## 手順
 
 1. 利用者に manifest を書いてもらう（README の例）。manifest のあるディレクトリが基準ディレクトリで、その外は読めない。Slack と Confluence は API ではなく、利用者が保存した export ファイルを渡す。
-2. manifest に GitHub の PR があるときは、読み取り専用の fine-grained PAT を利用者が環境変数に入れる。agent はトークンの値を読まない、表示しない、ファイルに書かない。変数名だけを `--auth-env` に渡す。
+2. manifest に GitHub の PR があるときは、PAT は作らず、利用者が `gh auth token` の出力を環境変数に入れる（例: `export SPEC_READ_TOKEN="$(gh auth token)"`）。agent はトークンの値を読まない、表示しない、ファイルに書かない。変数名だけを `--auth-env` に渡す。
 3. `spec ingest` を実行し、標準出力の JSON から `run_id` と `status` を読む。`partial`（exit 1）なら `ingest.json` の `input_missing` を利用者に示す。欠けたファイルの中身を推測で補わない。読めた分だけで抽出に進むかは利用者が決める。
 4. `spec extract` の backend は利用者が選ぶ。`claude` は文書の全 section を Anthropic に送るので、送ってよい文書かを利用者に確かめ、社名などの禁止語を `--deny-terms-file`（リポジトリの外のファイル）で渡してもらう。`--max-run-budget-usd` は利用者が決める。agent が既定値を作らない。
 5. `decisions.json` の `status`、`superseded_by`、`active` は harness が規則で決めた値で、LLM の判断ではない。原文の状態は `stated_status`、食い違いの理由は `issues` にある。状態を手で書き換えない。直すときは原文の ADR を直して取り込み直す。
