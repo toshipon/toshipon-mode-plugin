@@ -56,3 +56,57 @@ def decision(number, status="approved", supersedes=(), approvers=None, basis="ex
     }
     value.update(extra)
     return value
+
+
+# analyze and report ------------------------------------------------------------------------
+
+REPO_ARGS = ["--repo", "example-org/demo"]
+
+
+def analyze(env, run_id, scenario, *extra):
+    argv = ["spec", "analyze", "--run", run_id, "--prs", "open", *REPO_ARGS]
+    argv += ["--fixture", str(scenario.fixture), "--git-source", str(scenario.source), *extra]
+    return run_cli(argv, env)
+
+
+def report(env, run_id, *extra):
+    return run_cli(["spec", "report", "--run", run_id, *extra], env)
+
+
+def extracted(env, scenario):
+    """ingest and extract (stub) the scenario's workspace. Returns the run id."""
+    run_id = ingested(env, scenario.manifest)
+    code, result = extract(env, run_id)
+    assert code == 0, result
+    return run_id
+
+
+def analyzed(env, scenario, *extra, expect=0):
+    run_id = extracted(env, scenario)
+    code, summary = analyze(env, run_id, scenario, *extra)
+    assert code == expect, summary
+    return run_id, summary, read(env, run_id, "findings.json")
+
+
+def by_kind(found, kind, with_prs=None):
+    """Findings of one kind; with_prs=True keeps those that name a PR, False those that do not."""
+    items = [item for item in found["findings"] if item["kind"] == kind]
+    if with_prs is None:
+        return items
+    return [item for item in items if bool(item["prs"]) is with_prs]
+
+
+def counting_git(monkeypatch):
+    """Count the processes guard starts, and the `git diff <base> <head>` among them."""
+    import subprocess
+
+    from sre_harness import guard
+
+    seen = []
+
+    def run(argv, **options):
+        seen.append(list(argv))
+        return subprocess.run(argv, **options)
+
+    monkeypatch.setattr(guard, "_run", run)
+    return seen

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:llm-spec-analyze",
+  "title": "llm-spec-analyze",
+  "description": "What the backend returns to `spec analyze`: inferred trace links for documents that name no id, or explanation text for semantic-conflict candidates the harness found. The harness checks every link (the path was sent, the quote is in it, the target exists) and never takes a finding, a severity or a state from this answer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["links", "explanations"],
+  "properties": {
+    "links": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "to", "relation", "quote"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "to": { "type": "string", "pattern": "^(REQ|DEC|RQI|DCI)-[0-9]{4,}$" },
+          "relation": { "enum": ["refines", "implements", "verifies", "depends_on", "conflicts_with"] },
+          "quote": { "type": "string", "minLength": 8, "maxLength": 300 }
+        }
+      }
+    },
+    "explanations": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "text"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^C[0-9]{1,4}$" },
+          "text": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        }
+      }
+    }
+  }
+}

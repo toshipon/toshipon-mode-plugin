@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:trace-link",
+  "title": "trace-link",
+  "description": "One link of the trace Decision -> Requirement -> Design -> IaC -> Test, as an item of trace.json (`$defs/file`). Links point from the lower layer to the one it serves. explicit links come from fixed rules (ids, paths, resource addresses, test names, the registry); inferred links come from the backend and are never the only ground of a critical finding.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "run_id",
+    "created_at",
+    "from",
+    "to",
+    "relation",
+    "basis",
+    "evidence",
+    "confidence"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "id": { "type": "string", "pattern": "^TL-[0-9]{4,}$" },
+    "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+    "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "from": { "$ref": "#/$defs/node" },
+    "to": { "$ref": "#/$defs/node" },
+    "relation": { "enum": ["refines", "implements", "verifies", "depends_on", "conflicts_with"] },
+    "basis": { "$ref": "urn:sre-harness:common#/$defs/basis" },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref"],
+      "properties": {
+        "ref": {
+          "description": "<commit sha>:<path>#L<line>, requirements.json#<id>, or llm-calls.jsonl#<call id> for an inferred link.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "quote": { "type": "string", "maxLength": 300 }
+      }
+    },
+    "confidence": { "$ref": "urn:sre-harness:common#/$defs/confidence" }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "enum": ["decision", "requirement", "design", "iac", "test"] },
+        "id": {
+          "description": "A registry id (DEC-0001, REQ-0001; a written id when the registry lacks it), a path, a resource address, or <path>::<test name>.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 700
+        },
+        "sha": { "$ref": "urn:sre-harness:common#/$defs/git_sha" }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "run_id", "created_at", "default_branch", "links"],
+      "properties": {
+        "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+        "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+        "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "default_branch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "sha"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "sha": { "$ref": "urn:sre-harness:common#/$defs/git_sha" }
+          }
+        },
+        "links": { "type": "array", "items": { "$ref": "urn:sre-harness:trace-link" } }
+      }
+    }
+  }
+}
