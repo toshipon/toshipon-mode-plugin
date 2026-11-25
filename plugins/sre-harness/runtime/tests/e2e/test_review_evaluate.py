@@ -66,7 +66,8 @@ def test_the_review_learning_evaluation_runs_end_to_end(tmp_path, home, clock):
     assert timeout["untrusted_included"] is True
     assert {"imperative_to_agent", "url"} <= {item["kind"] for item in timeout["lint"]}
     stages = [row["stage"] for row in read_jsonl(directory / llm.CALLS_FILE)]
-    assert stages == ["analyze", "classify", "generate", "generate", "evaluate"]
+    # One generate call per lesson; one judge call per prose candidate (the timeout one is a check).
+    assert stages == ["analyze", "classify", *["generate"] * 4, *["evaluate"] * 3]
     assert llm.spent_usd(directory) == 0
     assert (directory / "evaluation.md").read_text().startswith("# Review evaluation")
     assert Path(made["split"]).parent == directory
