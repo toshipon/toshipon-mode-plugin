@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:llm-review-judge",
+  "title": "llm-review-judge",
+  "description": "What `review evaluate` asks review-eval-judge for: the hunks a prose rule would flag. Self-contained because the Claude CLI receives it as --json-schema. Labels, metrics and approval are not here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["flags"],
+  "properties": {
+    "flags": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule_id", "unit_id", "rationale"],
+        "properties": {
+          "rule_id": { "type": "string", "pattern": "^(?:IC|RG)-[0-9]{4,}$" },
+          "unit_id": { "type": "string", "pattern": "^HU-[0-9]{4,}$" },
+          "rationale": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        }
+      }
+    }
+  }
+}
