@@ -503,3 +503,14 @@ def test_claude_stderr_is_not_returned_and_a_timeout_is_a_quality_failure(monkey
             "P", SCHEMA, auth_mode="subscription", timeout=60, max_budget_usd=1, env=claude_env()
         )
     assert "secret noise" not in str(stopped.value)
+
+
+def test_the_subscription_login_gets_the_user_name_it_is_stored_under(tmp_path):
+    # On macOS the login sits in the keychain under the account name; without USER the CLI
+    # answers "Not logged in". Checked against the real CLI on 2026-11-25.
+    ambient = {"HOME": "/home/alice", "USER": "alice", "LOGNAME": "alice", "PATH": "/usr/bin"}
+    ambient.update(ANTHROPIC_API_KEY="unused", GH_TOKEN="ambient", AWS_PROFILE="ambient")
+    child = guard._claude_env("subscription", str(tmp_path), ambient)
+    assert child == {"HOME": "/home/alice", "USER": "alice", "LOGNAME": "alice", "PATH": "/usr/bin"}
+    with_key = guard._claude_env("api-key", str(tmp_path), ambient)
+    assert "USER" not in with_key and with_key["HOME"] == str(tmp_path)
