@@ -1,6 +1,7 @@
 """Invariants of candidates and the registry, checked over whole synthetic runs.
 
-1. Without --include-untrusted, no candidate rests only on external_only / bot_only lessons.
+1. Without --include-untrusted, no candidate rests only on external_only / bot_only lessons,
+   or on a lesson that quotes or copies an outside speaker (`untrusted_quotes`).
 2. An approved registry version names an evaluation of exactly its artifact hash, and a record
    saying otherwise does not pass the schema.
 """
@@ -29,6 +30,7 @@ def test_no_candidate_rests_only_on_untrusted_lessons_without_the_flag(
         record, _ = candidates.load(directory, candidate_id)
         trusts = {lessons[lesson]["source_trust"] for lesson in record["lesson_ids"]}
         assert not trusts <= UNTRUSTED, candidate_id
+        assert not any(lessons[lesson]["untrusted_quotes"] for lesson in record["lesson_ids"])
         assert record["untrusted_included"] is False
 
 

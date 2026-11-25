@@ -6,7 +6,11 @@ import re
 
 import pytest
 
-from examples.synthetic.github_responses import INJECTED_EXCEPTION, evaluation_scenario
+from examples.synthetic.github_responses import (
+    INJECTED_EXCEPTION,
+    TIMEOUT_FINDING,
+    evaluation_scenario,
+)
 from sre_harness import cli, paths, records
 from sre_harness.errors import BoundaryError, InputError
 from sre_harness.review import approve, candidates, registry
@@ -18,7 +22,7 @@ REASON = "Matches the team's HTTP policy."
 
 @pytest.fixture
 def evaluated(tmp_path, home, clock):
-    run_id, split_path = generated_run(tmp_path, home, evaluation_scenario(injected_exception=True))
+    run_id, split_path = generated_run(tmp_path, home, evaluation_scenario())
     assert evaluate_cli(home, run_id, split_path)[0] == 0
     return run_id, split_path
 
@@ -102,15 +106,29 @@ def test_approval_writes_version_one_and_the_screen_shows_sources_and_lint(evalu
     assert version["evaluation"]["content_sha256"] == digest(home, run_id)
     record, _ = candidates.load(run_dir(home, run_id), "IC-0001")
     assert record["status"] == "approved" and record["approval"]["registry_version"] == 1
-    # The screen: every source with its author's type and association, quotes fenced, lint.
-    assert "association none, login mallory" in screen
-    assert "```text\n" + INJECTED_EXCEPTION + "\n```" in screen
     assert "association member" in screen and "author_type user" in screen
-    assert "imperative_to_agent" in screen and "- url at" in screen
     assert "## Evaluation" in screen and "unevaluable" in screen
     folder = root(home) / "registry" / "RG-0001"
     assert sorted(p.name for p in folder.iterdir()) == ["v0001.json", "v0001.md"]
     assert oct(folder.stat().st_mode & 0o777) == "0o700"
+
+
+def test_the_screen_names_every_quoted_speaker_and_the_lint(tmp_path, home, clock):
+    fixture = evaluation_scenario(injected_exception=True)
+    run_id, split_path = generated_run(tmp_path, home, fixture, untrusted=True)
+    assert evaluate_cli(home, run_id, split_path)[0] == 0
+    directory = run_dir(home, run_id)
+    (candidate_id,) = [
+        i
+        for i in candidates.ids(directory)
+        if candidates.load(directory, i)[0]["problem"] == TIMEOUT_FINDING
+    ]
+    _, screen = decide(home, run_id, candidate_id=candidate_id)
+    assert "(admitted with --include-untrusted)" in screen
+    assert "association none, login mallory" in screen
+    assert "```text\n" + INJECTED_EXCEPTION + "\n```" in screen
+    assert "association member" in screen and "author_type user" in screen
+    assert "imperative_to_agent" in screen and "- url at" in screen
 
 
 def test_approving_the_same_content_twice_is_refused(evaluated, home):
