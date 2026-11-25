@@ -35,7 +35,7 @@ Claude Code のセッション内で実行します。
 | 子プロセス | プロセスを起動できるのは `runtime/sre_harness/guard.py` だけです | `tests/invariants/test_boundaries.py` が AST で検査 |
 | REST | `gh api --method GET` を固定の argv で呼びます。endpoint は `guard.REST_ENDPOINTS` の雛形だけです | `tests/unit/test_guard.py` の表 |
 | GraphQL | `runtime/sre_harness/github/queries/*.graphql` を POST します。query を入力から組み立てません。server が返した cursor は変数として渡し、guard が形式を検査します | 同上 |
-| git | `guard.GIT_SUBCOMMANDS` にあるサブコマンドと flag だけです。`apply` は `--cached --check` が必須です | 同上 |
+| git | `guard.GIT_SUBCOMMANDS` にあるサブコマンドと flag だけです。`apply` は `--cached --check` が必須です。index に書く `read-tree` と `apply` は、一時 index（`index_file`）を渡さなければ起動前に拒否します | 同上 |
 | Claude CLI | `guard.claude` が固定の argv で呼びます（`-p --output-format json --json-schema … --bare`（api-key）か `--safe-mode`（subscription）、`--tools ""`、`--disable-slash-commands`、`--strict-mcp-config`、空の `--mcp-config`、`--no-session-persistence`、`--max-budget-usd`）。権限を迂回する flag は付けません。cwd は空の一時ディレクトリ、prompt は stdin です | 同上 |
 
 ## Review Learning: 収集と正規化
@@ -477,8 +477,10 @@ patch の対象:
 適用の手順（harness は適用しません）:
 
 1. `impact-report.md` と `patches/<PT-id>.diff` を人が読みます。
-2. 適用する直前に `spec check-patch --run <run_id> --patch <PT-id> (--auth-env NAME | --fixture <dir> --git-source <絶対 path>)` を実行します。PR 向けなら open PR の一覧を読み直して ref を fetch し直し、default branch 向けならその ref を fetch し直して、今の head を `target_head_sha` と比べます。違えば exit 3（古い SHA への修正は出しません。`spec analyze` と `spec report` をやり直してください）。PR が open でなくなっていても exit 3 です。patch ファイルの `content_sha256` が sidecar と違う、sidecar と patch の path が違う、gate を通らないときも exit 3 です。同じなら一時 index で `git apply --cached --check` をやり直し、結果を標準出力に出します（通れば exit 0、通らなければ exit 1）。`--auth-env` の変数が空なら何も起動せず exit 2、`--patch` が `PT-0001` の形でなければ exit 3、run に無い patch は exit 2 です。
+2. 適用する直前に `spec check-patch --run <run_id> --patch <PT-id> (--auth-env NAME | --fixture <dir> --git-source <絶対 path>)` を実行します。PR 向けなら open PR の一覧を読み直して ref を fetch し直し、default branch 向けならその ref を fetch し直して、今の head を `target_head_sha` と比べます。違えば exit 3（古い SHA への修正は出しません。`spec analyze` と `spec report` をやり直してください）。fetch の前に、sidecar の `id`、`target_pr`、`target_head_sha`、`content_sha256`、`paths`、`preimage_blob_shas` が `impact-report.json` の `patches[]` の同じ id の項目と一致することも確かめ、食い違うか報告に無い patch なら exit 3 です。head が同じでも、今の head での対象ファイルの blob SHA が `preimage_blob_shas` と違えば exit 3 です。PR が open でなくなっていても exit 3 です。patch ファイルの `content_sha256` が sidecar と違う、sidecar と patch の path が違う、gate を通らないときも exit 3 です。同じなら一時 index で `git apply --cached --check` をやり直し、結果を標準出力に出します（通れば exit 0、通らなければ exit 1）。`--auth-env` の変数が空なら何も起動せず exit 2、`--patch` が `PT-0001` の形でなければ exit 3、run に無い patch は exit 2 です。
 3. 通ったら、人が自分の checkout で `git apply patches/<PT-id>.diff` を実行し、commit します。
+
+この照合が防ぐのは、古い SHA 向けの patch をうっかり当てることです。同じ利用者権限で run の中のファイル（sidecar と `impact-report.json`）を両方書き換える偽造は防げません。その場合でも、対象ファイルが変わっていれば `preimage_blob_shas` の照合で止まり、許可リストの外の path は gate で止まります。
 
 ### Claude に送るデータ（spec analyze）
 
