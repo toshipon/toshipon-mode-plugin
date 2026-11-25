@@ -282,5 +282,5 @@ python -m coverage run -m pytest && python -m coverage report
 - `--safe-mode`（subscription）で起動した Claude CLI が、利用者の hooks、plugin、`CLAUDE.md`、設定をどこまで読まないか。envelope の形は確かめましたが、隔離の範囲は実機で確かめていません。
 - 実際の GitHub に対する `review collect`。テストは合成応答と、`gh` の起動を差し替えた経路だけを通ります。`gh api graphql -i` の出力形式、secondary limit の応答（403 / 429 と `retry-after`）、fine-grained PAT で `isResolved` を読めるかは実機で確かめていません。
 - 実データでの precision / recall。合成データの数値は機構の検証で、どのルールの精度も主張しません。
-- 承認と retire の TTY 検査が、実際の端末と、TTY の無い agent の shell で期待どおりに分かれること。テストは TTY のない経路（exit 3）と、TTY の判定だけを差し替えた経路を通ります。pty を使えば通ることは、レビューの再現で確かめられています（上の「承認の制約」）。
+- 承認と retire の TTY 検査が、実際の端末と、TTY の無い agent の shell で期待どおりに分かれること。テストは TTY のない経路（exit 3）と、TTY の判定だけを差し替えた経路を通ります。一方、`os.openpty()` で起動して hash の先頭を打ち込むスクリプトが承認を通すことは、合成データで確かめています（上の「承認の制約」）。
 - `--host` に GitHub Enterprise Server を指定したときの認証。harness は `gh` に `GH_TOKEN` だけを渡します。`gh` は GHES の host では `GH_ENTERPRISE_TOKEN` を読むため、そのままでは認証されない可能性があります。GHES では実機で確かめていません。
