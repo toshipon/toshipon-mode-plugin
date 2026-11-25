@@ -390,6 +390,8 @@ def _claude_env(auth_mode, cwd, env):
         if not env.get("HOME"):
             raise InputError("--auth-mode subscription needs HOME; nothing was sent.")
         child["HOME"] = env["HOME"]
+        # The login is stored under the account name (the macOS keychain); the CLI needs it.
+        child.update({name: env[name] for name in ("USER", "LOGNAME") if env.get(name)})
     return child
 
 
