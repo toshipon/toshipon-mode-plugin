@@ -349,6 +349,28 @@ def test_the_token_is_not_offered_to_a_local_source(calls, tmp_path):
     assert not any("extraheader" in value for value in calls[0].env.values())
 
 
+def _index_commands(tmp_path):
+    patch = tmp_path / "PT-0001.diff"
+    patch.write_text("")
+    return [["read-tree", SHA], ["apply", "--cached", "--check", str(patch)]]
+
+
+def test_read_tree_and_apply_run_only_against_a_temporary_index(calls, tmp_path):
+    for arguments in _index_commands(tmp_path):
+        guard.git(tmp_path, arguments, index_file=tmp_path / "index")
+    assert [call.env["GIT_INDEX_FILE"] for call in calls] == [str(tmp_path / "index")] * 2
+
+
+@pytest.mark.parametrize("position", [0, 1], ids=["read-tree", "apply"])
+def test_read_tree_and_apply_without_an_index_file_are_refused(calls, tmp_path, position):
+    """Without GIT_INDEX_FILE they would write the bare repository's own index."""
+    arguments = _index_commands(tmp_path)[position]
+    with pytest.raises(BoundaryError) as refused:
+        guard.git(tmp_path, arguments)
+    assert refused.value.exit_code == 3
+    assert calls == []
+
+
 def test_the_repository_path_must_be_absolute(calls):
     with pytest.raises(BoundaryError):
         guard.git("relative", ["rev-parse", "--verify", SHA])
