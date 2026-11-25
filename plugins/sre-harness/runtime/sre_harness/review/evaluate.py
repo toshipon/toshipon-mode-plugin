@@ -6,14 +6,19 @@
    thread's `diff_hunk` (the code the reviewer saw, before the fix). Files no thread touched
    contribute the hunks of their patch. A unit's id is a hash of PR, path and hunk.
 3. Rules: approved registry entries of this repository (the baseline) and this run's
-   candidates. Declarative checks run in the interpreter (`apply_rules`); prose rules are
+   candidates. A baseline rule learned from any of this split's evaluation PRs, or approved
+   without a record of its generation side, is left out (`excluded_baseline_rules`). Declarative checks run in the interpreter (`apply_rules`); prose rules are
    applied by `review-eval-judge` (a backend; `stub` is fixed rules). The judge only says which
    hunks a rule flags: labels, metrics and status are computed here.
 4. Labels per hunk and rule (`metrics`), adjudication applied, then counts, metrics and PR-level
    bootstrap for the baseline, baseline + all candidates, and baseline + each candidate.
-   With fewer than `min_prs` evaluation PRs no metric value is given (`unevaluable`).
+   A PR is counted, and drawn by the bootstrap, only when it has at least one unit: with fewer
+   than `min_prs` such PRs no metric value is given (`unevaluable`). `n_prs` is the split's
+   count and `n_prs_with_units` the counted one.
 5. `evaluation.json`, `evaluation.md`; evaluated candidates move to `evaluated` with the
-   criteria hash. A body edited since generate becomes a new version first.
+   criteria hash. A body edited since generate becomes a new version first. When the result is
+   `unevaluable`, candidates stay (or go back to) `proposed`, without a criteria hash, and the
+   history entry notes why; such a candidate cannot be approved.
 """
 
 import time
@@ -68,6 +73,26 @@ def check_holdout(run_dir, split):
             f"lessons.jsonl refers to evaluation PR(s) {referenced}; generation must not see the "
             "evaluation side."
         )
+
+
+def holdout_baseline(rules, split):
+    """(rules kept, rules left out with the reason). A rule must not be scored on its sources."""
+    evaluation_prs = set(split["evaluation"]["prs"])
+    kept, excluded = [], []
+    for rule in rules:
+        left_out = {"id": rule["id"], "content_sha256": rule["content_sha256"]}
+        generation = rule.get("generation")
+        if generation is None:
+            excluded.append({**left_out, "reason": "no_generation_record"})
+            continue
+        overlap = sorted(set(generation["prs"]) & evaluation_prs)
+        if overlap:
+            excluded.append(
+                {**left_out, "reason": "generated_from_evaluation_prs", "overlapping_prs": overlap}
+            )
+            continue
+        kept.append(rule)
+    return kept, excluded
 
 
 # Units ------------------------------------------------------------------------------------
@@ -339,7 +364,7 @@ def evaluate(run_dir, root, split, session, adjudication_path=None, thresholds=N
     check_holdout(run_dir, split)
     verdicts, adjudication_sha = load_adjudication(adjudication_path, split)
     units, threads, unplaced = build_units(run_dir, split)
-    baseline = registry.active_rules(root, collect["repo"])
+    baseline, excluded = holdout_baseline(registry.active_rules(root, collect["repo"]), split)
     proposed, failures, records_by_id = _candidate_rules(run_dir, now)
     rules = baseline + proposed
 
@@ -356,7 +381,8 @@ def evaluate(run_dir, root, split, session, adjudication_path=None, thresholds=N
     base_ids = [rule["id"] for rule in baseline if rule["id"] in findings]
     candidate_ids = [rule["id"] for rule in proposed if rule["id"] in findings]
     cells, invalid = label_cells(units, threads, working, verdicts)
-    prs = sorted(split["evaluation"]["prs"])
+    prs = sorted({unit["pr"] for unit in units})  # an evaluation PR without a hunk adds nothing
+    n_split = len(split["evaluation"]["prs"])
     universe = set(base_ids + candidate_ids)
     configs = {
         "baseline": _config(base_ids, universe, cells, findings, invalid, units, prs, thresholds),
@@ -367,7 +393,10 @@ def evaluate(run_dir, root, split, session, adjudication_path=None, thresholds=N
     status, reason = "evaluated", None
     if len(prs) < thresholds["min_prs"]:
         status = "unevaluable"
-        reason = f"insufficient evaluation PRs: {len(prs)} < {thresholds['min_prs']}"
+        reason = (
+            f"insufficient evaluation PRs with hunks: {len(prs)} < {thresholds['min_prs']} "
+            f"({n_split} in the split)"
+        )
     elif not universe:
         status, reason = "unevaluable", "no rule could be applied (no candidate, no baseline)"
     criteria = {
@@ -413,7 +442,8 @@ def evaluate(run_dir, root, split, session, adjudication_path=None, thresholds=N
         "criteria": criteria,
         "split_sha256": split["sha256"],
         "adjudication_sha256": adjudication_sha,
-        "n_prs": len(prs),
+        "n_prs": n_split,
+        "n_prs_with_units": len(prs),
         "n_units": len(units),
         "labels": labels,
         "candidates": entries,
@@ -421,6 +451,7 @@ def evaluate(run_dir, root, split, session, adjudication_path=None, thresholds=N
         "baseline_rules": [
             {"id": rule["id"], "content_sha256": rule["content_sha256"]} for rule in baseline
         ],
+        "excluded_baseline_rules": excluded,
         "failures": [{"rule_id": key, "reason": value} for key, value in sorted(failures.items())],
         "units": [
             {key: unit[key] for key in ("id", "pr", "path", "hunk_sha256", "source", "thread_ids")}
@@ -457,10 +488,15 @@ def evaluate(run_dir, root, split, session, adjudication_path=None, thresholds=N
     paths.write_private(paths.child(run_dir, "evaluation.md"), report(evaluation, records_by_id))
 
     for candidate_id, (record, _) in records_by_id.items():
-        if candidate_id not in failures:
+        if candidate_id in failures:
+            pass
+        elif status == "evaluated":
             record["evaluation_ref"] = "evaluation.json"
             record["criteria_hash"] = criteria_hash
             candidates.transition(record, "evaluated", "evaluate", now)
+        else:
+            record["evaluation_ref"] = record["criteria_hash"] = None
+            candidates.transition(record, "proposed", "evaluate", now, f"unevaluable: {reason}")
         candidates.save(run_dir, record)
     return evaluation
 
@@ -489,8 +525,8 @@ def report(evaluation, records_by_id):
             else ""
         ),
         f"- criteria_hash: `{evaluation['criteria_hash']}`",
-        f"- split: `{evaluation['split_sha256']}`; evaluation PRs (n): {evaluation['n_prs']}; "
-        f"hunks: {evaluation['n_units']}",
+        f"- split: `{evaluation['split_sha256']}`; evaluation PRs: {evaluation['n_prs']}; "
+        f"with hunks (n): {evaluation['n_prs_with_units']}; hunks: {evaluation['n_units']}",
         "- precision_lower counts every finding no person confirmed as wrong; "
         "precision_confirmed uses only findings a reviewer raised or a person adjudicated.",
         "- Intervals are 95% percentile intervals from resampling evaluation PRs "
@@ -528,6 +564,13 @@ def report(evaluation, records_by_id):
             f"| {entry['id']} | {entry['version']} | {entry['form']} | {entry['status']} | "
             f"{entry['findings']} | {len(record['lint'])} | {escape(record['title'], 120)} |"
         )
+    if evaluation["excluded_baseline_rules"]:
+        lines += ["", "## Approved rules left out of the baseline", ""]
+        lines += [
+            f"- {item['id']}: {item['reason']}"
+            + (f" (PRs {item['overlapping_prs']})" if "overlapping_prs" in item else "")
+            for item in evaluation["excluded_baseline_rules"]
+        ]
     if evaluation["failures"]:
         lines += ["", "## Rules that could not be applied", ""]
         lines += [
@@ -561,7 +604,8 @@ def evaluator_output(evaluation):
             *evaluation["evidence"],
         ],
         "notes": (
-            f"sre-harness review evaluate; n={evaluation['n_prs']} evaluation PRs, "
+            f"sre-harness review evaluate; n={evaluation['n_prs_with_units']} evaluation PRs "
+            f"with hunks ({evaluation['n_prs']} in the split), "
             f"{evaluation['n_units']} hunks; metrics without a prefix are baseline + candidates."
         ),
     }
@@ -581,7 +625,7 @@ def evaluator_output(evaluation):
             output["metrics"][prefix + name] = {
                 "value": metric["value"],
                 "rationale": (
-                    f"{metrics.METRICS[name]}; n={evaluation['n_prs']} PRs; 95% CI "
+                    f"{metrics.METRICS[name]}; n={evaluation['n_prs_with_units']} PRs; 95% CI "
                     f"{metric['ci95']} by PR bootstrap (seed {thresholds['seed']}, "
                     f"{thresholds['resamples']} resamples)"
                 ),
@@ -598,6 +642,7 @@ def summary(evaluation):
         "unevaluable_reason": evaluation["unevaluable_reason"],
         "criteria_hash": evaluation["criteria_hash"],
         "n_prs": evaluation["n_prs"],
+        "n_prs_with_units": evaluation["n_prs_with_units"],
         "n_units": evaluation["n_units"],
         "labels": evaluation["labels"],
         "candidates": [

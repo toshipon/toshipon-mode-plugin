@@ -132,7 +132,7 @@
         "required": ["ref", "quote"],
         "properties": {
           "ref": { "type": "string", "pattern": "^DOC-[0-9]{4,}#S[0-9]{1,6}$" },
-          "quote": { "type": "string", "minLength": 1, "maxLength": 2000 }
+          "quote": { "type": "string", "minLength": 8, "maxLength": 2000 }
         }
       }
     }

@@ -294,6 +294,18 @@ REFUSED_GIT = [
     ["rev-parse", "--git-dir"],
     ["read-tree", "-u", SHA],
     ["merge-base", "--fork-point", SHA],
+    ["rev-parse", "--verify", "refs/sre-harness/a..b"],
+    ["rev-parse", "--verify", "refs/sre-harness/a/../../x"],
+    ["rev-parse", "--verify", "refs/sre-harness/a//b"],
+    ["rev-parse", "--verify", "refs/sre-harness/a/"],
+    ["rev-parse", "--verify", "refs/sre-harness/pull/7.lock"],
+    ["rev-parse", "--verify", "refs/sre-harness/pull/.7"],
+    ["rev-parse", "--verify", "refs/sre-harness/a@{1}"],
+    ["fetch", "https://github.com/example-org/demo.git", "+refs/heads/a..b:refs/sre-harness/a"],
+    ["fetch", "https://github.com/example-org/demo.git", "+refs/heads/a:refs/sre-harness/../x"],
+    ["fetch", "https://github.com/example-org/demo.git", "+refs/heads/a:refs/sre-harness/a.lock"],
+    ["fetch", "https://github.com/example-org/demo.git", "+refs/heads/.a:refs/sre-harness/a"],
+    ["fetch", "https://github.com/example-org/demo.git", "+refs/heads/a//b:refs/sre-harness/a"],
 ]
 
 
@@ -347,6 +359,28 @@ def test_the_token_is_not_offered_to_a_local_source(calls, tmp_path):
         token=TOKEN,
     )
     assert not any("extraheader" in value for value in calls[0].env.values())
+
+
+def _index_commands(tmp_path):
+    patch = tmp_path / "PT-0001.diff"
+    patch.write_text("")
+    return [["read-tree", SHA], ["apply", "--cached", "--check", str(patch)]]
+
+
+def test_read_tree_and_apply_run_only_against_a_temporary_index(calls, tmp_path):
+    for arguments in _index_commands(tmp_path):
+        guard.git(tmp_path, arguments, index_file=tmp_path / "index")
+    assert [call.env["GIT_INDEX_FILE"] for call in calls] == [str(tmp_path / "index")] * 2
+
+
+@pytest.mark.parametrize("position", [0, 1], ids=["read-tree", "apply"])
+def test_read_tree_and_apply_without_an_index_file_are_refused(calls, tmp_path, position):
+    """Without GIT_INDEX_FILE they would write the bare repository's own index."""
+    arguments = _index_commands(tmp_path)[position]
+    with pytest.raises(BoundaryError) as refused:
+        guard.git(tmp_path, arguments)
+    assert refused.value.exit_code == 3
+    assert calls == []
 
 
 def test_the_repository_path_must_be_absolute(calls):
@@ -593,6 +627,48 @@ def test_a_worker_answer_out_of_shape_is_a_quality_failure(monkeypatch, returnco
     )
     with pytest.raises(QualityGateError):
         guard.regex_search(["a"], ["a"], timeout=5)
+
+
+REMOTE_HOSTS = [
+    # (host passed to guard.git, remote URL, host that receives the token)
+    (None, "https://github.com/example-org/demo.git", "github.com"),
+    ("github.com", "https://github.com/example-org/demo.git", "github.com"),
+    ("ghe.example", "https://ghe.example/example-org/demo.git", "ghe.example"),
+]
+
+REFUSED_REMOTE_HOSTS = [
+    (None, "https://attacker.example/example-org/demo.git"),
+    (None, "https://ghe.example/example-org/demo.git"),
+    ("ghe.example", "https://github.com/example-org/demo.git"),
+    ("github.com", "https://github.com.attacker.example/example-org/demo.git"),
+    ("-x", "https://github.com/example-org/demo.git"),
+    ("GHE.EXAMPLE", "https://ghe.example/example-org/demo.git"),
+]
+
+
+def git_config(env):
+    return {
+        env[f"GIT_CONFIG_KEY_{number}"]: env[f"GIT_CONFIG_VALUE_{number}"]
+        for number in range(int(env["GIT_CONFIG_COUNT"]))
+    }
+
+
+@pytest.mark.parametrize("host, remote, token_host", REMOTE_HOSTS)
+def test_the_token_goes_only_to_the_allowed_host(calls, tmp_path, host, remote, token_host):
+    refspec = "+refs/pull/7/head:refs/sre-harness/pull/7"
+    guard.git(tmp_path, ["fetch", "--quiet", remote, refspec], token=TOKEN, host=host)
+    headers = [key for key in git_config(calls[0].env) if key.endswith(".extraheader")]
+    assert headers == [f"http.https://{token_host}/.extraheader"]
+
+
+@pytest.mark.parametrize("host, remote", REFUSED_REMOTE_HOSTS)
+def test_a_remote_on_another_host_is_refused(calls, tmp_path, host, remote):
+    refspec = "+refs/pull/7/head:refs/sre-harness/pull/7"
+    for token in (TOKEN, None):
+        with pytest.raises(BoundaryError) as refused:
+            guard.git(tmp_path, ["fetch", "--quiet", remote, refspec], token=token, host=host)
+        assert refused.value.exit_code == 3
+    assert calls == []
 
 
 # opa: one bundled policy, one bundled capabilities file, one fixed query ---------------

@@ -1,9 +1,11 @@
 """Findings: their kinds, severities, the inferred cap, ids and the invariants they keep.
 
 Severity is fixed per kind. A finding is `basis: explicit` when at least one piece of its
-evidence is explicit (a rule read it from a file, the registry or the API); otherwise it is
-`inferred` and its severity is capped at `medium`, so an inferred trace link is never the only
-ground of a `critical` or `high` finding.
+evidence is explicit (a rule read it from a file, the registry or the API) and none of its
+entities is inferred; otherwise it is `inferred` and its severity is capped at `medium`. So an
+inferred trace link is never the only ground of a `critical` or `high` finding, and a decision
+or requirement the backend proposed (`DCI-`, `RQI-`: not confirmed by a person) is never the
+subject of one. Such a finding lists those entities in `inferred_entities`.
 """
 
 from .. import records
@@ -53,6 +55,22 @@ def draft(kind, entities, prs, items, explanation, **extra):
     }
 
 
+def mark_inferred(drafts, inferred):
+    """The drafts, with those about an inferred entity made `inferred` and capped."""
+    out = []
+    for item in drafts:
+        about = sorted(set(item["entities"]) & set(inferred))
+        if about:
+            item = {
+                **item,
+                "basis": "inferred",
+                "severity": cap(SEVERITY[item["kind"]], "inferred"),
+                "inferred_entities": about,
+            }
+        out.append(item)
+    return out
+
+
 def numbered(drafts):
     """Sorted and given ids FD-0001, ... The order is a function of the content only."""
     ordered = sorted(
@@ -79,10 +97,15 @@ def check(findings):
             problems.append(f"{name}: the id is used twice")
         seen.add(name)
         explicit = any(entry["basis"] == "explicit" for entry in item["evidence"])
+        about = item.get("inferred_entities", [])
         if item["basis"] == "explicit" and not explicit:
             problems.append(f"{name}: basis explicit without explicit evidence")
-        if item["basis"] == "inferred" and explicit:
+        if item["basis"] == "explicit" and about:
+            problems.append(f"{name}: basis explicit although it is about {', '.join(about)}")
+        if item["basis"] == "inferred" and explicit and not about:
             problems.append(f"{name}: basis inferred although explicit evidence exists")
+        if not set(about) <= set(item["entities"]):
+            problems.append(f"{name}: inferred_entities names an entity it is not about")
         if item["basis"] == "inferred" and SEVERITIES.index(item["severity"]) < SEVERITIES.index(
             INFERRED_CAP
         ):

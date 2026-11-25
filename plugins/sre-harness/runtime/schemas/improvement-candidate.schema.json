@@ -198,7 +198,7 @@
         "author_type": { "enum": ["user", "bot", "ghost", "unknown"] },
         "author_association": { "type": "string" },
         "text": { "type": "string", "minLength": 1 },
-        "text_kind": { "enum": ["quote", "excerpt"] }
+        "text_kind": { "enum": ["quote", "copied", "excerpt"] }
       }
     },
     "check": {

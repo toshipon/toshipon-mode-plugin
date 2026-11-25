@@ -16,9 +16,9 @@
         "required": ["path", "to", "relation", "quote"],
         "properties": {
           "path": { "type": "string", "minLength": 1, "maxLength": 500 },
-          "to": { "type": "string", "pattern": "^(REQ|DEC)-[0-9]{4,}$" },
+          "to": { "type": "string", "pattern": "^(REQ|DEC|RQI|DCI)-[0-9]{4,}$" },
           "relation": { "enum": ["refines", "implements", "verifies", "depends_on", "conflicts_with"] },
-          "quote": { "type": "string", "minLength": 1, "maxLength": 300 }
+          "quote": { "type": "string", "minLength": 8, "maxLength": 300 }
         }
       }
     },

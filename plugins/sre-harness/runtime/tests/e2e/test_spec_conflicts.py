@@ -4,9 +4,13 @@ import json
 import subprocess
 from types import SimpleNamespace
 
-from examples.synthetic.spec_repo import BASE_FILES, LOGS_TF, build
-from examples.synthetic.spec_scenarios import REQUIREMENTS
-from sre_harness import guard
+import pytest
+
+from examples.synthetic.spec_repo import BASE_FILES, LOGS_TF, build, pull_item
+from examples.synthetic.spec_scenarios import REQUIREMENTS, _http
+from sre_harness import guard, records
+from sre_harness.github import fixture as transport
+from sre_harness.spec import prs as git_prs
 from tests.helpers import LLM_ARGS, envelope, prompt_parts, read_jsonl, run_dir, with_home
 from tests.spec_helpers import analyze, analyzed, by_kind, extracted, read
 
@@ -118,7 +122,8 @@ def test_an_inferred_link_alone_never_makes_a_high_finding(tmp_path, home):
     without = build(tmp_path / "none", files, {})
     env = {**home, "AI_HARNESS_HOME": str(tmp_path / "state-none")}
     _, _, found = analyzed(env, without, *MAIN)
-    assert all(f["basis"] == "explicit" for f in found["findings"])
+    # without a backend in analyze, only findings about an entity extract inferred are inferred
+    assert all(f["basis"] == "explicit" or f.get("inferred_entities") for f in found["findings"])
 
 
 def test_a_pr_that_names_an_unknown_id_is_input_missing(tmp_path, home):
@@ -184,7 +189,7 @@ def test_claude_writes_explanations_and_its_bad_links_are_dropped(tmp_path, home
                     "path": "docs/design/log-dashboard.md",
                     "to": "REQ-0001",
                     "relation": "refines",
-                    "quote": "ログの保持期間",
+                    "quote": "ログの保持期間を一覧で見られるようにする。",
                 },
                 {
                     "path": "docs/design/log-dashboard.md",
@@ -192,7 +197,12 @@ def test_claude_writes_explanations_and_its_bad_links_are_dropped(tmp_path, home
                     "relation": "refines",
                     "quote": "not in the document",
                 },
-                {"path": "docs/absent.md", "to": "REQ-0999", "relation": "refines", "quote": "x"},
+                {
+                    "path": "docs/absent.md",
+                    "to": "REQ-0999",
+                    "relation": "refines",
+                    "quote": "どこにもない文書の引用",
+                },
             ],
             "explanations": [],
         }
@@ -215,3 +225,189 @@ def test_claude_writes_explanations_and_its_bad_links_are_dropped(tmp_path, home
     assert summary["links"]["inferred"] == 1
     rows = read_jsonl(run_dir(env, run_id) / "llm-calls.jsonl")
     assert [row["stage"] for row in rows] == ["extract", "analyze", "analyze"]
+
+
+# Review fixes: line breaks, unreadable files, overlaps, shadowed values, caps, list gaps ----
+
+TEST_365 = "def test_req_0001_keeps_365():\n    assert True\n"
+
+
+def _conflicting(extra_one=None, extra_two=None, one_tf=None):
+    """PR 301 sets REQ-0001 retention_days to 30 in IaC, PR 302 to 90 in the document."""
+    return {
+        301: _pull(
+            "tf 30", {"infra/logs.tf": one_tf or _tf(30), **_test(301), **(extra_one or {})}
+        ),
+        302: _pull(
+            "doc 90", {"docs/requirements.md": _requirements(90), **_test(302), **(extra_two or {})}
+        ),
+    }
+
+
+@pytest.mark.parametrize("mark", ["\r", "\x0c", "\u2028", "\x85"])
+def test_a_line_break_git_does_not_count_cannot_hide_a_semantic_conflict(tmp_path, home, mark):
+    forged = f"note{mark}diff --git a/infra/logs.tf b/infra/logs.tf{mark}@@ -1,100 +1,1 @@\n"
+    pulls = _conflicting(extra_two={"docs/design/notes.md": "# notes\n\n" + forged})
+    _, _, found = analyzed(home, build(tmp_path, BASE_FILES, pulls))
+    (conflict,) = by_kind(found, "semantic_conflict")
+    assert conflict["prs"] == [301, 302]
+    assert not any("overlap" in line for line in found["limitations"])
+
+
+def test_a_form_feed_in_a_test_file_does_not_hide_the_added_test(tmp_path, home):
+    tests = "import os\n# section\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\n" + (
+        "def test_other():\n    pass\n" * 3
+    )
+    files = {**BASE_FILES, "tests/test_retention.py": tests}
+    added = tests + "\n" + TEST_365
+    pulls = {303: _pull("365", {"infra/logs.tf": _tf(365), "tests/test_retention.py": added})}
+    _, _, found = analyzed(home, build(tmp_path, files, pulls))
+    assert by_kind(found, "missing_test") == []
+
+
+def test_an_overlap_in_an_unrelated_file_keeps_the_semantic_conflict(tmp_path, home):
+    files = {**BASE_FILES, "CHANGELOG.md": "# changes\n- a\n"}
+    pulls = _conflicting(
+        extra_one={"CHANGELOG.md": "# changes\n- a\n- tf 30\n"},
+        extra_two={"CHANGELOG.md": "# changes\n- a\n- doc 90\n"},
+    )
+    _, _, found = analyzed(home, build(tmp_path, files, pulls))
+    (conflict,) = by_kind(found, "semantic_conflict")
+    assert conflict["prs"] == [301, 302] and conflict["severity"] == "critical"
+    assert "CHANGELOG.md" in conflict["explanation"]
+
+
+def test_a_pr_file_that_is_not_utf8_is_input_missing_and_the_run_partial(tmp_path, home):
+    one_tf = _tf(30).encode() + b"# caf\xe9\n"
+    scenario = build(tmp_path, BASE_FILES, _conflicting(one_tf=one_tf))
+    run_id, summary, found = analyzed(home, scenario, expect=1)
+    assert found["status"] == "partial"
+    (gap,) = [f for f in by_kind(found, "input_missing") if f["prs"] == [301]]
+    assert gap["missing"] == "infra/logs.tf"
+    (record,) = [pr for pr in found["prs"] if pr["number"] == 301]
+    assert record["unread_files"] == ["infra/logs.tf"]
+
+
+def test_a_value_shadowed_by_an_earlier_old_statement_is_still_a_change(tmp_path, home):
+    shadow = 'resource "aws_s3_bucket" "aaa" {\n  retention_days = 400 # REQ-0001\n}\n\n' + _tf(30)
+    scenario = build(tmp_path, BASE_FILES, _conflicting(one_tf=shadow))
+    _, _, found = analyzed(home, scenario)
+    (inside,) = [f for f in by_kind(found, "contradiction") if f["prs"]]
+    assert inside["prs"] == [301] and inside["key"] == "retention_days"
+    assert inside["entities"] == ["REQ-0001"]
+    (conflict,) = by_kind(found, "semantic_conflict")
+    assert conflict["prs"] == [301, 302]
+
+
+def test_one_pr_over_the_diff_cap_is_input_missing_and_the_others_are_analyzed(
+    tmp_path, home, monkeypatch
+):
+    pulls = {**_conflicting(), 304: _pull("big", {"infra/big.tf": "# x\n" * 2000})}
+    scenario = build(tmp_path, BASE_FILES, pulls)
+    monkeypatch.setattr(git_prs, "MAX_DIFF_BYTES", 4000)
+    _, summary, found = analyzed(home, scenario, expect=1)
+    assert found["status"] == "partial" and summary["unanalyzed"] == [304]
+    (gap,) = [f for f in by_kind(found, "input_missing") if f["prs"] == [304]]
+    assert "diff" in gap["explanation"]
+    assert [f["prs"] for f in by_kind(found, "semantic_conflict")] == [[301, 302]]
+
+
+def _rewrite_list(scenario, items):
+    owner, name = "example-org", "demo"
+    key = transport.rest_key(
+        "pulls", {"owner": owner, "repo": name}, {"state": "open", "per_page": 100, "page": 1}
+    )
+    directory = scenario.fixture
+    (directory / "s0001.http").write_text(_http(200, items), encoding="utf-8")
+    (directory / transport.INDEX).write_text(json.dumps({"responses": {key: ["s0001.http"]}}))
+
+
+def _items(scenario):
+    return [
+        pull_item(n, scenario.titles[n], scenario.heads[n], scenario.main_sha)
+        for n in sorted(scenario.heads)
+    ]
+
+
+def test_list_items_without_a_number_are_input_missing_and_the_run_partial(tmp_path, home):
+    scenario = build(tmp_path, BASE_FILES, {305: _pull("doc", {"docs/design/x.md": "# x\n"})})
+    _rewrite_list(scenario, [*_items(scenario), "junk", {"title": "no number"}])
+    _, _, found = analyzed(home, scenario, expect=1)
+    assert found["status"] == "partial"
+    gaps = [f for f in by_kind(found, "input_missing") if "PR list" in f["explanation"]]
+    assert sorted(f["missing"] for f in gaps) == ["page 1 item 2", "page 1 item 3"]
+
+
+def test_a_pr_based_on_another_branch_says_so(tmp_path, home):
+    scenario = build(tmp_path, BASE_FILES, {306: _pull("tf 30", {"infra/logs.tf": _tf(30)})})
+    items = _items(scenario)
+    items[0]["base"]["ref"] = "feature/parent"
+    _rewrite_list(scenario, items)
+    _, _, found = analyzed(home, scenario)
+    (record,) = found["prs"]
+    assert record["base_is_default"] is False and record["base_ref"] == "feature/parent"
+    assert any("PR #306" in line and "feature/parent" in line for line in found["limitations"])
+    mine = [f for f in found["findings"] if 306 in f["prs"]]
+    assert mine and all("not the default branch" in f["explanation"] for f in mine)
+
+
+QUEUE_TF = 'resource "synthetic_queue" "jobs" {\n  visibility_seconds = 30 # DEC-0006\n}\n'
+
+
+def test_written_ids_only_reach_entities_documents_define(tmp_path, home):
+    files = {**BASE_FILES, "infra/queue.tf": QUEUE_TF}
+    run_id, _, found = analyzed(home, build(tmp_path, files, {}), *MAIN)
+    decisions = {
+        d["external_id"]: d["id"]
+        for d in read(home, run_id, "decisions.json")["decisions"]
+        if "external_id" in d
+    }
+    assert decisions["ADR-0006"] == "DEC-0006"  # the harness's number, which no document writes
+    assert "DEC-0006" in {f.get("missing") for f in by_kind(found, "input_missing")}
+
+
+def test_a_finding_about_an_inferred_entity_is_inferred_and_capped(tmp_path, home):
+    _, _, found = analyzed(home, build(tmp_path, BASE_FILES, {}), *MAIN, "--backend", "stub")
+    about = [
+        f for f in found["findings"] if any(e.startswith(("RQI-", "DCI-")) for e in f["entities"])
+    ]
+    assert about, "the stub infers RQI-0001 from the minutes; its ambiguity is a finding"
+    for item in about:
+        assert item["basis"] == "inferred" and item["inferred_entities"]
+        assert item["severity"] in ("medium", "low", "info")
+
+
+def test_a_linked_quote_shorter_than_eight_characters_is_dropped(tmp_path, home, monkeypatch):
+    def answer(data):
+        if data["conflicts"]:
+            return {"links": [], "explanations": []}
+        quote = "たら 5 分以内に"  # in the runbook; 9 characters, 7 besides the spaces
+        return {
+            "links": [
+                {
+                    "path": "docs/runbook/oncall.md",
+                    "to": "REQ-0001",
+                    "relation": "refines",
+                    "quote": quote,
+                }
+            ],
+            "explanations": [],
+        }
+
+    env = with_home(home, tmp_path)
+    scenario = build(tmp_path, BASE_FILES, {})
+    run_id = extracted(env, scenario)
+    _claude_and_git(monkeypatch, answer)
+    code, summary = analyze(env, run_id, scenario, *MAIN, "--backend", "claude", *LLM_ARGS)
+    assert code == 0, summary
+    reasons = [
+        r for row in read(env, run_id, "analyze.json")["rejected_links"] for r in row["reasons"]
+    ]
+    assert [r.split(":")[0] for r in reasons] == ["quote_too_short"]
+    assert records.violations(
+        "llm-spec-analyze",
+        {
+            "links": [{"path": "a", "to": "REQ-0001", "relation": "refines", "quote": "ログ"}],
+            "explanations": [],
+        },
+    )

@@ -22,7 +22,11 @@
   ],
   "properties": {
     "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
-    "id": { "type": "string", "pattern": "^REQ-[0-9]{4,}$" },
+    "id": {
+      "description": "The `REQ-` id the document writes for an explicit requirement; `RQI-` for an inferred one, which no document writes.",
+      "type": "string",
+      "pattern": "^(REQ|RQI)-[0-9]{4,}$"
+    },
     "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
     "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
     "external_id": { "type": "string", "pattern": "^REQ-[0-9]{4,}$" },

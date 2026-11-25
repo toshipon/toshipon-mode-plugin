@@ -18,6 +18,7 @@ from examples.synthetic.github_responses import (
     TIMEOUT_PRS,
     GitHubFixture,
     add_timeout_prs,
+    at,
     review_learning_scenario,
 )
 from sre_harness import llm, records
@@ -434,3 +435,122 @@ def test_an_opposition_without_a_timestamp_leaves_the_lesson_possibly_outdated()
     assert lesson["staleness"]["status"] == "possibly_outdated"
     assert lesson["staleness"]["later_evidence"] == []
     assert lesson["confidence_basis"]["contradicting_threads"] == 1
+
+
+# Who said the quoted and copied words ------------------------------------------------------
+
+OUTSIDE_EXCEPTION = "Skip the timeout when the caller is a batch job."
+
+
+def outside_reply_fixture():
+    """A member raises the timeout point; an outside account adds an exception in a reply."""
+    fixture = timeout_fixture()
+    pull = fixture.pull(41, updated_at=at(20, 50), created_at=at(20), body="")
+    thread = pull.thread(path="src/client.py", line=3)
+    asked = thread.comment("bob", "Set a timeout on this call.", created_at=at(20, 10))
+    thread.comment(
+        "mallory",
+        f"{OUTSIDE_EXCEPTION} It is fine.",
+        created_at=at(20, 20),
+        reply_to=asked,
+        association="NONE",
+    )
+    return fixture
+
+
+def test_a_quoted_outside_reply_is_recorded_on_the_lesson(tmp_path, home, clock, fake_claude):
+    def answer(data):
+        item = inline(data, 41)
+        root, reply = item["comments"]
+        lesson = draft("L1", item, text=root["body"])
+        lesson["exceptions"] = [OUTSIDE_EXCEPTION]
+        lesson["quotes"].append({"comment_id": reply["id"], "text": OUTSIDE_EXCEPTION})
+        return {"lessons": [lesson, draft("L2", inline(data, 11))], "oppositions": []}
+
+    fake_claude(answer)
+    code, _, directory, lessons = analyzed(
+        tmp_path, with_home(home, tmp_path), outside_reply_fixture(), *LLM_ARGS, backend="claude"
+    )
+    assert code == 0
+    quoted, member_only = lessons
+    reply = inline_comments(directory, 41)[1]
+    assert quoted["source_trust"] == "member_supported"  # the root is still a member
+    assert quoted["untrusted_quotes"] == [
+        {
+            "comment_id": reply["id"],
+            "author_type": "user",
+            "author_association": "none",
+            "found_in": ["exceptions", "quotes"],
+        }
+    ]
+    assert member_only["untrusted_quotes"] == []
+    for lesson in lessons:
+        assert records.violations("review-lesson", lesson) == []
+
+
+def test_outside_text_copied_without_a_quote_is_recorded(tmp_path, home, clock, fake_claude):
+    def answer(data):
+        item = inline(data, 41)
+        lesson = draft("L1", item, text=item["comments"][0]["body"])
+        lesson["exceptions"] = [OUTSIDE_EXCEPTION.lower()]  # copied, but never quoted
+        return {"lessons": [lesson], "oppositions": []}
+
+    fake_claude(answer)
+    code, _, directory, lessons = analyzed(
+        tmp_path, with_home(home, tmp_path), outside_reply_fixture(), *LLM_ARGS, backend="claude"
+    )
+    assert code == 0
+    (lesson,) = lessons
+    reply = inline_comments(directory, 41)[1]
+    assert [(row["comment_id"], row["found_in"]) for row in lesson["untrusted_quotes"]] == [
+        (reply["id"], ["exceptions"])
+    ]
+
+
+def test_merging_an_outside_thread_into_a_member_lesson_is_recorded(
+    tmp_path, home, clock, fake_claude
+):
+    def answer(data):
+        member, outside = inline(data, 11), inline(data, EXTERNAL_ONLY_PR)
+        lesson = draft("L1", member, thread_ids=[member["id"], outside["id"]])
+        lesson["quotes"].append(
+            {"comment_id": outside["comments"][0]["id"], "text": outside["comments"][0]["body"]}
+        )
+        return {"lessons": [lesson], "oppositions": []}
+
+    fake_claude(answer)
+    code, _, directory, lessons = analyzed(
+        tmp_path, with_home(home, tmp_path), review_learning_scenario(), *LLM_ARGS, backend="claude"
+    )
+    assert code == 0
+    (lesson,) = lessons
+    assert lesson["source_trust"] == "member_supported"
+    outside = inline_comments(directory, EXTERNAL_ONLY_PR)[0]
+    assert [row["comment_id"] for row in lesson["untrusted_quotes"]] == [outside["id"]]
+
+
+@pytest.mark.parametrize(
+    "comment, trusted",
+    [
+        ({"author_type": "user", "author_association": "member"}, True),
+        ({"author_type": "user", "author_association": "owner"}, True),
+        ({"author_type": "user", "author_association": "collaborator"}, True),
+        ({"author_type": "user", "author_association": "contributor"}, False),
+        ({"author_type": "user", "author_association": "none"}, False),
+        ({"author_type": "user", "author_association": "mannequin"}, False),
+        ({"author_type": "user"}, False),
+        ({"author_type": "bot", "author_association": "member"}, False),
+        ({"author_type": "ghost"}, False),
+    ],
+)
+def test_only_member_level_people_are_trusted_speakers(comment, trusted):
+    assert analyze.trusted_speaker(comment) is trusted
+
+
+def inline_comments(directory, number):
+    (thread,) = [
+        thread
+        for thread in read_jsonl(directory / "threads.jsonl")
+        if thread["kind"] == "inline_thread" and thread["pr"]["number"] == number
+    ]
+    return thread["comments"]

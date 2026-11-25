@@ -98,6 +98,30 @@ def test_markdown_sections_split_at_headings_outside_code_fences():
     assert sections[2]["text"] == "text"
 
 
+# git ends a line at "\n" only; form feed, \x1c-\x1e, \x85, U+2028/9 and a lone \r do not.
+OTHER_BREAKS = ("\x0c", "\x1c", "\x1d", "\x1e", "\x85", " ", " ", "\r", "\x0b")
+
+
+@pytest.mark.parametrize("mark", OTHER_BREAKS)
+def test_sections_count_lines_as_git_does(mark):
+    text = f"# T\n\nintro{mark}## REQ-0009 fake\n\npara{mark}more\n## REQ-0001 real\n\nbody\n"
+    sections = ingest_file.markdown_sections(text)
+    assert [(s["heading"], s["locator"]) for s in sections] == [
+        ("T", "L1-L5"),
+        ("REQ-0001 real", "L6-L8"),
+    ]
+
+
+def test_crlf_lines_lose_only_their_carriage_return():
+    text = "---\r\nid: ADR-0001\x0c\r\ntitle: x\r\n---\r\n# H\r\n\r\nbody\x0cstill line 7\r\n"
+    parsed = ingest_file.front_matter(text)
+    assert parsed["fields"]["id"] == "ADR-0001" and parsed["body_line"] == 5
+    sections = ingest_file.markdown_sections(parsed["body"], parsed["body_line"])
+    assert [(s["heading"], s["locator"], s["text"]) for s in sections] == [
+        ("H", "L5-L7", "body\x0cstill line 7")
+    ]
+
+
 def test_slack_export_messages_become_sections():
     sections = ingest_file.slack_sections(SLACK)
     assert [s["heading"] for s in sections] == ["carol", "bob"]

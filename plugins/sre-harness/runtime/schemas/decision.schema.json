@@ -94,6 +94,7 @@
               "no_approved_successor",
               "cannot_supersede",
               "inferred_not_approvable",
+              "supersedes_dropped",
               "unknown_status"
             ]
           },
@@ -112,7 +113,11 @@
     }
   },
   "$defs": {
-    "decision_id": { "type": "string", "pattern": "^DEC-[0-9]{4,}$" },
+    "decision_id": {
+      "description": "`DEC-` for an explicit decision (the id its document writes when that is a `DEC-` id), `DCI-` for an inferred one. No document writes a `DCI-` id.",
+      "type": "string",
+      "pattern": "^(DEC|DCI)-[0-9]{4,}$"
+    },
     "status": { "enum": ["proposed", "approved", "rejected", "superseded", "unresolved"] },
     "names": {
       "type": "array",
@@ -125,7 +130,7 @@
       "required": ["kind", "from", "ref"],
       "properties": {
         "kind": { "const": "decision_ref" },
-        "from": { "type": "string", "pattern": "^(DEC|REQ)-[0-9]{4,}$" },
+        "from": { "type": "string", "pattern": "^(DEC|DCI|REQ|RQI)-[0-9]{4,}$" },
         "ref": { "type": "string", "minLength": 1, "maxLength": 64 }
       }
     },
