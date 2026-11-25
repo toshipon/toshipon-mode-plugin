@@ -775,3 +775,25 @@ def test_a_severe_concern_in_limitations_reworded_as_serious_is_refused(
     assert code == 1
     problems = written(home, contradicted_run)["attempts"][0]["problems"]
     assert any("severity_word" in problem for problem in problems)
+
+
+def test_an_audit_may_cite_inferred_entities_and_sees_which_findings_rest_on_them(
+    tmp_path, home, fake_claude
+):
+    """The analysis names inferred entities `DCI-` / `RQI-` (not confirmed by a person); the
+    audit gets `inferred_entities` and may cite those ids as evidence."""
+    scenario = build(tmp_path / "inferred", BASE_FILES, {})
+    run_id, _, found = analyzed(home, scenario, *MAIN, "--backend", "stub")
+    (about,) = [f for f in found["findings"] if f.get("inferred_entities")][:1]
+    inferred = about["inferred_entities"][0]
+    assert inferred.startswith(("DCI-", "RQI-"))
+    seen = fake_claude(
+        lambda data: answer([item(1, "medium", "correctness", [inferred])], reviewed=reviewed(data))
+    )
+    code, _ = claude(home, tmp_path, run_id)
+    assert code == 0
+    _, data = prompt_parts(seen[0].prompt)
+    sent = next(f for f in data["findings"] if f["id"] == about["id"])
+    assert sent["inferred_entities"] == about["inferred_entities"]
+    value = written(home, run_id)
+    assert [entry["id"] for entry in value["findings"]] == ["F1"]

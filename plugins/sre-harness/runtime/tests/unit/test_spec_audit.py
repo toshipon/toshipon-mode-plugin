@@ -30,6 +30,8 @@ INDEX = {
     "PT-0001": "docs/requirements.md",
     "DOC-0010": "要求定義（合成） API は高速に応答すること。",
     "DOC-0010#S3": "REQ-0002: API の応答 API は高速に応答すること。",
+    "DCI-0001": "推定の決定 ログを 30 日で消す",
+    "RQI-0002": "推定の要求 夜間に再実行する",
 }
 
 
@@ -117,6 +119,8 @@ def test_the_eight_axes_are_the_owners_list():
         "REQ-0002: 「高速に応答」",
         "DOC-0010#S3:   API   は高速に応答すること。",
         "FD-0001: retention_days 400 -> 365",
+        "DCI-0001",
+        "RQI-0002: 夜間に再実行する",
     ],
 )
 def test_evidence_that_names_an_existing_id_and_quotes_it_is_kept(entry):
@@ -219,6 +223,7 @@ def test_an_ordinary_limitation_passes(limitation):
         ("A blocker may remain in the export.", "severity_word"),
         ("REQ-0005 might not be tested anywhere.", "names_id"),
         ("DOC-0010#S3 was only skimmed.", "names_id"),
+        ("RQI-0003 was inferred and not read.", "names_id"),
         ("F1 may be understated.", "names_finding"),
         (
             "Note: Requirement claim number 1 has no measurable acceptance criterion.",
