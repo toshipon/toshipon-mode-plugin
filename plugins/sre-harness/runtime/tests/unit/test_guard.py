@@ -515,3 +515,81 @@ def test_the_subscription_login_gets_the_user_name_it_is_stored_under(tmp_path):
     assert child == {"HOME": "/home/alice", "USER": "alice", "LOGNAME": "alice", "PATH": "/usr/bin"}
     with_key = guard._claude_env("api-key", str(tmp_path), ambient)
     assert "USER" not in with_key and with_key["HOME"] == str(tmp_path)
+
+
+# Regular expressions in a separate process ----------------------------------------------
+
+
+def test_regex_search_runs_the_bundled_worker_with_a_fixed_argv(monkeypatch):
+    import io
+    import json
+    import sys
+
+    from sre_harness import regex_worker
+
+    calls = []
+
+    def answer(argv, **options):
+        calls.append(SimpleNamespace(argv=argv, **options))
+        out = io.StringIO()
+        regex_worker.main(io.StringIO(options["input"]), out)
+        return SimpleNamespace(returncode=0, stdout=out.getvalue(), stderr="")
+
+    monkeypatch.setattr(guard, "_run", answer)
+    found = guard.regex_search([r"a+b", "x"], ["aab", "zz", "x"], timeout=5)
+    assert found == [[0], [2]]
+    (call,) = calls
+    assert call.argv == [sys.executable, "-I", str(guard.REGEX_WORKER)]
+    assert call.timeout == 5 and call.check is False
+    assert json.loads(call.input) == {"patterns": [r"a+b", "x"], "texts": ["aab", "zz", "x"]}
+    assert set(call.env) <= {"PATH", "LANG", "LC_ALL", "TMPDIR", "SYSTEMROOT"}
+
+
+@pytest.mark.parametrize(
+    "patterns, texts, timeout",
+    [
+        ([], ["a"], 5),  # no pattern
+        (["a"] * 9, ["a"], 5),  # too many
+        (["a" * 201], ["a"], 5),  # too long
+        ([""], ["a"], 5),
+        ([1], ["a"], 5),
+        (["a"], "a", 5),  # texts must be a list
+        (["a"], [1], 5),
+        (["a"], ["a"], 0),  # time limit outside 0.1-60 s
+        (["a"], ["a"], 61),
+        (["a"], ["a"], True),
+    ],
+)
+def test_regex_search_refuses_odd_input_before_a_process_starts(calls, patterns, texts, timeout):
+    with pytest.raises(BoundaryError):
+        guard.regex_search(patterns, texts, timeout=timeout)
+    assert calls == []
+
+
+def test_a_runaway_pattern_is_killed_at_the_time_limit():
+    import time
+
+    started = time.monotonic()
+    with pytest.raises(guard.RegexTimeout):
+        guard.regex_search([r"^(a+)+$"], ["a" * 40 + "!"], timeout=0.5)
+    assert time.monotonic() - started < 10
+
+
+def test_the_real_worker_answers_and_reports_an_invalid_pattern():
+    assert guard.regex_search([r"\btimeout\b"], ["x", "timeout=5"], timeout=10) == [[1]]
+    with pytest.raises(InputError, match="pattern 1 is not a valid"):
+        guard.regex_search(["ok", "(unclosed"], ["ok"], timeout=10)
+
+
+@pytest.mark.parametrize(
+    "returncode, stdout",
+    [(1, ""), (0, "not json"), (0, '{"matches": [[5]]}'), (0, '{"matches": []}')],
+)
+def test_a_worker_answer_out_of_shape_is_a_quality_failure(monkeypatch, returncode, stdout):
+    monkeypatch.setattr(
+        guard,
+        "_run",
+        lambda argv, **options: SimpleNamespace(returncode=returncode, stdout=stdout, stderr=""),
+    )
+    with pytest.raises(QualityGateError):
+        guard.regex_search(["a"], ["a"], timeout=5)

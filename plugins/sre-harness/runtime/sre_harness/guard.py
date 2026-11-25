@@ -12,12 +12,14 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 from .errors import BoundaryError, InputError, QualityGateError
 
 QUERY_DIR = Path(__file__).resolve().parent / "github" / "queries"
+REGEX_WORKER = Path(__file__).resolve().parent / "regex_worker.py"
 
 _run = subprocess.run  # tests replace this; nothing else in the package may start a process
 
@@ -107,6 +109,18 @@ CLAUDE_AUTH = {"api-key": "--bare", "subscription": "--safe-mode"}
 CLAUDE_MAX_BUDGET_USD = 100.0
 CLAUDE_TIMEOUT = (30, 3600)
 _CLAUDE_MODEL = re.compile(r"[a-z0-9][a-z0-9.-]{0,63}")
+
+# Regular expressions written by a backend: matched by the bundled worker in its own Python
+# process (`-I`: no user site, no PYTHON* variables, no script directory on sys.path), killed at
+# the time limit. argv is fixed; patterns and texts travel on stdin.
+REGEX_TIMEOUT = (0.1, 60.0)
+REGEX_MAX_PATTERNS = 8
+REGEX_MAX_PATTERN_LENGTH = 200
+REGEX_MAX_INPUT_BYTES = 16 * 1024 * 1024
+
+
+class RegexTimeout(QualityGateError):
+    reason = "regex_timeout"
 
 
 def read_token(env_name, env=None):
@@ -450,3 +464,75 @@ def claude(prompt, schema, *, auth_mode, timeout, max_budget_usd, model=None, en
         except subprocess.TimeoutExpired:
             raise QualityGateError(f"claude did not finish within {timeout} seconds.") from None
     return result.returncode, result.stdout
+
+
+def regex_search(patterns, texts, *, timeout, env=None):
+    """For each pattern, the indexes of the texts `re.search` finds it in.
+
+    `re` cannot be interrupted, so a pattern that backtracks without end would stop the harness.
+    The match runs in `regex_worker.py` under `sys.executable -I` and is killed after `timeout`
+    seconds (RegexTimeout). An invalid pattern is an InputError naming its index.
+    """
+    low, high = REGEX_TIMEOUT
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not low <= timeout <= high
+    ):
+        raise BoundaryError(f"refused regex timeout: it must be {low}-{high} seconds.")
+    if (
+        not isinstance(patterns, list)
+        or not 1 <= len(patterns) <= REGEX_MAX_PATTERNS
+        or not all(isinstance(p, str) and 0 < len(p) <= REGEX_MAX_PATTERN_LENGTH for p in patterns)
+    ):
+        raise BoundaryError(
+            f"refused regex patterns: 1-{REGEX_MAX_PATTERNS} strings of at most "
+            f"{REGEX_MAX_PATTERN_LENGTH} characters."
+        )
+    if not isinstance(texts, list) or not all(isinstance(text, str) for text in texts):
+        raise BoundaryError("refused regex texts: they must be a list of strings.")
+    payload = json.dumps({"patterns": patterns, "texts": texts}, ensure_ascii=True)
+    if len(payload) > REGEX_MAX_INPUT_BYTES:
+        raise QualityGateError(
+            f"the regex input is over {REGEX_MAX_INPUT_BYTES} bytes; stopped instead of cutting it."
+        )
+    argv = [sys.executable, "-I", str(REGEX_WORKER)]
+    with tempfile.TemporaryDirectory(prefix="sre-harness-regex-") as cwd:
+        try:
+            result = _run(
+                argv,
+                input=payload,
+                env=_base_env(env),
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise RegexTimeout(
+                f"the pattern match did not finish within {timeout} seconds; it was stopped."
+            ) from None
+    if result.returncode != 0:
+        raise QualityGateError(f"the pattern worker failed with exit code {result.returncode}.")
+    try:
+        answer = json.loads(result.stdout)
+    except (TypeError, ValueError):
+        raise QualityGateError("the pattern worker did not answer with JSON.") from None
+    if isinstance(answer, dict) and isinstance(answer.get("invalid"), int):
+        raise InputError(f"pattern {answer['invalid']} is not a valid regular expression.")
+    matches = answer.get("matches") if isinstance(answer, dict) else None
+    if (
+        not isinstance(matches, list)
+        or len(matches) != len(patterns)
+        or not all(
+            isinstance(found, list)
+            and all(
+                isinstance(i, int) and not isinstance(i, bool) and 0 <= i < len(texts)
+                for i in found
+            )
+            for found in matches
+        )
+    ):
+        raise QualityGateError("the pattern worker answered in an unexpected shape.")
+    return matches
