@@ -31,3 +31,9 @@ def test_secret_shapes_are_named():
     assert privacy.find_secrets(f"token {fake}") == ["github_token"]
     assert privacy.find_secrets("https://user:hunter2@example.com/x") == ["url_credentials"]
     assert privacy.find_secrets("max_tokens = 4000") == []
+
+
+def test_an_indented_comment_is_still_a_comment(tmp_path):
+    path = tmp_path / "deny-terms.txt"
+    path.write_text("  # customers\n\t# more\nExampleCorp\n")
+    assert privacy.load_deny_terms(path) == ["examplecorp"]

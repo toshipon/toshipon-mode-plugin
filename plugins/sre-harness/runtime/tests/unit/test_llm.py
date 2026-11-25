@@ -101,6 +101,23 @@ def test_the_run_budget_stops_further_calls(run, home, tmp_path, fake_claude):
     assert len(read_jsonl(run / llm.CALLS_FILE)) == 2
 
 
+@pytest.mark.parametrize(
+    "options, cap",
+    [
+        ({"max_run_budget_usd": 150.0}, "100.0000"),
+        ({"max_run_budget_usd": 150.0, "max_call_budget_usd": 120.0}, "100.0000"),
+        ({"max_run_budget_usd": 150.0, "max_call_budget_usd": 2.0}, "2.0000"),
+        ({"max_run_budget_usd": 0.5, "max_call_budget_usd": 2.0}, "0.5000"),
+    ],
+)
+def test_one_call_is_capped_at_the_smallest_limit(run, home, tmp_path, fake_claude, options, cap):
+    # A run budget above guard's per-call ceiling must not turn every call into a refusal.
+    calls = fake_claude(EMPTY, cost=0.01)
+    ask(session(run, with_home(home, tmp_path), **options))
+    assert calls[0].argv[-2:] == ["--max-budget-usd", cap]
+    assert float(cap) <= guard.CLAUDE_MAX_BUDGET_USD
+
+
 def test_the_budget_counts_calls_from_earlier_stages(run, home, tmp_path, fake_claude):
     calls = fake_claude(EMPTY, cost=0.01)
     ask(session(run, with_home(home, tmp_path), max_run_budget_usd=0.01))

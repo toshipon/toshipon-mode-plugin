@@ -266,7 +266,7 @@ def _backend_options(parser):
     parser.add_argument(
         "--max-call-budget-usd",
         type=float,
-        help="optional cap per claude call (default: whatever is left of the run budget)",
+        help="optional cap per claude call (default: what is left of the run budget, at most 100)",
     )
     parser.add_argument(
         "--deny-terms-file", help="terms that must not leave the machine; a hit stops with exit 3"
