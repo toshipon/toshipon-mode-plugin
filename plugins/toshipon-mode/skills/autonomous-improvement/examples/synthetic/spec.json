@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "name": "synthetic-throughput",
+  "objective": "合成プロジェクトの throughput を 40 以上にする",
+  "constraints": ["evaluate.py と check.py を変更しない", "tests_pass を維持する"],
+  "data_classification": "synthetic",
+  "evaluation": {
+    "command": ["python3", "evaluate.py"],
+    "files": ["evaluate.py"],
+    "metrics": [
+      { "name": "throughput", "role": "scored", "kind": "deterministic", "direction": "higher", "min_effect": 0.05 },
+      { "name": "valid", "role": "required", "kind": "deterministic", "op": "==", "threshold": 1 }
+    ]
+  },
+  "guard": {
+    "checks": [{ "name": "tests", "command": ["python3", "check.py"] }],
+    "protected_paths": ["check.py"]
+  },
+  "acceptance": { "targets": [{ "metric": "throughput", "op": ">=", "value": 40 }] },
+  "budget": { "max_iterations": 8, "max_cost": 100 }
+}

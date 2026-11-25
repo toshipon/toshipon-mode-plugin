@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "name": "synthetic-skill-suite",
+  "data_classification": "synthetic",
+  "subject": { "repo": "subject", "baseline_ref": "HEAD" },
+  "runner": { "argv": ["python3", "runner.py"], "files": ["runner.py"], "timeout_seconds": 60 },
+  "trials": 3,
+  "cases": [
+    { "id": "train-missing-evidence", "split": "train", "origin": "past_failure", "path": "cases/train-missing-evidence.json" },
+    { "id": "train-tests", "split": "train", "origin": "past_success", "path": "cases/train-tests.json" },
+    { "id": "train-report", "split": "train", "origin": "past_failure", "path": "cases/train-report.json" },
+    { "id": "holdout-claim", "split": "holdout", "origin": "past_failure", "path": "cases/holdout-claim.json" },
+    { "id": "holdout-tests", "split": "holdout", "origin": "past_success", "path": "cases/holdout-tests.json" },
+    { "id": "holdout-summary", "split": "holdout", "origin": "synthetic", "path": "cases/holdout-summary.json" }
+  ],
+  "criteria": { "metric": "first_pass_rate", "min_delta": 0.2, "min_cases_per_split": 2, "min_trials": 3 },
+  "dry_run_safe": true
+}

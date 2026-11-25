@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/TO/venv/bin/python /ABSOLUTE/PATH/TO/autonomous-improvement/scripts/harness.py record",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/ABSOLUTE/PATH/TO/venv/bin/python /ABSOLUTE/PATH/TO/autonomous-improvement/scripts/harness.py record",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

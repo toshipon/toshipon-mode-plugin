@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "collect": { "raw": false },
+  "retention_days": 30,
+  "queue": {
+    "max_attempts": 3,
+    "backoff_base_seconds": 60,
+    "backoff_max_seconds": 3600,
+    "lease_seconds": 1800
+  },
+  "budget": {
+    "max_jobs_per_dispatch": 5,
+    "max_seconds_per_dispatch": 3600,
+    "max_cost_per_day": 5
+  },
+  "schedule": [
+    { "kind": "evolve", "hour": 2, "minute": 0 },
+    { "kind": "weekly_report", "weekday": 0, "hour": 9, "minute": 0 }
+  ],
+  "evolution": { "min_occurrences": 3, "min_distinct_sources": 2 },
+  "llm_policy": { "allowed_classifications": ["public", "synthetic"] },
+  "agents": {
+    "hypothesize": { "claude": { "model": "sonnet", "max_budget_usd": 0.5 }, "timeout_seconds": 600 },
+    "candidate": { "claude": { "model": "opus", "max_budget_usd": 2 }, "timeout_seconds": 1800 },
+    "auditor": { "claude": { "model": "opus", "max_budget_usd": 1 }, "timeout_seconds": 900 }
+  },
+  "publish": {
+    "allow_paths": [
+      "plugins/*/skills/*/SKILL.md",
+      "plugins/*/skills/*/references/**",
+      "plugins/*/agents/*.md",
+      "plugins/*/commands/*.md"
+    ]
+  },
+  "privacy": { "deny_terms_file": "~/.config/ai-harness/deny-terms.txt" }
+}

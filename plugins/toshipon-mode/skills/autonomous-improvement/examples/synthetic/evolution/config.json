@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "llm_policy": { "allowed_classifications": ["public", "synthetic", "internal"] },
+  "agents": {
+    "hypothesize": { "argv": ["python3", "hypothesize.py"], "dry_run_safe": true },
+    "candidate": { "argv": ["python3", "candidate.py"], "dry_run_safe": true },
+    "auditor": { "argv": ["python3", "auditor.py"], "dry_run_safe": true }
+  },
+  "publish": { "allow_paths": ["skill.md"] }
+}

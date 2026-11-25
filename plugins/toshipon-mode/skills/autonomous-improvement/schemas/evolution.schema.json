@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "autonomous-improvement/evolution.schema.json",
+  "title": "Harness evolution inputs: evaluation suite, hypothesis, adapter outputs",
+  "$defs": {
+    "argv": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "cause": { "enum": ["skill", "instruction", "tool", "evaluation", "input", "environment"] },
+    "suite": {
+      "description": "Kept outside the repository. Its content hash is approved by a person; any edit needs a new approval.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "name", "subject", "runner", "trials", "cases", "criteria"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "data_classification": { "enum": ["public", "synthetic", "internal", "confidential"] },
+        "subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repo", "baseline_ref"],
+          "properties": {
+            "repo": { "description": "Git repository that holds the harness under improvement.", "type": "string", "minLength": 1 },
+            "baseline_ref": { "type": "string", "minLength": 1 }
+          }
+        },
+        "runner": {
+          "description": "Runs one case against one version (AI_HARNESS_VERSION_DIR). It lives with the suite, outside the versions under test.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["argv"],
+          "properties": {
+            "argv": { "$ref": "#/$defs/argv" },
+            "timeout_seconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 86400 },
+            "files": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          }
+        },
+        "trials": { "type": "integer", "minimum": 1, "maximum": 50 },
+        "cases": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "split", "origin"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{2,}$" },
+              "split": { "description": "holdout cases are never shown to hypothesis or candidate generation.", "enum": ["train", "holdout"] },
+              "origin": { "enum": ["past_success", "past_failure", "synthetic"] },
+              "path": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "criteria": {
+          "description": "The improvement condition, fixed before any candidate is measured.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["metric", "min_delta"],
+          "properties": {
+            "metric": {
+              "enum": ["first_pass_rate", "quality", "failure_recurrence_rate", "fix_count", "duration_seconds", "tokens", "cost"]
+            },
+            "min_delta": { "type": "number", "exclusiveMinimum": 0 },
+            "min_cases_per_split": { "type": "integer", "minimum": 1 },
+            "min_trials": { "type": "integer", "minimum": 1 },
+            "noise_k": { "type": "number", "minimum": 0 }
+          }
+        },
+        "dry_run_safe": {
+          "description": "The runner is local, free and side-effect free, so --dry-run may execute it.",
+          "type": "boolean"
+        }
+      }
+    },
+    "hypothesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern", "cause", "statement", "falsification"],
+      "properties": {
+        "pattern": { "type": "string", "minLength": 1 },
+        "cause": { "$ref": "#/$defs/cause" },
+        "statement": { "type": "string", "minLength": 1 },
+        "falsification": { "type": "string", "minLength": 1 },
+        "risks": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "hypothesis_output": {
+      "description": "Either a hypothesis for the given pattern, or a reason to do nothing.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "abstain": { "type": "string", "minLength": 1 },
+        "cause": { "$ref": "#/$defs/cause" },
+        "statement": { "type": "string", "minLength": 1 },
+        "falsification": { "type": "string", "minLength": 1 },
+        "risks": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      },
+      "oneOf": [
+        { "required": ["abstain"], "maxProperties": 1 },
+        { "required": ["cause", "statement", "falsification"], "not": { "required": ["abstain"] } }
+      ]
+    },
+    "candidate_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary"],
+      "properties": { "summary": { "type": "string", "minLength": 1 } }
+    },
+    "trial_output": {
+      "description": "What the suite runner prints for one case on one version.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed"],
+      "properties": {
+        "passed": { "description": "The case succeeded on the first attempt.", "type": "boolean" },
+        "required": { "type": "object", "additionalProperties": { "type": "boolean" } },
+        "quality": { "type": "number" },
+        "fix_count": { "type": "integer", "minimum": 0 },
+        "tokens": { "type": "integer", "minimum": 0 },
+        "cost": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

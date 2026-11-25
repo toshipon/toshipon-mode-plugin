@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "autonomous-improvement/proposal.schema.json",
+  "title": "Local review proposal for a harness change. It is never applied by the harness.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "id", "hypothesis_id", "created_at", "status", "hypothesis", "baseline_sha",
+    "diff", "measurements", "audit", "risks", "rollback"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^P-[0-9]{4,}$" },
+    "hypothesis_id": { "type": "string", "pattern": "^EH-[0-9]{4,}$" },
+    "created_at": { "type": "string", "minLength": 1 },
+    "status": { "const": "awaiting_approval" },
+    "hypothesis": {
+      "type": "object",
+      "required": ["pattern", "cause", "statement", "falsification", "evidence"],
+      "properties": { "evidence": { "type": "array", "minItems": 1, "items": { "type": "string" } } }
+    },
+    "baseline_sha": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+    "diff": {
+      "type": "object",
+      "required": ["patch", "sha256", "files"],
+      "properties": {
+        "patch": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "files": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "measurements": {
+      "type": "object",
+      "required": ["metrics", "trials", "criteria", "gains", "notes", "verdict"],
+      "properties": { "verdict": { "const": "propose" } }
+    },
+    "audit": {
+      "type": "object",
+      "required": ["independence", "findings", "limitations"],
+      "properties": { "independence": { "enum": ["separate_process", "subagent"] } }
+    },
+    "risks": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "rollback": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+  }
+}

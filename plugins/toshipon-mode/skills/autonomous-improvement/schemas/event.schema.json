@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "autonomous-improvement/event.schema.json",
+  "title": "One hook record in <state home>/events.jsonl. Structured and minimal: no prompts, no tool input, no output.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "created_at", "kind", "project", "session"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "created_at": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["session_stop", "subagent_stop", "session_end", "tool_failure"] },
+    "project": { "description": "sha256 prefix of the working directory, not the path.", "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "session": { "description": "sha256 prefix of the session id.", "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "tool_name": { "type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,100}$" },
+    "is_interrupt": { "type": "boolean" },
+    "detail": {
+      "description": "Only with collect.raw: redacted error text, at most 500 characters.",
+      "type": "string",
+      "maxLength": 500
+    }
+  }
+}
