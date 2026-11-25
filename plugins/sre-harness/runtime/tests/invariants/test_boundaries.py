@@ -55,29 +55,39 @@ def imported(tree):
             yield node.module or ""
 
 
-def test_only_guard_can_start_a_process_or_open_a_socket():
+def find_offenders(source):
+    """Ways a module could start a process or open a socket outside guard, as short strings."""
+    tree = ast.parse(source)
     offenders = []
-    for path in modules():
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for name in imported(tree):
-            if name.split(".")[0] in PROCESS_AND_NETWORK or name == "importlib":
-                offenders.append(f"{path.relative_to(RUNTIME)}: import {name}")
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and OS_CALLS.fullmatch(node.attr):
-                if isinstance(node.value, ast.Name) and node.value.id == "os":
-                    offenders.append(f"{path.relative_to(RUNTIME)}: os.{node.attr}")
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id in DYNAMIC:
-                    offenders.append(f"{path.relative_to(RUNTIME)}: {node.func.id}()")
-            if isinstance(node, ast.Attribute) and node.attr == "_run":
-                offenders.append(f"{path.relative_to(RUNTIME)}: reaches into guard._run")
+    for name in imported(tree):
+        if name.split(".")[0] in PROCESS_AND_NETWORK or name == "importlib":
+            offenders.append(f"import {name}")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and OS_CALLS.fullmatch(node.attr):
+            if isinstance(node.value, ast.Name) and node.value.id == "os":
+                offenders.append(f"os.{node.attr}")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in DYNAMIC:
+                offenders.append(f"{node.func.id}()")
+        if isinstance(node, ast.Attribute) and node.attr == "_run":
+            offenders.append("reaches into guard._run")
+    return offenders
+
+
+def test_only_guard_can_start_a_process_or_open_a_socket():
+    offenders = [
+        f"{path.relative_to(RUNTIME)}: {offender}"
+        for path in modules()
+        for offender in find_offenders(path.read_text(encoding="utf-8"))
+    ]
     assert offenders == []
 
 
 def test_the_check_would_catch_an_offender():
-    tree = ast.parse("import os\nfrom urllib import request\nos.system('x')\n")
-    assert "urllib" in set(imported(tree))
-    assert any(isinstance(node, ast.Attribute) and node.attr == "system" for node in ast.walk(tree))
+    assert find_offenders("import os\nfrom urllib import request\nos.system('x')\n") == [
+        "import urllib",
+        "os.system",
+    ]
 
 
 def tracked_text_files():
