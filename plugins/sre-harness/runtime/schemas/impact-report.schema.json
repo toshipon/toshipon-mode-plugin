@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:sre-harness:impact-report",
   "title": "impact-report",
-  "description": "impact-report.json, written by `spec report` from findings.json (`$defs/findings_file`, written by `spec analyze`). Severity is fixed per kind; a finding whose evidence is all inferred is at most medium. `patches` and `audit` are filled by later stages.",
+  "description": "impact-report.json, written by `spec report` from findings.json (`$defs/findings_file`, written by `spec analyze`). Severity is fixed per kind; a finding whose evidence is all inferred, or that is about an inferred entity, is at most medium. `patches` and `audit` are filled by later stages.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -32,8 +32,8 @@
         "name": { "type": "string", "minLength": 1, "maxLength": 200 },
         "sha": { "$ref": "urn:sre-harness:common#/$defs/git_sha" },
         "moved_since_analysis": {
-          "description": "Whether the default branch moved after `spec analyze` read it. `spec report` does not fetch; it is false until a later stage checks it.",
-          "type": "boolean"
+          "description": "Whether the default branch moved after `spec analyze` read it. `spec report` does not fetch, so it writes null (not checked); a later stage that fetches may set true or false.",
+          "type": ["boolean", "null"]
         }
       }
     },
@@ -92,7 +92,20 @@
           "anyOf": [{ "$ref": "urn:sre-harness:common#/$defs/git_sha" }, { "type": "null" }]
         },
         "stale": { "type": "boolean" },
-        "missing": { "type": "string", "minLength": 1, "maxLength": 200 }
+        "missing": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "base_ref": {
+          "description": "The base branch the PR list gave; null when it gave none.",
+          "anyOf": [{ "type": "string", "maxLength": 300 }, { "type": "null" }]
+        },
+        "base_is_default": {
+          "description": "false when the PR's base is not the default branch (a stacked PR): it was still diffed against its merge base with the default branch, so its parent's changes may be counted as its own. null when the list gave no base.",
+          "type": ["boolean", "null"]
+        },
+        "unread_files": {
+          "description": "Changed files the rules read that could not be read (not UTF-8). Each is an input_missing finding of the PR, and the run is partial.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        }
       }
     },
     "evidence": {
@@ -158,12 +171,22 @@
           "type": "string",
           "pattern": "^(template|LC-[0-9]{4,})$"
         },
-        "patch_ref": { "type": "string", "pattern": "^PT-[0-9]{4,}$" }
+        "patch_ref": { "type": "string", "pattern": "^PT-[0-9]{4,}$" },
+        "inferred_entities": {
+          "description": "The entities of the finding that are inferred (DCI-, RQI-): the backend proposed them and no person confirmed them. The finding is then inferred and at most medium.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        }
       },
       "allOf": [
         {
           "if": { "properties": { "basis": { "const": "inferred" } } },
           "then": { "properties": { "severity": { "enum": ["medium", "low", "info"] } } }
+        },
+        {
+          "if": { "required": ["inferred_entities"] },
+          "then": { "properties": { "basis": { "const": "inferred" } } }
         }
       ]
     },

@@ -2,8 +2,12 @@
 
 No network, no git, no model. The Markdown carries external text (PR titles, quotes from
 documents, values from files): in a table cell it is escaped so that no link, image, HTML or
-column break survives, and anything longer goes into a fenced code block whose fence is
-longer than any backtick run in the text.
+column break survives, GFM autolinks included (a scheme and `://`, `www.`, `name@host`: the `/`,
+`.` and `@` that make them become character references), and anything longer goes into a
+fenced code block whose fence is longer than any backtick run in the text.
+
+`default_branch.moved_since_analysis` is null: this stage does not fetch, so it has not
+checked whether the default branch moved.
 
 `--format evaluator-output` prints, instead of the summary, the JSON an evaluator adapter of
 the toshipon-mode Autonomous Improvement Harness v2 prints (`evaluation.schema.json`,
@@ -18,6 +22,7 @@ from ..errors import InputError
 from . import findings as fd
 
 _MARKUP = re.compile(r"([\\`*_\[\]()!|~])")
+_WWW = re.compile(r"(www)\.", re.IGNORECASE)
 
 
 def cell(value):
@@ -25,6 +30,7 @@ def cell(value):
     text = " ".join(str(value).split())
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     text = _MARKUP.sub(r"\\\1", text)
+    text = _WWW.sub(r"\1&#46;", text).replace("@", "&#64;")
     return text.replace("://", ":&#47;&#47;")
 
 
@@ -52,7 +58,8 @@ def build(run_dir):
     explicit = sum(1 for item in links["links"] if item["basis"] == "explicit")
     limitations = list(found["limitations"])
     limitations.append(
-        "default_branch.moved_since_analysis is not re-checked by `spec report` (no fetch)."
+        "default_branch.moved_since_analysis is null: `spec report` does not fetch, so whether "
+        "the default branch moved since the analysis is not checked."
     )
     limitations.append(
         "inferred trace links come from the backend or its stub; they are listed apart and "
@@ -65,7 +72,7 @@ def build(run_dir):
         "criteria_hash": found["criteria_hash"],
         "repo": found["repo"],
         "status": found["status"],
-        "default_branch": {**found["default_branch"], "moved_since_analysis": False},
+        "default_branch": {**found["default_branch"], "moved_since_analysis": None},
         "prs": found["prs"],
         "findings": found["findings"],
         "trace": {

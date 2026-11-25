@@ -122,7 +122,8 @@ def test_an_inferred_link_alone_never_makes_a_high_finding(tmp_path, home):
     without = build(tmp_path / "none", files, {})
     env = {**home, "AI_HARNESS_HOME": str(tmp_path / "state-none")}
     _, _, found = analyzed(env, without, *MAIN)
-    assert all(f["basis"] == "explicit" for f in found["findings"])
+    # without a backend in analyze, only findings about an entity extract inferred are inferred
+    assert all(f["basis"] == "explicit" or f.get("inferred_entities") for f in found["findings"])
 
 
 def test_a_pr_that_names_an_unknown_id_is_input_missing(tmp_path, home):

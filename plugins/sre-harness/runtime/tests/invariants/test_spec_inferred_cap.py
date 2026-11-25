@@ -44,7 +44,8 @@ def test_the_builder_never_makes_it(kind):
 
 
 def _about_inferred(severity, basis):
-    return {**_finding(severity, basis), "inferred_entities": ["RQI-0001"]}
+    finding = _finding(severity, basis)
+    return {**finding, "entities": ["RQI-0001"], "inferred_entities": ["RQI-0001"]}
 
 
 @pytest.mark.parametrize("severity", ["critical", "high"])

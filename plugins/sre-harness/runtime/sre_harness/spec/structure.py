@@ -22,6 +22,9 @@ An ID is `REQ-0001` (four digits or more), `ADR-1` to `ADR-999999` or `DEC-0001`
 (entity, key) -> value with the value as written (quotes removed). Two facts are the same only
 when the entity and the key are the same; the IaC attribute and the document bullet must use
 the same key name.
+
+Lines are git's (`ingest_file.text_lines`: "\n" only), so a unit's line range is the range a
+`git diff` hunk names.
 """
 
 import re
@@ -94,7 +97,7 @@ def _ref(written, line, quote, hint=None):
 
 
 def _front_matter_unit(path, parsed, doc_node, doc_id):
-    lines = parsed["raw"].splitlines()
+    lines = ingest_file.text_lines(parsed["raw"])
     unit = _unit(doc_node, 1, len(lines))
     unit["text"] = parsed["raw"]
     for number, line in enumerate(lines, start=1):
@@ -122,7 +125,7 @@ def parse_markdown(path, text):
     stated = parsed["fields"].get("id")
     doc_id = stated if isinstance(stated, str) and ID.fullmatch(stated) else None
     doc_node = (id_type(doc_id), doc_id) if doc_id else ("design", path)
-    lines = text.splitlines()
+    lines = ingest_file.text_lines(text)
     units = []
     if parsed["raw"] is not None:
         units.append(_front_matter_unit(path, parsed, doc_node, doc_id))
@@ -176,7 +179,7 @@ def _comment_ids(line):
 
 
 def parse_tf(path, text):
-    lines = text.splitlines()
+    lines = ingest_file.text_lines(text)
     units, depth, current, comments = [], 0, None, []
     for number, line in enumerate(lines, start=1):
         if current is None:
@@ -215,7 +218,7 @@ def parse_tf(path, text):
 
 
 def parse_tests(path, text):
-    lines = text.splitlines()
+    lines = ingest_file.text_lines(text)
     starts = []
     for number, line in enumerate(lines, start=1):
         match = _TEST_DEF.fullmatch(line) or _TEST_CALL.fullmatch(line)
@@ -245,7 +248,7 @@ def parse(path, text):
 def bullet_facts(text):
     """[(key, value)] of the `- key: value` bullets in a text."""
     found = []
-    for line in text.splitlines():
+    for line in ingest_file.text_lines(text):
         match = _FACT.fullmatch(line)
         if match and match.group(1) not in NOT_FACT_KEYS:
             found.append((match.group(1), _value(match.group(2))))
@@ -253,16 +256,13 @@ def bullet_facts(text):
 
 
 def facts(units):
-    """{(entity, key): (value, line)} of a file version. The first statement of a key wins;
-    a second, different value in the same file is returned in the conflicts list."""
-    found, conflicts = {}, []
+    """{(entity, key): [(value, line), ...]} of a file version: every statement, in order. No
+    statement wins over another; a key stated with two values is for the caller to report."""
+    found = {}
     for unit in units:
         for entity, key, value, line in unit["facts"]:
-            if (entity, key) in found and found[(entity, key)][0] != value:
-                conflicts.append((entity, key, value, line))
-                continue
-            found.setdefault((entity, key), (value, line))
-    return found, conflicts
+            found.setdefault((entity, key), []).append((value, line))
+    return found
 
 
 def touched(units, ranges):

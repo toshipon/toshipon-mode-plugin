@@ -101,19 +101,18 @@ def test_markdown_front_matter_id_defines_the_document():
     front = units[0]
     assert [(r["id"], r["hint"]) for r in front["refs"]] == [("ADR-0004", "supersedes")]
     assert ("ADR-0010", "owner_team", "sre", 6) in front["facts"]
-    found, _ = structure.facts(units)
-    assert found[("ADR-0010", "retention_days")][0] == "30"
+    found = structure.facts(units)
+    assert found[("ADR-0010", "retention_days")] == [("30", 11)]
     assert any(r["id"] == "REQ-0001" for unit in units for r in unit["refs"])
 
 
 def test_markdown_sections_scope_facts_and_nodes_by_heading():
     units = structure.parse("docs/design.md", DESIGN)
     by_heading = {unit["start"]: unit for unit in units}
-    facts, conflicts = structure.facts(units)
-    assert conflicts == []
-    assert facts[("REQ-0001", "retention_days")] == ("400", 7)
-    assert facts[("REQ-0001", "archive_days")] == ("10", 12)  # a subsection inherits the id
-    assert facts[("REQ-0004", "timeout_seconds")] == ("10", 16)
+    facts = structure.facts(units)
+    assert facts[("REQ-0001", "retention_days")] == [("400", 7)]
+    assert facts[("REQ-0001", "archive_days")] == [("10", 12)]  # a subsection inherits the id
+    assert facts[("REQ-0004", "timeout_seconds")] == [("10", 16)]
     assert ("REQ-0001", "given") not in facts and ("REQ-0001", "Given") not in facts
     assert not any(key == "loose_key" for _, key in facts)  # no id in the heading
     nodes = [unit["node"] for unit in units]
@@ -167,7 +166,7 @@ OTHER_BREAKS = ("\r", "\x0c", "\x0b", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", 
 @pytest.mark.parametrize("mark", OTHER_BREAKS)
 def test_line_numbers_are_git_s(mark):
     tf = (
-        f'# note{mark}resource "forged" "x" {{\n'
+        f'# note{mark}resource "forged" "x" {{}}\n'
         'resource "aws_s3_bucket" "logs" {\n'
         f'  bucket = "a{mark}b"\n'
         "  retention_days = 400 # REQ-0001\n"

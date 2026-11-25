@@ -366,6 +366,8 @@ GitHub は `gh api --method GET` で `repos/{owner}/{repo}/pulls/{number}` と `
 - 実際の GitHub に対する `spec analyze`。テストは合成リポジトリ（ローカルの path から fetch）と fixture の PR 一覧だけを通ります。`https://<host>/<owner>/<repo>.git` からトークン付きで `refs/pull/<n>/head` を fetch できるか、fork が削除された PR の ref がどう見えるかは実機で確かめていません。
 - 指摘の精度。合成の 25 件で期待した件数が出ることを確かめただけで、実際のリポジトリでの誤検知率と見落とし率は測っていません。構造化記述（下の形）を書いていない文書の変更は `impact` にしかなりません。
 - `--backend claude` の推定リンクと説明文の質。テストは stub と `guard._run` を差し替えた経路だけを通ります。
+- bare リポジトリの fetch は `fetch.fsckObjects=true` で行います。古い履歴に fsck の警告（壊れた日付、tree の並び順など）がある実際のリポジトリでは fetch が失敗する可能性がありますが、確かめていません。失敗したら default branch の fetch で exit 1 になります。
+- `impact-report.md` の自動リンク対策（`www.`、`@`、`://` の文字参照化）が GitHub の Markdown 表示で実際にリンクにならないこと。テストは文字列に元の形が残らないことだけを確かめています。
 
 ## Specification Consistency: トレースと open PR の分析
 
@@ -393,7 +395,11 @@ PR の内容は harness 専用の bare リポジトリから読みます。利�
 | fetch する ref | default branch を `refs/sre-harness/heads/<branch>` に、open PR の `refs/pull/<n>/head` を `refs/sre-harness/pull/<n>` に。それ以外は fetch しません。partial clone は使いません |
 | diff | run の `diff-cache/<sha256>.diff`。`(merge base, head SHA)` ごとに 1 回だけ計算します |
 
-キャッシュは run をまたいで使います。消すときは `<ルート>/cache/git/` を削除してください（次の実行で作り直します）。git の実行回数は PR 1 件につき固定の数（`rev-parse`、`merge-base`、`diff`）と、読める変更ファイル 1 件につき 2 回（merge base 側と head 側の blob）で、PR の組の総当たりはしません。`analyze.json` の `git_calls` と `diffs` に実測が残ります。1 つの diff が 2 MiB、1 ファイルが 2 MiB、run の diff の合計が 64 MiB を超えたら、切り詰めずに exit 1 で止まります。
+キャッシュは run をまたいで使います。消すときは `<ルート>/cache/git/` を削除してください（次の実行で作り直します）。git の実行回数は PR 1 件につき固定の数（`rev-parse`、`merge-base`、`diff`）と、読める変更ファイル 1 件につき 2 回（merge base 側と head 側の blob）で、PR の組の総当たりはしません。`analyze.json` の `git_calls` と `diffs` に実測が残ります。1 つの PR の diff が 2 MiB を超えたら、その PR だけを分析せず `input_missing` にし（run は `partial`、exit 1）、他の PR の分析は出します。1 ファイルが 2 MiB、run の diff の合計が 64 MiB を超えたら、切り詰めずに exit 1 で止まります。
+
+diff とファイルの中身は git と同じく `\n` でだけ行に分けます（CRLF の行末の `\r` だけを落とします）。改ページや U+2028 などで行番号がずれることはなく、変更行の中に `\r` を挟んで `diff --git` や `@@` を書いても、hunk の本文は `@@` の行数どおりに読むので、ヘッダや hunk として扱いません。
+
+PR の base が default branch でない PR（stacked PR）も、default branch との merge base に対して diff を取ります。親 PR の変更がその PR の変更として数えられる可能性があるので、`prs[].base_is_default` を `false` にし、`limitations` とその PR の指摘の説明に書きます。base の ref を fetch して親との差分を取ることはしません。
 
 ### 読むファイルと構造化記述の形
 
@@ -417,9 +423,9 @@ PR が要求の値を変えたことは、次の構造化記述だけから読�
 
 trace-link は Decision → Requirement → Design → IaC → Test のつながりで、下の層から上の層へ向きます（`refines`、`implements`、`verifies`、`depends_on`、`conflicts_with`）。
 
-- **explicit** は規則で取れたものだけです。台帳の `decision_refs`、ファイル中の ID 参照（front-matter の `supersedes` は `conflicts_with`）、Markdown の section 中に書かれた resource アドレスやリポジトリの path（`infra/logs.tf`）、テスト名の中の ID です。
-- **inferred** は `--backend` を付けたときだけ作ります。ID を 1 つも書いていない default branch の Markdown を backend に渡し、提案のうち、引用が文書の部分文字列で、宛先が台帳にあるものだけを `confidence: low` で残します（除いたものは `analyze.json` の `rejected_links`）。stub は「決定か要求のタイトル（7 文字以上）を含み、その ID を含まない文書」をつなぐだけで、LLM の品質を何も示しません。
-- 報告では explicit と inferred を別の列に出します。inferred の根拠だけで成り立つ指摘は `basis: inferred` になり、重大度は `medium` を上限にします。`critical` と `high` の唯一の根拠にはなりません（builder、`findings.check`、impact-report の schema の 3 か所で検査しています）。
+- **explicit** は規則で取れたものだけです。台帳の `decision_refs`、ファイル中の ID 参照（front-matter の `supersedes` は `conflicts_with`。ファイルに書かれた ID は、文書が書いた ID（`external_id`）だけで台帳に解決します。harness が振った `DEC-` の番号や推定の `DCI-` / `RQI-` にはつながりません）、Markdown の section 中に書かれた resource アドレスやリポジトリの path（`infra/logs.tf`）、テスト名の中の ID です。
+- **inferred** は `--backend` を付けたときだけ作ります。ID を 1 つも書いていない default branch の Markdown を backend に渡し、提案のうち、引用が空白を除いて 8 文字以上で文書の部分文字列で、宛先が台帳にあるもの（台帳の ID で指します）だけを `confidence: low` で残します（除いたものは `analyze.json` の `rejected_links`）。stub は「決定か要求のタイトル（7 文字以上）を含み、その ID を含まない文書」をつなぎ、タイトルを含む行を引用にするだけで、LLM の品質を何も示しません。
+- 報告では explicit と inferred を別の列に出します。inferred の根拠だけで成り立つ指摘は `basis: inferred` になり、重大度は `medium` を上限にします。`critical` と `high` の唯一の根拠にはなりません。推定の決定・要求（`DCI-` / `RQI-`）が対象の指摘も、証跡が explicit でも `basis: inferred` にして `inferred_entities` に挙げ、`medium` を上限にします（builder、`findings.check`、impact-report の schema の 3 か所で検査しています）。
 
 ### 指摘の種類
 
@@ -427,21 +433,21 @@ trace-link は Decision → Requirement → Design → IaC → Test のつなが
 
 | kind | 重大度 | 規則 |
 |---|---|---|
-| `semantic_conflict` | critical | 2 つ以上の open PR が、同じ entity の同じ構造化キーを互いに違う値にする。候補は (entity, key) の索引から決定論的に出します（PR の組の総当たりはしません）。同じ merge base の上で diff の hunk が重なるか隣り合う組は git が merge で衝突として示すので数えず、`limitations` に書きます。同じ値にする PR 同士は競合しません。backend は説明文だけを書きます |
-| `contradiction` | high | default branch のファイルの値が台帳の値（台帳の元の section の構造化記述）と違う。台帳に値が無いときはファイル同士で値が違う |
+| `semantic_conflict` | critical | 2 つ以上の open PR が、同じ entity の同じ構造化キーを互いに違う値にする。候補は (entity, key) の索引から決定論的に出します（PR の組の総当たりはしません）。PR がそのキーに与える値の集合（同じファイルに古い値の記述を残した場合も含む）が merge base と違えば「変えた」とみなします。同じ merge base の上で、そのキーの記述を含む hunk 同士が重なるか隣り合う組は git が merge で衝突として示すので数えず、`limitations` に書きます。別のファイル（両方が触る CHANGELOG など）の重なりでは数えるのをやめず、説明文に注記します。同じ値にする PR 同士は競合しません。backend は説明文だけを書きます |
+| `contradiction` | high | default branch のファイルの値が台帳の値（台帳の元の section の構造化記述）と違う。台帳に値が無いときはファイル同士で値が違う。PR では、PR の head が同じキーに違う値を 2 つ以上残している（その PR に付けます） |
 | `superseded_dependency` | high | superseded な決定に依存する要求・文書・IaC・テスト（決定から決定への参照は除く）。PR では、PR が新しく足した参照だけを数えます |
 | `missing_test` | high | PR が要求の構造化記述を変えたのに、その要求の ID を名前に持つテストを PR が変えていない（explicit なトレースだけで判定） |
 | `stale_sha` | high | PR 一覧の head SHA と fetch した `refs/pull/<n>/head` が違う（一覧と fetch の間に head が動いた）。その PR は分析せず、run は `stale` で exit 1。他の PR の分析は出します |
 | `not_reflected` | medium | approved で有効な決定か explicit な要求の ID を default branch のどのファイルも書いていない、または台帳の構造化記述のキーがどのファイルにも無い |
 | `ambiguous_requirement` | medium | 台帳の要求に `ambiguity` がある（規則の検出は explicit、LLM の検出は inferred） |
-| `input_missing` | medium | 台帳に無い ID への参照、extract の `input_missing`、head を fetch できなかった PR（fork の削除など。run は `partial` で exit 1） |
+| `input_missing` | medium | 台帳に無い ID への参照、extract の `input_missing`、head を fetch できなかった PR（fork の削除など）、PR 番号の無い（またはオブジェクトでない）PR 一覧の項目、diff が上限を超えた PR、UTF-8 でない変更ファイル（`prs[].unread_files`。default branch のファイルも）。台帳と参照以外のものは run を `partial`（exit 1）にします |
 | `impact` | info | PR が変えた単位からトレースを辿って届く決定と要求 |
 
 ### 報告
 
-`impact-report.json`（schema `impact-report`）は `run_id`、`generated_at`、`criteria_hash`（規則の版、重大度の表、inferred の上限、台帳の hash）、`default_branch{name, sha, moved_since_analysis}`、`prs[{number, head_sha, merge_base, analyzed_head_sha, stale}]`、`findings[]`、`limitations[]` を持ちます。`patches` と `audit` は後続の段が埋めます。`moved_since_analysis` は `spec report` が fetch しないので常に false です。
+`impact-report.json`（schema `impact-report`）は `run_id`、`generated_at`、`criteria_hash`（規則の版、重大度の表、inferred の上限、台帳の hash）、`default_branch{name, sha, moved_since_analysis}`、`prs[{number, head_sha, merge_base, analyzed_head_sha, stale, base_ref, base_is_default, unread_files?}]`、`findings[]`、`limitations[]` を持ちます。`patches` と `audit` は後続の段が埋めます。`moved_since_analysis` は `spec report` が fetch しないので `null`（未確認）です。確かめていない値を「動いていない」で埋めません。
 
-`impact-report.md` に載せる外部入力（PR タイトル、文書の引用、ファイルの値、説明文）は、表のセルではリンク・画像・HTML・`|`・バッククォートの記法をエスケープし、`://` を文字参照にします。引用と説明文は、本文中のバッククォートより長い fence のコードブロックに入れます。findings.json の `status` が `stale` か `partial` なら `spec report` も exit 1 です。
+`impact-report.md` に載せる外部入力（PR タイトル、文書の引用、ファイルの値、説明文）は、表のセルではリンク・画像・HTML・`|`・バッククォートの記法をエスケープし、GFM の自動リンクにならないよう `://` の `/`、`www.` の `.`、`@` を文字参照にします。引用と説明文は、本文中のバッククォートより長い fence のコードブロックに入れます。findings.json の `status` が `stale` か `partial` なら `spec report` も exit 1 です。
 
 `--format evaluator-output` は toshipon-mode の Autonomous Improvement Harness v2 の `evaluation.schema.json` の `$defs/output` の形で、種類ごとの件数（`findings_<kind>`）、`findings_total`、`findings_inferred`、`prs_total`、`prs_stale`、`prs_unanalyzed` と、指摘ごとの evidence（`impact-report.json#FD-0001`）を出します。分析できた PR が 0 件なら `unevaluable` を付けます。
 
