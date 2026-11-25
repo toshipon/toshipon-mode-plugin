@@ -425,6 +425,57 @@ def build_parallel(directory, numbers=ALL_PRS, missing=()):
     return build(directory, BASE_FILES, chosen, missing)
 
 
+def advance_branch(source, files):
+    """Put one more commit on `main` of the source repository. Returns the new SHA."""
+    source = Path(source)
+    _write(source, files)
+    return _commit(source, "follow-up on main")
+
+
+# Patches ----------------------------------------------------------------------------------
+
+DANGER_PR = 130
+DANGER_PATH = ".github/workflows/notes.md"
+NOTE_PATH = "docs/design/retention-note.md"
+PATCH_PRS = (SUPERSEDED_PR, DANGER_PR)
+RETENTION_NOTE = """\
+# 保持の補足
+
+## 保持の補足（REQ-0001）
+
+- retention_days: 365
+
+運用の補足です。
+"""
+
+
+def build_patches(directory):
+    """The patch scenario. On `main`, `docs/design/retention-note.md` and `infra/logs.tf` state
+    REQ-0001's `retention_days` as 365 while the registry says 400 (a `contradiction`: the
+    document gets a patch, the IaC file is refused), and `docs/requirements.md` ties REQ-0004 to
+    the superseded ADR-0002 (a patch to ADR-0005). PR 107 adds a design document that follows
+    ADR-0002 (a patch on its head). PR 130 adds the same text under `.github/workflows/`, which
+    is never patched: its fix is refused and the reason recorded."""
+    from .spec_scenarios import REQUIREMENTS
+
+    base = dict(BASE_FILES)
+    base[NOTE_PATH] = RETENTION_NOTE
+    base["infra/logs.tf"] = _replace(
+        "infra/logs.tf",
+        f"retention_days = {RETENTION_DAYS} # REQ-0001",
+        "retention_days = 365 # REQ-0001",
+    )
+    changes = parallel_changes(REQUIREMENTS)
+    pulls = {
+        SUPERSEDED_PR: changes[SUPERSEDED_PR],
+        DANGER_PR: {
+            "title": "CI の補足を足す",
+            "files": {DANGER_PATH: changes[SUPERSEDED_PR]["files"]["docs/design/http-retry.md"]},
+        },
+    }
+    return build(directory, base, pulls)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("out_dir")

@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:spec-patch",
+  "title": "spec-patch",
+  "description": "patches/<PT-id>.json, written by `spec report` next to patches/<PT-id>.diff. Only patches that passed the gate (headers, path allowlist, regular files, `git apply --cached --check` in a temporary index) are written. `$defs/entry` is the same patch as impact-report.json lists it. `$defs/rejection` is a fix that was not written, with its reason.",
+  "type": "object",
+  "allOf": [{ "$ref": "#/$defs/entry" }],
+  "required": ["schema_version", "run_id", "created_at", "finding_kind"],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "run_id": { "$ref": "urn:sre-harness:common#/$defs/run_id" },
+    "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "finding_kind": { "enum": ["contradiction", "superseded_dependency"] }
+  },
+  "unevaluatedProperties": false,
+  "$defs": {
+    "path": {
+      "description": "A repository path the allowlist let through: plain segments, Markdown only.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._+-]+(/[A-Za-z0-9._+-]+)*$",
+      "maxLength": 300
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "id",
+        "finding_id",
+        "target_pr",
+        "target_ref",
+        "target_head_sha",
+        "paths",
+        "preimage_blob_shas",
+        "apply_check",
+        "content_sha256",
+        "diff"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^PT-[0-9]{4,}$" },
+        "finding_id": { "type": "string", "pattern": "^FD-[0-9]{4,}$" },
+        "target_pr": {
+          "description": "The PR whose head the patch is for; null for the default branch.",
+          "anyOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+        },
+        "target_ref": {
+          "type": "string",
+          "pattern": "^refs/(heads/[A-Za-z0-9][A-Za-z0-9._/-]{0,199}|pull/[1-9][0-9]{0,8}/head)$"
+        },
+        "target_head_sha": { "$ref": "urn:sre-harness:common#/$defs/git_sha" },
+        "paths": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/path" } },
+        "preimage_blob_shas": {
+          "description": "{path: blob SHA at target_head_sha}.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/path" },
+          "additionalProperties": { "$ref": "urn:sre-harness:common#/$defs/git_sha" }
+        },
+        "apply_check": { "enum": ["passed", "failed"] },
+        "content_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+        "diff": { "type": "string", "pattern": "^patches/PT-[0-9]{4,}\\.diff$" }
+      }
+    },
+    "patch": {
+      "description": "An entry of impact-report.json's `patches`.",
+      "allOf": [{ "$ref": "#/$defs/entry" }],
+      "unevaluatedProperties": false
+    },
+    "rejection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "target_pr", "reason", "detail"],
+      "properties": {
+        "finding_id": { "type": "string", "pattern": "^FD-[0-9]{4,}$" },
+        "target_pr": { "anyOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }] },
+        "target_head_sha": { "$ref": "urn:sre-harness:common#/$defs/git_sha" },
+        "path": {
+          "description": "The path as the finding or the diff gave it (DATA; may be the reason it was refused).",
+          "type": "string",
+          "maxLength": 300
+        },
+        "reason": {
+          "enum": [
+            "not_a_plain_path",
+            "dotdot",
+            "git_dir",
+            "github_dir",
+            "iac_or_code",
+            "not_allowed",
+            "quoted_path",
+            "no_prefix",
+            "header_mismatch",
+            "extended_header",
+            "new_or_deleted_file",
+            "mode",
+            "binary",
+            "unexpected_line",
+            "bad_hunk",
+            "truncated_hunk",
+            "no_hunk",
+            "path_twice",
+            "not_a_plain_text",
+            "path_not_at_target",
+            "not_utf8",
+            "no_final_newline",
+            "line_changed",
+            "evidence_not_at_target",
+            "reference_not_found",
+            "no_registry_value",
+            "no_single_successor",
+            "several_prs",
+            "stale_sha",
+            "apply_check_failed"
+          ]
+        },
+        "detail": { "type": "string", "maxLength": 500 }
+      }
+    }
+  }
+}

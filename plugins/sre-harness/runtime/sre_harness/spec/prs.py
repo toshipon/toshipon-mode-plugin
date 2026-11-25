@@ -150,22 +150,41 @@ class Repository:
     def __repr__(self):
         return f"Repository({str(self.git_dir)!r})"  # the token never appears
 
-    @classmethod
-    def open(cls, root, owner, name, source, token=None, host=None):
-        """The cache entry for (repository, fetch source), created on first use."""
+    @staticmethod
+    def _names(root, owner, name, source):
         key = records.sha256(f"{owner}/{name}\n{source}")[:12]
         git_dir = paths.child(root, "cache", "git", f"{owner}--{name}--{key}.git")
         marker = paths.child(root, "cache", "git", f"{owner}--{name}--{key}.json")
+        return git_dir, marker
+
+    @classmethod
+    def open(cls, root, owner, name, source, token=None, host=None):
+        """The cache entry for (repository, fetch source), created on first use."""
+        git_dir, marker = cls._names(root, owner, name, source)
         repository = cls(git_dir, source, token, host)
         if not (git_dir / "HEAD").is_file():
             records.write_json(marker, {"repo": f"{owner}/{name}", "source": source})
             repository.run(["init", "--bare", "--quiet"])
         return repository
 
-    def run(self, arguments, allowed=(0,)):
-        """(exit code, stdout). An exit code outside `allowed` stops the stage."""
+    @classmethod
+    def existing(cls, root, owner, name, source):
+        """The cache entry `spec analyze` filled. Nothing is created or fetched."""
+        git_dir, _ = cls._names(root, owner, name, source)
+        if git_dir.is_symlink() or not (git_dir / "HEAD").is_file():
+            raise InputError(
+                "the bare repository `spec analyze` used is gone (cache/git/); run the analysis "
+                "again."
+            )
+        return cls(git_dir, source)
+
+    def run(self, arguments, allowed=(0,), index_file=None):
+        """(exit code, stdout). An exit code outside `allowed` stops the stage. `index_file`
+        points git at a temporary index instead of the repository's own."""
         self.calls += 1
-        code, out = guard.git(self.git_dir, arguments, token=self._token, host=self._host)
+        code, out = guard.git(
+            self.git_dir, arguments, token=self._token, index_file=index_file, host=self._host
+        )
         if code not in allowed:
             raise QualityGateError(f"git {arguments[0]} failed with exit code {code}.")
         return code, out
@@ -208,6 +227,30 @@ class Repository:
         )
         lines = _decode(out, "a path").split("\n")
         return [unquote(line.split("\t", 1)[1]) for line in lines if line]
+
+    def entry(self, sha, path):
+        """(mode, blob sha) of `path` in the commit's tree, or None when it is not a blob.
+
+        Read with `git cat-file -p` of the parent tree (`<sha>:<dir>`, or the commit's tree for
+        a top-level path), so a symlink (120000) or a submodule (160000) shows as such."""
+        directory, _, base = path.rpartition("/")
+        if directory:
+            code, out = self.run(["cat-file", "-p", f"{sha}:{directory}"], allowed=range(0, 256))
+        else:
+            code, out = self.run(["cat-file", "-p", sha], allowed=range(0, 256))
+            tree = re.match(rb"tree ([0-9a-f]{40})\n", out) if code == 0 else None
+            if tree is None:
+                return None
+            code, out = self.run(["cat-file", "-p", tree.group(1).decode()], allowed=range(0, 256))
+        if code != 0:
+            return None
+        # Tree lines end at "\n" only; `splitlines` would also cut a name at U+2028 or \x0c.
+        for line in out.decode("utf-8", "replace").split("\n"):
+            meta, _, name = line.partition("\t")
+            fields = meta.split(" ")
+            if name == base and len(fields) == 3 and fields[1] == "blob":
+                return fields[0], fields[2]
+        return None
 
     def blob(self, sha, path):
         """The file's text at `sha`, or None when it is absent or not UTF-8. Read once."""

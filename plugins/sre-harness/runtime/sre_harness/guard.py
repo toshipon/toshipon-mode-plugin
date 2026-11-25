@@ -94,6 +94,9 @@ GIT_SUBCOMMANDS = {
     "apply": {"--cached", "--check"},
 }
 _GIT_REQUIRED = {"init": ("--bare",), "apply": ("--cached", "--check")}
+# These write an index. Without a temporary one (GIT_INDEX_FILE) they would write the bare
+# repository's own index, so `git` refuses them when no `index_file` is given.
+_GIT_NEEDS_INDEX = frozenset({"read-tree", "apply"})
 _GIT_CONFIG = (
     ("credential.helper", ""),
     ("core.hooksPath", os.devnull),
@@ -382,6 +385,8 @@ def git(git_dir, arguments, *, token=None, host=None, index_file=None, env=None,
     is given the token. A local directory source never gets the token.
     """
     arguments = check_git(arguments)
+    if arguments[0] in _GIT_NEEDS_INDEX and index_file is None:
+        raise BoundaryError(f"refused git {arguments[0]}: it runs only against a temporary index.")
     git_dir = Path(git_dir)
     if not git_dir.is_absolute():
         raise BoundaryError("refused git: the repository path must be absolute.")
