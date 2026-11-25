@@ -17,4 +17,4 @@
 - Improvement に渡す場合: メモを読み、対象の run に `harness.py hypothesis add <run> --file` で仮説を登録する。`rationale` と `family` は登録する人が書く。
 - Evolution に渡す場合: `harness.py evolve analyze` が同じ失敗を `eligible` に挙げているかを確かめ、挙がっていれば `evolve hypothesis-add --file` で登録する。挙がっていなければ、Evolution の発動条件（件数と出所の数）に達していない。
 
-Insight Discovery のコードは、土台の評価・比較・承認の関数を呼ばない。これはテスト（`tests/test_cli.py` の `SourceBoundaries`）で固定している。
+Insight Discovery のコードは、土台の評価、比較、評価 suite と提案の承認の関数を呼ばない。土台から使うのは、人の承認を記録する共通のゲート（`require_human`）だけである。呼ばないことは、ソースを走査するテスト（`tests/test_cli.py` の `SourceBoundaries`）で確かめている。

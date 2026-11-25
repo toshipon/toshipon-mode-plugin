@@ -12,13 +12,19 @@ from . import signals
 # Assertions of novelty. Whether something is new is a status computed from recorded searches
 # (novelty.status), so a sentence that claims it is never accepted from a model.
 NOVELTY_CLAIM = re.compile(
-    r"新規性|前例(?:が|は|の|も)?\s*(?:な[いく]|無[いく])|世界初|史上初|業界初|画期的|未踏"
+    r"新規性|新規[のな]|先行(?:研究|事例)(?:は|が|も)?\s*(?:存在しない|ない|無い)|初めて(?:提案|示)|前例(?:が|は|の|も)?\s*(?:な[いく]|無[いく])|世界初|史上初|業界初|画期的|未踏"
     r"|誰も\S{0,12}(?:ていない|てない|たことがない)"
-    r"|\bnovel(?:ty)?\b|\bunprecedented\b|\bfirst[- ]ever\b|\bgroundbreaking\b"
-    r"|\bno (?:prior|existing|previous) (?:work|art|method|approach)"
-    r"|\bnever been (?:done|tried|studied|explored)\b",
+    r"|これまでに(?:ない|無い)|今までに(?:ない|無い)"
+    # Latin words are fenced with letter lookarounds: \b does not see a boundary next to kana or kanji.
+    r"|(?<![A-Za-z])(?:novel(?:ty)?|unprecedented|first[- ]ever|groundbreaking|state[- ]of[- ]the[- ]art"
+    r"|no (?:prior|existing|previous) (?:work|art|method|approach)"
+    r"|never been (?:done|tried|studied|explored)|(?:nobody|no one) has (?:tried|done|studied))"
+    r"(?![A-Za-z])",
     re.IGNORECASE,
 )
+
+
+MIN_QUOTE = 8
 
 
 def claims_novelty(*texts):
@@ -45,8 +51,13 @@ def _reject(rejected, ref, reason, **extra):
     rejected.append({"ref": str(ref), "reason": reason, **extra})
 
 
+def _plain(text):
+    return "".join(text.split()).lower()
+
+
 def similar(first, second):
-    return difflib.SequenceMatcher(None, first, second).ratio()
+    """Likeness of two statements, ignoring case and spacing."""
+    return difflib.SequenceMatcher(None, _plain(first), _plain(second)).ratio()
 
 
 def observe(output, evidence):
@@ -67,6 +78,12 @@ def observe(output, evidence):
             _reject(rejected, position, "unsupported_novelty_claim")
         elif any(not any(quote in source for source in sources) for quote in item["quotes"]):
             _reject(rejected, position, "quote_not_in_source")
+        elif any(
+            len(quote.strip()) < MIN_QUOTE and quote.strip() not in sources
+            for quote in item["quotes"]
+        ):
+            # A particle or a single word is a substring of anything; it supports nothing.
+            _reject(rejected, position, "quote_too_short")
         else:
             position_to_id[position] = f"O{len(accepted) + 1}"
             accepted.append(
@@ -84,12 +101,16 @@ def observe(output, evidence):
             based_on
             and all(index in position_to_id for index in based_on)
             and not _blank(item["text"])
+            and not claims_novelty(item["text"])
         ):
             interpretations.append(
                 {"text": item["text"], "based_on": [position_to_id[index] for index in based_on]}
             )
         else:
-            _reject(rejected, f"interpretation {position}", "interpretation_without_observation")
+            reason = "interpretation_without_observation"
+            if claims_novelty(item["text"]):
+                reason = "unsupported_novelty_claim"
+            _reject(rejected, f"interpretation {position}", reason)
     return {"observations": accepted, "interpretations": interpretations}, rejected
 
 

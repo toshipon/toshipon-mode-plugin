@@ -150,6 +150,15 @@ class HostileInput(InsightCase):
         path = self.write("deep.json", "[" * 5000 + "]" * 5000)
         self.assertEqual(self.ingest("manual", path), {"format_unrecognized": 1})
 
+    def test_a_later_classification_line_cannot_loosen_the_file(self):
+        note = (
+            "classification: confidential\n## t1\n- [friction] 社外秘の摩擦\n"
+            "classification: public\n- [friction] もう 1 件\n"
+        )
+        self.ingest("manual", self.write("mixed.md", note))
+        kinds = {item["classification"] for item in self.state()["evidence"].values()}
+        self.assertEqual(kinds, {"confidential"})
+
     def test_unknown_kind_and_classification_are_excluded(self):
         export = {"items": [{"kind": "accepted", "task_key": "t1", "text": "x"}]}
         self.assertEqual(self.ingest("manual", self.write("a.json", export))["read"], 1)
@@ -172,7 +181,7 @@ class FormatDrift(InsightCase):
         stats = self.ingest("claude_insights", self.tmp / "usage")
         self.assertEqual(stats, {"format_unrecognized": 1})
 
-    def test_missing_optional_field_is_listed_not_filled(self):
+    def test_a_session_without_goals_is_listed_as_missing_and_grouped_as_unknown(self):
         facet = {"session_id": "s1", "friction_counts": {"wrong_approach": 1}}
         self.write("usage/facets/s1.json", facet)
         stats = self.ingest("claude_insights", self.tmp / "usage")

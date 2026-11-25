@@ -167,9 +167,9 @@ def register_schemas(namespace, directory):
 
 def schema_location(name):
     """(file, $ref) of 'file', 'file#def' or 'namespace:file#def'. No namespace means this skill's."""
-    namespace, _, rest = name.rpartition(":")
+    target, _, definition = name.partition("#")
+    namespace, _, filename = target.rpartition(":")
     namespace = namespace or SCHEMA_NAMESPACE
-    filename, _, definition = rest.partition("#")
     if namespace not in SCHEMA_DIRS:
         raise HarnessError(f"unknown schema namespace: {namespace}")
     reference = f"{namespace}/{filename}.schema.json"

@@ -109,11 +109,11 @@ def _candidate_lines(candidate, show_hypothesis):
         f"- 監査（{audit['auditor']['independence']}）: 既存で十分か = "
         f"{audit['existing_sufficient']['verdict']}、問題設定 = {audit['problem_framing']['verdict']}、"
         f"反証可能 = {audit['falsifiable']['verdict']}、指摘 {len(audit['findings'])} 件",
-        f"- 最小実験: {experiment['procedure']}",
+        f"- 最小実験（必要時間 {experiment['estimated_hours']} 時間）: {experiment['procedure']}",
         f"- 比較対象: {experiment['comparison']}",
         f"- 成功条件: {candidate['success_criteria']}",
         f"- 棄却条件: {candidate['kill_criteria']}",
-        f"- 推定コスト: {experiment['estimated_hours']} 時間"
+        f"- 推定コスト: {candidate['estimated_cost']['hours']} 時間"
         f"（費用 {candidate['estimated_cost']['money']}。{candidate['estimated_cost']['note']}）",
         f"- 確信度: {candidate['confidence']}（{candidate['confidence_reason']}）",
         "- 順位付け: "
@@ -149,7 +149,15 @@ def render(state, settings, now):
     selected = state["selections"].get(week)
     if selected:
         lines += [f"今週の実験として選択済み: {selected}", ""]
-    lines += ["## 引き渡したもの", ""]
+    decided = [c for c in state["candidates"].values() if c["status"] != "candidate"]
+    lines += ["## 選択と結果", ""]
+    lines += [
+        f"- {candidate['id']}: {candidate['status']}"
+        f"（{candidate['history'][-1]['at'][:10]}、{candidate['history'][-1]['actor']}、"
+        f"理由: {candidate['history'][-1]['reason']}）— {candidate['hypothesis']['statement']}"
+        for candidate in decided
+    ] or ["- なし"]
+    lines += ["", "## 引き渡したもの", ""]
     lines += [
         f"- {note['insight_id']} → {note['target']}: {note['statement']}（理由: {note['reason']}）"
         for note in state["handoffs"]
@@ -170,10 +178,15 @@ def render(state, settings, now):
 
 def as_json(state, settings, now):
     week = st.week_of(now)
+    shown = ranking.presentable(state, settings)
+    if week not in state["priors"] and week not in state["prior_skips"]:
+        # Same rule as the Markdown: observations first, generated hypotheses after the person's own.
+        keys = ("id", "observations", "evidence_refs", "evidence_summary", "abstracted_problem")
+        shown = [{key: candidate[key] for key in keys} for candidate in shown]
     return {
         "week": week,
         "human_prior_recorded": week in state["priors"],
-        "candidates": ranking.presentable(state, settings),
+        "candidates": shown,
         "handoffs": state["handoffs"],
         "selected": state["selections"].get(week),
     }

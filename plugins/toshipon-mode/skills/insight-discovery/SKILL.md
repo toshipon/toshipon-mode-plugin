@@ -19,7 +19,7 @@ argument-hint: "[next | 候補 ID]"
 
 ## 1 回の進め方
 
-1. `next` を実行し、返った行動だけを行う。`start_cycle`、`stage`、`finalize`、`none` のどれかが返る。`none` は「新しい証拠が無い」で、正常な終了である。
+1. `next` を実行し、返った行動だけを行う。`start_cycle`、`stage`、`finalize`、`none` のどれかが返る。`finalize` が返ったら `finalize` コマンドでサイクルを閉じる（`step record` は最後の段を記録すると自動で閉じるので、これが返るのは途中で切れたときだけである）。`none` は「新しい証拠が無い」で、正常な終了である。
 2. 入力を足すときは `ingest --source <adapter> [--path]` を使う。`manual`（JSON / Markdown の手動エクスポート）、`ledger`（土台の hook 記録と実行台帳）、`claude_insights`（`/insights` が残した構造化項目）、`review`（pr-feedback の指摘ファイル）がある。秘密情報の形をした文字列と禁止語は保存前に伏せられる。
 3. adapter を設定してあれば `run --daily` が、取り込みから候補の登録までを上限の範囲で進める。先に `run --daily --dry-run` で、読む件数と呼び出し回数の見積もりを確かめられる。
 4. adapter を使わず対話で進めるときは、段ごとに `step prompt <stage>` で渡された `data` を読み、`agents/insight-discovery.md` の該当する役割に従って JSON を書き、`step record <stage> --file <path>` で記録する。段は observe、structure、hypothesize、audit、assess の順である。
@@ -38,9 +38,9 @@ argument-hint: "[next | 候補 ID]"
 ## 週次の選択
 
 1. `weekly` がレポートを書く。候補は最大 3 件である。
-2. 利用者に、まず観測事実と抽象化した問題だけを見せ、自分の仮説を `prior --text` で書いてもらう。書くまで、生成した仮説・実験案はレポートに出ない。書かずに進める場合は `prior --skip --reason` で理由を残す。
+2. 利用者に、まず観測事実と抽象化した問題だけを見せ、自分の仮説を `prior --text` で書いてもらう。書くまで、生成した仮説・実験案はレポートに出ない。書かずに進める場合は `prior --skip --reason` で理由を残す。どちらも週に 1 回だけで、agent が代わりに書かない。
 3. 利用者が選んだ 1 件を `select <id> --reviewer <名前> --reason <理由>` で記録する。週に 1 件までで、reviewer は人の名前でなければ拒否される。agent が代わりに選ばない。
-4. 実験の後、結果を `resolve <id> --status tested --reason` で記録する。見送る候補は `--status rejected` にする。棄却済みと同じ内容の仮説は、新しい証拠が無ければ再び提示されない。
+4. 実験の後、利用者が結果を `resolve <id> --status tested --reviewer <名前> --reason <理由>` で記録する。見送る候補は `--status rejected` にする。agent が代わりに記録しない。棄却済みと同じ内容の仮説は、新しい証拠が無ければ再び提示されない。
 
 ## 既存手法の調査
 
@@ -53,4 +53,4 @@ argument-hint: "[next | 候補 ID]"
 
 ## 人の承認が要る操作
 
-スケジュールの導入、hook の有効化、外部検索、候補の選択、公開 PR、実験の実行。この skill のコマンドは、スケジュール実行と harness が起動した子プロセスの中では承認を記録できない。
+スケジュールの導入、hook の有効化、外部検索、候補の選択と結果の記録、引き渡し、公開 PR、実験の実行。人の判断を記録するコマンド（`prior`、`select`、`resolve`、`handoff`、`abandon`、`search approve`、`search record`）は、スケジュール実行と harness が起動した子プロセスの中では拒否される。

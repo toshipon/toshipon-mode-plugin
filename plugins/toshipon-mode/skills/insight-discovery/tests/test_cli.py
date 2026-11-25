@@ -11,7 +11,7 @@ import sys
 import unittest
 from unittest import mock
 
-from support import EXAMPLES, ROOT, InsightCase, cli, foundation, st
+from support import EXAMPLES, ROOT, InsightCase, cli, foundation, st, stub_agent
 
 LAUNCHER = ROOT / "scripts" / "insight.py"
 RUNTIME = ROOT / "runtime" / "insight_discovery"
@@ -87,8 +87,24 @@ class EndToEnd(CliCase):
         self.json("select", first, "--reviewer", "Hanako", "--reason", "今週試す")
         code, _, _ = self.cli("select", second, "--reviewer", "Hanako", "--reason", "これも")
         self.assertEqual(code, 3)
-        self.json("resolve", first, "--status", "tested", "--reason", "やり直しが半減した")
-        self.json("handoff", second, "--target", "evolution", "--reason", "手順の修正で足りる")
+        self.json(
+            "resolve", first, "--status", "tested", "--reviewer", "Hanako", "--reason", "半減した"
+        )
+        code, _, _ = self.cli(
+            "resolve", second, "--status", "rejected", "--reviewer", "Hanako", "--reason", "r",
+            env={"AI_HARNESS_AUTOMATED": "1"},
+        )  # fmt: skip
+        self.assertEqual(code, 3)
+        self.json(
+            "handoff",
+            second,
+            "--target",
+            "evolution",
+            "--reviewer",
+            "Hanako",
+            "--reason",
+            "手順で足りる",
+        )
 
         status = self.json("status")
         self.assertEqual(status["candidates"], {"tested": 1, "candidate": 1})
@@ -109,10 +125,28 @@ class EndToEnd(CliCase):
         summary = self.json("run", "--daily")  # the cap is below one call: nothing is started
         self.assertEqual((summary["llm_calls"], summary["stopped"]["limit"]), (0, "cost"))
 
-    def test_stages_by_hand_and_a_search(self):
-        sys.path.insert(0, str(EXAMPLES))
-        import stub_agent
+    def test_a_cycle_left_open_after_its_last_stage_is_closed_by_finalize(self):
+        from support import pipeline
 
+        self.json("ingest", "--source", "manual", "--path", str(self.tmp / "demo" / "records"))
+        code, _, _ = self.cli("finalize")
+        self.assertEqual(code, 1)  # nothing is open yet
+        settings = st.load_config(self.home)
+        now = self.tick()
+        pipeline.start_cycle(self.home, settings, now)
+        code, _, _ = self.cli("finalize")
+        self.assertEqual(code, 1)  # stages are still due
+        for stage in st.STAGES:
+            state = st.load(self.home)
+            body, _ = pipeline.payload(state, state["cycles"][state["open_cycle"]], stage)
+            pipeline.record_stage(
+                self.home, stage, stub_agent.answer(body), now, settings, "separate_process"
+            )
+        self.assertEqual(self.json("next")["action"], "finalize")
+        self.assertEqual(len(self.json("finalize")["presented"]), 2)
+        self.assertEqual(self.json("next")["action"], "none")
+
+    def test_stages_by_hand_and_a_search(self):
         self.json("ingest", "--source", "manual", "--path", str(self.tmp / "demo" / "records"))
         code, _, err = self.cli("step", "prompt", "audit")
         self.assertEqual(code, 1, err)
@@ -151,6 +185,9 @@ class ExitCodes(CliCase):
         self.assertEqual(code, 3)
         code, _, _ = self.cli("step", "record", "observe", "--file", str(self.tmp / "absent.json"))
         self.assertEqual(code, 2)
+        empty = self.write("observe.json", {"observations": [], "interpretations": []})
+        code, _, _ = self.cli("step", "record", "observe", "--file", str(empty))
+        self.assertEqual(code, 1)  # no cycle is open: the loop's order was not followed
         self.write("state/insight/config.json", {"limits": {"max_candidates": 9}})
         code, _, err = self.cli("status")
         self.assertEqual((code, "schema violation" in err), (2, True))

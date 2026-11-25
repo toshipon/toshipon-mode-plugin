@@ -89,14 +89,15 @@ class DailyAndWeekly(ScheduleCase):
         self.assertEqual(len(self.state()["evidence"]), 11)
         self.assertEqual(len(self.state()["candidates"]), 2)
 
-    def test_a_policy_refusal_ends_the_job_instead_of_retrying(self):
+    def test_evidence_the_policy_withholds_ends_the_job_without_a_model_call(self):
         self.configure_foundation(
             schedule=SCHEDULE, llm_policy={"allowed_classifications": ["public"]}
         )
         _, done = self.tick_at(MONDAY)
         self.assertEqual(done[0]["status"], "done")
-        self.assertEqual(done[0]["result"]["action"], "refused")
-        self.assertEqual(self.state()["candidates"], {})
+        self.assertEqual(done[0]["result"]["llm_calls"], 0)
+        self.assertEqual(done[0]["result"]["next"]["withheld_by_llm_policy"], 11)
+        self.assertEqual(self.state()["cycles"], {})
 
     def test_the_daily_cost_cap_of_the_foundation_stops_the_run_on_record(self):
         adapter = {"claude": {"max_budget_usd": 2}}

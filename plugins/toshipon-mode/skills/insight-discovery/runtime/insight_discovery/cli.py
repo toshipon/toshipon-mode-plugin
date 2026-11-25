@@ -1,7 +1,7 @@
 """Command line surface. Every command prints one JSON document (the Markdown report aside).
 
-Exit codes: 0 done (including "nothing to present"), 1 a quality gate failed, 2 bad input or
-settings, 3 a safety boundary refused.
+Exit codes: 0 done (including "nothing to present"), 1 the loop's order was not followed (a stage
+or a closing step that is not the next one), 2 bad input or settings, 3 a safety boundary refused.
 """
 
 import argparse
@@ -27,6 +27,7 @@ from .foundation import (
     find_deny_terms,
     find_secrets,
     load_config,
+    locked,
     state_home,
     utcnow,
     write_json,
@@ -70,6 +71,8 @@ def _parser():
     run = add("run", "ingest what is new and advance the loop within the limits")
     run.add_argument("--daily", action="store_true", help="the only mode; kept for readability")
     run.add_argument("--dry-run", action="store_true")
+    add("finalize", "close an open cycle whose stages are all recorded")
+    add("abandon", "a person closes an open cycle that cannot finish", "--reviewer", "--reason")
     add("weekly", "write the weekly report and wait for a person's choice")
     prior = add("prior", "record your own hypothesis before reading the generated ones")
     prior.add_argument("--text")
@@ -80,9 +83,15 @@ def _parser():
     )
     resolve = add("resolve", "reject a candidate, or mark an accepted one tested", "insight_id")
     resolve.add_argument("--status", required=True, choices=("rejected", "tested"))
+    resolve.add_argument("--reviewer", required=True)
     resolve.add_argument("--reason", required=True)
-    resolve.add_argument("--actor", default="human")
-    handoff = add("handoff", "hand a candidate to a neighbouring skill", "insight_id", "--reason")
+    handoff = add(
+        "handoff",
+        "hand a candidate to a neighbouring skill",
+        "insight_id",
+        "--reviewer",
+        "--reason",
+    )
     handoff.add_argument("--target", required=True, choices=sorted(routing.HANDOFFS.values()))
     search = commands.add_parser("search", help="prior-art search, by hand only").add_subparsers(
         dest="search", required=True
@@ -115,7 +124,7 @@ def overview(home, config, settings, now):
         "home": str(home),
         "evidence": len(state["evidence"]),
         "unanalyzed": len(st.fresh(state)),
-        "next": pipeline.next_action(state),
+        "next": pipeline.next_action(state, config["llm_policy"]["allowed_classifications"]),
         "candidates": dict(Counter(c["status"] for c in state["candidates"].values())),
         "presented": [candidate["id"] for candidate in ranking.presentable(state, settings)],
         "handoffs": len(state["handoffs"]),
@@ -173,11 +182,34 @@ def demo(directory):
     return {"home": str(home), "export": f"export AI_HARNESS_HOME={home}", "directory": str(target)}
 
 
+# Commands that read the ledger and then append to it. They take the run lock, so two of them
+# (or one of them and a daily run) never decide on the same state.
+WRITERS = (
+    "ingest",
+    "step",
+    "finalize",
+    "weekly",
+    "prior",
+    "select",
+    "resolve",
+    "abandon",
+    "handoff",
+    "search",
+)
+
+
 def _execute(args):
     if args.command == "demo":
         return demo(args.directory)
     home, now = state_home(), utcnow()
     config, settings = load_config(home), st.load_config(home)
+    if args.command in WRITERS:
+        with locked(st.root(home) / "run.lock"):
+            return _command(args, home, now, config, settings)
+    return _command(args, home, now, config, settings)
+
+
+def _command(args, home, now, config, settings):
     name = args.command
     if name == "ingest":
         if args.source not in ADAPTERS:
@@ -187,7 +219,7 @@ def _execute(args):
             "stats": evidence.ingest(home, args.source, args.path, config, settings, now),
         }
     if name == "next":
-        return pipeline.next_action(st.load(home))
+        return pipeline.next_action(st.load(home), config["llm_policy"]["allowed_classifications"])
     if name == "step":
         if args.step == "prompt":
             return pipeline.step_prompt(home, config, settings, args.stage, now)
@@ -206,9 +238,19 @@ def _execute(args):
     if name == "select":
         return decisions.select(home, settings, args.insight_id, args.reviewer, args.reason, now)
     if name == "resolve":
-        return decisions.resolve(home, args.insight_id, args.status, args.reason, args.actor, now)
+        return decisions.resolve(
+            home, args.insight_id, args.status, args.reviewer, args.reason, now
+        )
+    if name == "finalize":
+        if pipeline.next_action(st.load(home))["action"] != "finalize":
+            raise GateFailed("the open cycle still has a stage to record; `next` says which")
+        return pipeline.finalize(home, now, settings)
+    if name == "abandon":
+        return decisions.abandon(home, args.reviewer, args.reason, now)
     if name == "handoff":
-        return decisions.handoff(home, settings, args.insight_id, args.target, args.reason, now)
+        return decisions.handoff(
+            home, settings, args.insight_id, args.target, args.reviewer, args.reason, now
+        )
     if name == "search":
         if args.search == "approve":
             return decisions.search_approve(

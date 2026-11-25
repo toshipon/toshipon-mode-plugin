@@ -1,6 +1,7 @@
 """The discovery loop against a scripted backend: checks, routing, ranking, budget and resume."""
 
 import copy
+import os
 import unittest
 
 from support import (
@@ -103,6 +104,13 @@ class WeakGrounds(LoopCase):
         # The interpretation leaned on the first observation, so it went with it.
         self.assertIn("interpretation_without_observation", reasons)
 
+    def test_a_quote_of_a_particle_supports_nothing(self):
+        def tiny(output, body):
+            output["observations"][0]["quotes"] = ["の"]
+
+        self.run_daily(Backend(observe=tiny))
+        self.assertIn("quote_too_short", self.rejected("observe"))
+
     def test_single_task_structure_is_not_presented(self):
         def alter(output, body):
             lone = next(item for item in body["observations"] if len(item["task_keys"]) == 1)
@@ -197,6 +205,52 @@ class NoveltyClaims(LoopCase):
         reasons = [item["reason"] for item in cycle["stages"]["structure"]["rejected"]]
         self.assertEqual(reasons, ["unsupported_novelty_claim"])
 
+    def test_wording_the_pattern_must_catch_and_must_leave_alone(self):
+        from support import checks
+
+        claims = (
+            "これは novelな手法である",
+            "unprecedentedな結果",
+            "first-everの試み",
+            "これまでにない構造",
+            "Nobody has tried this",
+            "前例が無い",
+            "誰も検証していない",
+            "新規の手法である",
+            "これは新規な問題設定",
+            "先行研究は存在しない",
+            "初めて提案する",
+        )
+        for text in claims:
+            self.assertTrue(checks.claims_novelty(text), text)
+        for text in (
+            "新しい検査を入口に足す",
+            "a novella about checks",
+            "前例にならう",
+            "新規顧客の取り込み",
+        ):
+            self.assertFalse(checks.claims_novelty(text), text)
+
+    def test_a_claim_in_an_interpretation_is_dropped(self):
+        def boast(output, body):
+            output["interpretations"][0]["text"] = "世界初の画期的な発見である"
+
+        self.run_daily(Backend(observe=boast))
+        for candidate in self.candidates().values():
+            self.assertEqual(candidate["interpretations"], [])
+
+    def test_statements_differing_only_in_case_or_spacing_are_one(self):
+        def twin(output, body):
+            first = output["hypotheses"][0]
+            output["hypotheses"].append(
+                {**first, "statement": first["statement"].replace("、", "、 ")}
+            )
+
+        self.run_daily(Backend(hypothesize=twin))
+        cycle = next(iter(self.state()["cycles"].values()))
+        reasons = [item["reason"] for item in cycle["stages"]["hypothesize"]["rejected"]]
+        self.assertEqual(reasons, ["duplicate_in_batch"])
+
     def test_a_claim_in_the_assessment_is_dropped_too(self):
         def boast(output, body):
             output["assessments"][0]["scores"]["delta_from_prior_art"]["reason"] = (
@@ -204,6 +258,9 @@ class NoveltyClaims(LoopCase):
             )
 
         self.run_daily(Backend(assess=boast))
+        cycle = next(iter(self.state()["cycles"].values()))
+        reasons = [item["reason"] for item in cycle["stages"]["assess"]["rejected"]]
+        self.assertEqual(reasons, ["unsupported_novelty_claim"])
         self.assertEqual(len(self.candidates()), 1)
 
     def test_unsearched_candidates_say_so(self):
@@ -241,7 +298,7 @@ class Duplicates(LoopCase):
         from support import decisions
 
         for name in list(self.candidates()):
-            decisions.resolve(self.home, name, "rejected", "既に試した", "Hanako", self.tick())
+            decisions.resolve(self.home, name, "rejected", "Hanako", "既に試した", self.tick())
         # New evidence arrives, but it is not part of what the hypothesis rests on.
         self.new_evidence("補完が遅い")
         self.run_daily()
@@ -255,7 +312,7 @@ class Duplicates(LoopCase):
         from support import decisions
 
         for name in list(self.candidates()):
-            decisions.resolve(self.home, name, "rejected", "既に試した", "Hanako", self.tick())
+            decisions.resolve(self.home, name, "rejected", "Hanako", "既に試した", self.tick())
         path = self.write(
             "more/retry.md",
             "classification: synthetic\n## release-notes\n"
@@ -449,7 +506,36 @@ class Presentation(LoopCase):
             ranking.total(self.candidates()[name]) for name in summary["cycles"][0]["presented"]
         ]
         self.assertEqual(totals, sorted(totals, reverse=True))
-        self.assertEqual(totals[0], 13)
+        self.assertEqual(totals[0], 12)
+
+    def test_without_a_search_the_prior_art_axis_cannot_raise_the_rank(self):
+        def generous(output, body):
+            for item in output["assessments"]:
+                item["scores"]["delta_from_prior_art"] = {"score": 3, "reason": "大きく違うはず"}
+
+        self.run_daily(Backend(assess=generous))
+        for candidate in self.candidates().values():
+            axis = candidate["scores"]["delta_from_prior_art"]
+            self.assertEqual(axis["score"], 1)
+            self.assertIn("未調査", axis["reason"])
+            self.assertIn("大きく違うはず", axis["reason"])
+
+    def test_structure_is_counted_from_the_evidence_not_from_matching_labels(self):
+        def regroup(output, body):
+            # Two observations with different labels, from two different tasks.
+            picked = [
+                item["id"]
+                for item in body["observations"]
+                if item["task_keys"] in (["ci-flaky-tests"], ["editor-setup"])
+            ][:2]
+            output["groups"] = [{**stub_agent.structure(body)["groups"][0], "observations": picked}]
+
+        self.run_daily(Backend(structure=regroup))
+        (cycle,) = self.state()["cycles"].values()
+        (group,) = cycle["stages"]["structure"]["accepted"]["groups"]
+        self.assertEqual(group["evidence_summary"]["distinct_contexts"], 2)
+        labels = {self.state()["evidence"][ref]["label"] for ref in group["evidence_refs"]}
+        self.assertEqual(len(labels), 2)
 
 
 class Policy(LoopCase):
@@ -457,12 +543,50 @@ class Policy(LoopCase):
         self.configure(
             sources=[{"adapter": "claude_insights", "path": str(EXAMPLES / "usage-data")}]
         )
+        summary, backend = self.run_daily()
+        self.assertEqual(backend.calls, [])
+        self.assertEqual(self.state()["cycles"], {})
+        self.assertEqual(summary["next"]["withheld_by_llm_policy"], 6)
+
+    def test_withheld_evidence_does_not_block_what_is_allowed(self):
+        self.configure(
+            sources=[
+                {"adapter": "claude_insights", "path": str(EXAMPLES / "usage-data")},
+                {"adapter": "manual", "path": str(EXAMPLES / "records")},
+            ]
+        )
+        summary, backend = self.run_daily()
+        self.assertEqual(len(backend.calls), 5)
+        self.assertEqual({classification for _, _, classification in backend.calls}, {"synthetic"})
+        (cycle,) = self.state()["cycles"].values()
+        kept = {self.state()["evidence"][name]["classification"] for name in cycle["evidence_ids"]}
+        self.assertEqual(kept, {"synthetic"})
+        self.assertEqual(summary["next"]["withheld_by_llm_policy"], 6)
+
+    def test_a_cycle_opened_before_the_policy_tightened_is_refused_not_sent(self):
+        self.run_daily(Backend(), timer=iter([0, 10_000]).__next__)  # stops before the first call
+        self.configure_foundation(llm_policy={"allowed_classifications": ["public"]})
         backend = Backend()
         with self.assertRaisesRegex(Refusal, "may not be shown to a model"):
             self.run_daily(backend)
         self.assertEqual(backend.calls, [])
         with self.assertRaises(Refusal):
             pipeline.step_prompt(self.home, self.config, self.settings, "observe", self.tick())
+
+    def test_one_refused_source_does_not_starve_the_others(self):
+        big = self.write("big.md", "## t1\n- [friction] " + "x" * 300 + "\n")
+        self.configure(
+            sources=[
+                {"adapter": "manual", "path": str(big)},
+                {"adapter": "manual", "path": str(EXAMPLES / "records")},
+            ],
+            limits={"max_file_bytes": 200_000, "max_text_chars": 2000},
+        )
+        os.truncate(big, 300_000)
+        summary, _ = self.run_daily()
+        self.assertIn("max_file_bytes", summary["ingest"][0]["refused"])
+        self.assertEqual(summary["ingest"][1]["stats"]["added"], 11)
+        self.assertEqual(len(self.candidates()), 2)
 
     def test_allowing_the_classification_lets_the_run_proceed(self):
         self.configure(

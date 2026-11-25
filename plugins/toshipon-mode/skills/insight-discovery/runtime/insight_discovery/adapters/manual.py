@@ -12,7 +12,7 @@ hand) all enter here. Markdown shape:
 import re
 from collections import Counter
 
-from ..foundation import SCHEMAS, HarnessError, Refusal, sha256, validate
+from ..foundation import SCHEMAS, HarnessError, Refusal, agents, sha256, validate
 from .base import Unrecognized, listed, load_object, read_text, safe_path
 
 HEADING = re.compile(r"^##\s+([^|]+?)\s*(?:\|\s*(.+?)\s*)?$")
@@ -31,13 +31,13 @@ def _from_json(path, limits):
 
 
 def _from_markdown(path, limits):
-    raws, unparsed, task, classification = [], 0, None, "internal"
+    raws, unparsed, task, declared = [], 0, None, []
     for line in read_text(path, limits).splitlines():
         line = line.rstrip()
         if not line or line.startswith("# "):
             continue
         if match := CLASSIFICATION.match(line):
-            classification = match.group(1)
+            declared.append(match.group(1))
         elif match := HEADING.match(line):
             task = {"task_key": match.group(1), "domain_tag": match.group(2) or match.group(1)}
         elif (match := ITEM.match(line)) and task:
@@ -48,6 +48,12 @@ def _from_markdown(path, limits):
             unparsed += 1
     if not raws:
         raise Unrecognized("no items")
+    # Several declarations in one file: the strictest wins, and an unknown one excludes the items.
+    known = [name for name in declared if name in agents.CLASSIFICATIONS]
+    if len(known) != len(declared):
+        classification = next(name for name in declared if name not in known)
+    else:
+        classification = agents.strictest(*known) if known else "internal"
     return [{**raw, "classification": classification} for raw in raws], unparsed
 
 

@@ -5,12 +5,15 @@ harness-started process. Nothing here runs an experiment or sends anything anywh
 """
 
 import difflib
+import os
 from urllib.parse import urlsplit
 
 from . import ranking, report, routing
 from . import state as st
 from .evidence import deny_terms, scrub
 from .foundation import (
+    ACTIVE_ENV,
+    AUTOMATED_ENV,
     SCHEMAS,
     HarnessError,
     Refusal,
@@ -33,26 +36,47 @@ def _approval(reviewer, reason):
         raise Refusal(str(refusal)) from None
 
 
+def _by_a_person(env=None):
+    """Records that speak for a person are refused from a scheduled or harness-started process."""
+    env = os.environ if env is None else env
+    if env.get(AUTOMATED_ENV) or env.get(ACTIVE_ENV):
+        raise Refusal("this is recorded by a person; it cannot be done from an automated run")
+
+
 def _candidate(state, insight_id):
     if insight_id not in state["candidates"]:
         raise HarnessError(f"unknown candidate: {insight_id}")
     return state["candidates"][insight_id]
 
 
+def _unanswered_week(home, now):
+    """This week, if the person has neither written nor skipped their own hypothesis yet.
+
+    Once either is on record the generated hypotheses are visible, so a later "prior" would
+    no longer be prior to anything.
+    """
+    state, week = st.load(home), st.week_of(now)
+    if week in state["priors"] or week in state["prior_skips"]:
+        raise Refusal(f"the prior for {week} is already recorded or skipped; it is written once")
+    return week
+
+
 def prior(home, config, text, now):
     """Record the person's own hypothesis for this week, before they are shown the generated ones."""
+    _by_a_person()
     if not (text or "").strip():
         raise HarnessError("the prior needs text")
     cleaned, _ = scrub(text.strip(), deny_terms(config))
-    week = st.week_of(now)
+    week = _unanswered_week(home, now)
     st.append(home, "prior_recorded", {"week": week, "text": cleaned}, now)
     return {"week": week, "recorded": True}
 
 
 def skip_prior(home, reason, now):
+    _by_a_person()
     if not (reason or "").strip():
         raise HarnessError("skipping the prior needs a reason")
-    week = st.week_of(now)
+    week = _unanswered_week(home, now)
     st.append(home, "prior_skipped", {"week": week, "reason": reason.strip()}, now)
     return {"week": week, "skipped": True}
 
@@ -82,28 +106,45 @@ def select(home, settings, insight_id, reviewer, reason, now):
     return {"insight_id": insight_id, "status": "accepted", "week": week}
 
 
-def resolve(home, insight_id, status, reason, actor, now):
-    """candidate -> rejected, accepted -> rejected | tested. Rejected and tested are final."""
-    if not (reason or "").strip():
-        raise HarnessError("a status change needs a reason")
+def resolve(home, insight_id, status, reviewer, reason, now):
+    """A person moves candidate -> rejected, or accepted -> rejected | tested. Both ends are final."""
+    approval = _approval(reviewer, reason)
+    reason, actor = approval["reason"], approval["reviewer"]
     candidate = _candidate(st.load(home), insight_id)
     if status not in TRANSITIONS.get(candidate["status"], ()):
         raise Refusal(f"{insight_id} is {candidate['status']}; it cannot become {status}")
-    data = {"insight_id": insight_id, "status": status, "reason": reason.strip(), "actor": actor}
+    data = {"insight_id": insight_id, "status": status, "reason": reason, "actor": actor}
     st.append(home, "resolved", data, now)
     return {"insight_id": insight_id, "status": status}
 
 
-def handoff(home, settings, insight_id, target, reason, now):
+def handoff(home, settings, insight_id, target, reviewer, reason, now):
     """A person hands an open research candidate to a neighbouring skill. It leaves the list."""
-    if not (reason or "").strip():
-        raise HarnessError("a handoff needs a reason")
+    reason = _approval(reviewer, reason)["reason"]
     state = st.load(home)
     candidate = _candidate(state, insight_id)
     if candidate["status"] != "candidate" or candidate["routing"]["disposition"] != "research":
         raise Refusal(f"{insight_id} is not an open research candidate")
-    note = routing.handoff(home, candidate, target, reason.strip(), now)
+    note = routing.handoff(home, candidate, target, reason, now)
     return {"insight_id": insight_id, "target": target, "handoff": note["handoff_ref"]}
+
+
+def abandon(home, reviewer, reason, now):
+    """A person closes an open cycle that cannot finish. Its evidence counts as looked at."""
+    approval = _approval(reviewer, reason)
+    state = st.load(home)
+    if not state["open_cycle"]:
+        raise HarnessError("no analysis cycle is open")
+    data = {
+        "cycle_id": state["open_cycle"],
+        "result": "abandoned",
+        "presented": [],
+        "handoffs": [],
+        "skipped": [],
+        "approval": approval,
+    }
+    st.append(home, "cycle_finished", data, now)
+    return {"cycle_id": data["cycle_id"], "result": "abandoned"}
 
 
 def _quotes_evidence(query, texts):
@@ -149,6 +190,7 @@ def search_approve(home, config, settings, insight_id, queries, reviewer, reason
 
 def search_record(home, config, settings, insight_id, results, now):
     """Record what an approved search found. Novelty becomes a status derived from it."""
+    _by_a_person()
     validate(f"{SCHEMAS}:stages#search_results", results)
     state = st.load(home)
     candidate = _candidate(state, insight_id)
@@ -163,8 +205,17 @@ def search_record(home, config, settings, insight_id, results, now):
         host = (url.hostname or "").lower()
         if url.scheme != "https" or not host or url.username or url.password:
             raise Refusal("a source needs an https URL without credentials")
-        if allowed and not any(host == name or host.endswith(f".{name}") for name in allowed):
-            raise Refusal(f"source host is not in search.allowed_domains: {host}")
+        if not any(host == name or host.endswith(f".{name}") for name in allowed):
+            raise Refusal(
+                f"source host is not in search.allowed_domains: {host} "
+                "(list the public sources you allow; the default is empty)"
+            )
+        if (
+            find_deny_terms(item["url"], terms)
+            or find_secrets(item["url"])
+            or set("()<>[]") & set(item["url"])
+        ):
+            raise Refusal("a source URL contains a forbidden term, a secret shape or brackets")
         prior_art.append(
             {
                 "title": scrub(item["title"], terms)[0],

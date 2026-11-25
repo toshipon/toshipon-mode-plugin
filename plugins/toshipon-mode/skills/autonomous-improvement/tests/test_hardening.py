@@ -621,3 +621,8 @@ class SchemaNamespaceTest(HarnessCase):
         schema = agents._transport_schema("extension:entry#word")
         self.assertEqual(schema["type"], "string")
         self.assertNotIn("$id", agents._transport_schema("extension:entry"))
+
+    def test_a_colon_after_the_hash_is_part_of_the_definition_name(self):
+        with self.assertRaises(Exception) as raised:
+            store.validate("config#a:b", {})
+        self.assertNotIn("unknown schema namespace", str(raised.exception))

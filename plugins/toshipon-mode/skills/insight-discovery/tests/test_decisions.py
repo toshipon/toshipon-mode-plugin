@@ -2,8 +2,9 @@
 
 import json
 import os
+import time
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from support import (
@@ -13,6 +14,7 @@ from support import (
     Refusal,
     decisions,
     foundation,
+    pipeline,
     report,
     st,
 )
@@ -64,6 +66,100 @@ class HumanPrior(Decided):
         self.assertNotIn(token, st.ledger_path(self.home).read_text(encoding="utf-8"))
 
 
+class OnlyAPerson(Decided):
+    """Every record that speaks for a person is refused from a scheduled or harness-started process."""
+
+    def test_no_decision_is_recorded_from_an_automated_run(self):
+        decisions.search_approve(
+            self.home, self.config, self.settings, self.first, ["q one"], "Hanako", "r", self.tick()
+        )
+        found = {"queries": ["q one"], "prior_art": []}
+        before = st.ledger_path(self.home).read_bytes()
+        attempts = (
+            lambda: decisions.prior(self.home, self.config, "機械が書いた仮説", self.tick()),
+            lambda: decisions.skip_prior(self.home, "理由", self.tick()),
+            lambda: decisions.resolve(
+                self.home, self.first, "rejected", "Hanako", "r", self.tick()
+            ),
+            lambda: decisions.handoff(
+                self.home, self.settings, self.first, "evolution", "Hanako", "r", self.tick()
+            ),
+            lambda: decisions.search_record(
+                self.home, self.config, self.settings, self.first, found, self.tick()
+            ),
+            lambda: decisions.abandon(self.home, "Hanako", "r", self.tick()),
+        )
+        for variable in (foundation.AUTOMATED_ENV, foundation.ACTIVE_ENV):
+            with mock.patch.dict(os.environ, {variable: "1"}):
+                for attempt in attempts:
+                    with self.assertRaises(Refusal):
+                        attempt()
+        self.assertEqual(st.ledger_path(self.home).read_bytes(), before)
+
+    def test_resolve_and_handoff_need_a_named_person(self):
+        for reviewer in ("claude", "agent", ""):
+            with self.assertRaises(Refusal):
+                decisions.resolve(self.home, self.first, "rejected", reviewer, "r", self.tick())
+            with self.assertRaises(Refusal):
+                decisions.handoff(
+                    self.home, self.settings, self.first, "evolution", reviewer, "r", self.tick()
+                )
+        self.assertEqual(self.candidates()[self.first]["status"], "candidate")
+
+    def test_the_prior_is_written_once_and_never_after_the_hypotheses_were_shown(self):
+        decisions.skip_prior(self.home, "先に読む", self.tick())
+        with self.assertRaisesRegex(Refusal, "written once"):
+            decisions.prior(self.home, self.config, "読んだ後に写した仮説", self.tick())
+        self.select(self.first)
+        self.assertIsNone(self.candidates()[self.first]["human_prior"])
+        self.clock += timedelta(days=7)
+        decisions.prior(self.home, self.config, "翌週の仮説", self.tick())
+        with self.assertRaises(Refusal):
+            decisions.prior(self.home, self.config, "書き直し", self.tick())
+
+    def test_json_report_hides_hypotheses_like_the_markdown_does(self):
+        shown = report.as_json(self.state(), self.settings, self.tick())["candidates"]
+        self.assertEqual(len(shown), 2)
+        for candidate in shown:
+            self.assertNotIn("hypothesis", candidate)
+            self.assertNotIn("minimal_experiment", candidate)
+            self.assertIn("observations", candidate)
+        decisions.prior(self.home, self.config, "自分の仮説", self.tick())
+        shown = report.as_json(self.state(), self.settings, self.tick())["candidates"]
+        self.assertIn("hypothesis", shown[0])
+
+    def test_the_week_is_the_local_week(self):
+        tokyo = timezone(timedelta(hours=9))
+        monday_morning = datetime(2026, 1, 12, 8, 0, tzinfo=tokyo)  # still Sunday in UTC
+        with mock.patch.object(st, "week_of", wraps=st.week_of):
+            local = monday_morning.astimezone(tokyo)
+            self.assertEqual(local.isocalendar()[1], 3)
+            self.assertEqual(monday_morning.astimezone(timezone.utc).isocalendar()[1], 2)
+        os.environ["TZ"] = "Asia/Tokyo"
+        time.tzset()
+        try:
+            self.assertEqual(st.week_of(monday_morning), "2026-W03")
+            later = monday_morning + timedelta(hours=2)
+            self.assertEqual(st.week_of(later), "2026-W03")
+        finally:
+            os.environ.pop("TZ")
+            time.tzset()
+
+    def test_a_person_can_close_a_cycle_that_cannot_finish(self):
+        self.write("more.md", "classification: synthetic\n## t9\n- [friction] 新しい摩擦\n")
+        self.ingest("manual", self.tmp / "more.md")
+        pipeline.start_cycle(self.home, self.settings, self.tick())
+        with self.assertRaises(Refusal):
+            decisions.abandon(self.home, "bot", "r", self.tick())
+        result = decisions.abandon(
+            self.home, "Hanako", "モデルが形式に合わない出力を返し続ける", self.tick()
+        )
+        self.assertEqual(result["result"], "abandoned")
+        self.assertEqual(pipeline.next_action(self.state())["action"], "none")
+        with self.assertRaises(HarnessError):
+            decisions.abandon(self.home, "Hanako", "r", self.tick())
+
+
 class WeeklySelection(Decided):
     def test_weekly_report_is_written_privately_outside_the_repository(self):
         result = decisions.weekly(self.home, self.settings, self.tick())
@@ -100,7 +196,7 @@ class WeeklySelection(Decided):
 
 class Transitions(Decided):
     def resolve(self, name, status):
-        return decisions.resolve(self.home, name, status, "理由", "Hanako", self.tick())
+        return decisions.resolve(self.home, name, status, "Hanako", "理由", self.tick())
 
     def test_candidate_can_only_be_rejected(self):
         with self.assertRaises(Refusal):
@@ -124,8 +220,19 @@ class Transitions(Decided):
                     self.home, self.config, self.settings, name, ["x"], "Hanako", "r", self.tick()
                 )
             with self.assertRaises(Refusal):
-                decisions.handoff(self.home, self.settings, name, "evolution", "r", self.tick())
+                decisions.handoff(
+                    self.home, self.settings, name, "evolution", "Hanako", "r", self.tick()
+                )
         self.assertEqual(json.dumps(self.candidates(), sort_keys=True, ensure_ascii=False), before)
+
+    def test_the_report_shows_what_was_decided(self):
+        self.select(self.first)
+        self.resolve(self.first, "tested")
+        self.resolve(self.second, "rejected")
+        text = self.render()
+        self.assertIn("## 選択と結果", text)
+        self.assertRegex(text, rf"- {self.first}: tested（2026-01-05、Hanako")
+        self.assertRegex(text, rf"- {self.second}: rejected")
 
     def test_history_records_who_and_why(self):
         self.select(self.first)
@@ -226,7 +333,13 @@ class Handoffs(LoopCase):
         self.run_daily()
         name = sorted(self.candidates())[0]
         decisions.handoff(
-            self.home, self.settings, name, "improvement", "成果物の修正で足りる", self.tick()
+            self.home,
+            self.settings,
+            name,
+            "improvement",
+            "Hanako",
+            "成果物の修正で足りる",
+            self.tick(),
         )
         self.assertEqual(self.candidates()[name]["routing"]["disposition"], "handoff_improvement")
         self.assertNotIn(name, decisions.weekly(self.home, self.settings, self.tick())["presented"])
@@ -234,6 +347,18 @@ class Handoffs(LoopCase):
 
 class PriorArtSearch(Decided):
     QUERIES = ["shift-left validation rework reduction", "input contract checking pipeline"]
+
+    def setUp(self):
+        super().setUp()
+        self.configure(
+            sources=self.settings["sources"], search={"allowed_domains": ["example.org"]}
+        )
+
+    def test_sources_cannot_be_recorded_until_public_sources_are_listed(self):
+        self.configure(sources=self.settings["sources"])
+        self.approve()
+        with self.assertRaisesRegex(Refusal, "allowed_domains"):
+            self.found([self.source("partial")])
 
     def approve(self, queries=None, reviewer="Hanako"):
         return decisions.search_approve(
@@ -311,7 +436,15 @@ class PriorArtSearch(Decided):
         self.approve()
         with self.assertRaisesRegex(Refusal, "not approved"):
             self.found([], queries=["something else"])
-        for url in ("http://example.org/a", "https://user:pw@example.org/a", "file:///etc/hosts"):
+        deny = self.write("deny.txt", "acme\n")
+        self.configure_foundation(privacy={"deny_terms_file": str(deny)})
+        for url in (
+            "http://example.org/a",
+            "https://user:pw@example.org/a",
+            "file:///etc/hosts",
+            "https://example.org/acme/wiki",
+            "https://example.org/a)[x](https://evil.example",
+        ):
             with self.assertRaises(Refusal):
                 self.found([self.source("partial", url)])
         with self.assertRaises(HarnessError):

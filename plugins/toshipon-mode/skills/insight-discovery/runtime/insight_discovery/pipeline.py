@@ -38,7 +38,7 @@ NOT_SEARCHED = "既存手法との重なりは未調査（外部検索をして�
 
 def _open(state):
     if not state["open_cycle"]:
-        raise HarnessError("no analysis cycle is open; `next` says what to do")
+        raise GateFailed("no analysis cycle is open; `next` says what to do")
     return state["cycles"][state["open_cycle"]]
 
 
@@ -63,28 +63,36 @@ def pending_stage(cycle):
     return None
 
 
-def next_action(state):
-    """What to do next, from the ledger alone."""
+def next_action(state, allowed=None):
+    """What to do next, from the ledger alone. `allowed` is the llm_policy's classifications."""
     if state["open_cycle"]:
         cycle = state["cycles"][state["open_cycle"]]
         stage = pending_stage(cycle)
         if stage:
             return {"action": "stage", "stage": stage, "cycle_id": cycle["cycle_id"]}
         return {"action": "finalize", "cycle_id": cycle["cycle_id"]}
-    fresh = st.fresh(state)
+    fresh = st.fresh(state, allowed)
     if fresh:
         return {"action": "start_cycle", "fresh": len(fresh)}
-    return {"action": "none", "reason": "no new evidence since the last cycle"}
+    step: dict = {"action": "none", "reason": "no new evidence since the last cycle"}
+    if allowed is not None and st.withheld(state, allowed):
+        # Evidence the policy does not let a model see never enters a cycle; it is only counted.
+        step["withheld_by_llm_policy"] = st.withheld(state, allowed)
+    return step
 
 
-def start_cycle(home, settings, now):
+def start_cycle(home, settings, now, allowed=None):
     """Open a cycle over the new evidence, topped up with earlier evidence for cross-task links."""
     state = st.load(home)
-    fresh, limit = st.fresh(state), settings["limits"]["max_evidence_per_cycle"]
+    fresh, limit = st.fresh(state, allowed), settings["limits"]["max_evidence_per_cycle"]
     if state["open_cycle"] or not fresh:
         raise HarnessError("a cycle starts only when none is open and there is new evidence")
     chosen = fresh[:limit]
-    earlier = [item for item in reversed(list(state["evidence"])) if item not in set(fresh)]
+    earlier = [
+        name
+        for name, item in reversed(list(state["evidence"].items()))
+        if name not in set(fresh) and (allowed is None or item["classification"] in allowed)
+    ]
     data = {
         "cycle_id": f"C-{now:%Y%m%d}-{len(state['cycles']) + 1:02d}",
         "evidence_ids": chosen + earlier[: limit - len(chosen)],
@@ -206,7 +214,7 @@ def record_stage(home, stage, output, now, settings, independence="same_context"
     state = st.load(home)
     cycle = _open(state)
     if pending_stage(cycle) != stage:
-        raise HarnessError(f"stage {stage} is not the next one; `next` says what is")
+        raise GateFailed(f"stage {stage} is not the next one; `next` says what is")
     done, gates = cycle["stages"], settings["gates"]
     if stage == "observe":
         known = {name: state["evidence"][name] for name in cycle["evidence_ids"]}
@@ -314,6 +322,12 @@ def _candidate(cycle, hypothesis, route, now):
             unverified=[*assessment["unverified"], NOT_SEARCHED],
             scores={
                 **assessment["scores"],
+                # No search is on record, so a difference from prior art cannot raise the rank.
+                "delta_from_prior_art": {
+                    "score": 1,
+                    "reason": "未調査のため 1 に固定。モデルの見立て: "
+                    + assessment["scores"]["delta_from_prior_art"]["reason"],
+                },
                 "evidence": ranking.evidence_score(group["evidence_summary"]),
             },
         )
@@ -411,14 +425,20 @@ def agent_invoker(home, config, settings, budget=None):
 
 def _ingest_sources(home, config, settings, now, write):
     """Stats per configured source, in order. With write=False nothing is appended."""
-    report = []
+    report, allowed = [], config["llm_policy"]["allowed_classifications"]
     for source in settings["sources"]:
         adapter, path = source["adapter"], source.get("path")
-        if write:
-            stats = evidence.ingest(home, adapter, path, config, settings, now)
-        else:
-            known = st.load(home)["evidence"]
-            stats = evidence.collect(home, adapter, path, config, settings, now, known)[1]
+        try:
+            if write:
+                stats = evidence.ingest(home, adapter, path, config, settings, now)
+            else:
+                known = st.load(home)["evidence"]
+                added, stats = evidence.collect(home, adapter, path, config, settings, now, known)
+                stats = {**stats, "eligible": sum(i["classification"] in allowed for i in added)}
+        except Refusal as refusal:
+            # One refused source (an oversized file, a link) must not starve the others.
+            report.append({"adapter": adapter, "refused": str(refusal), "stats": {}})
+            continue
         report.append({"adapter": adapter, "stats": stats})
     return report
 
@@ -427,12 +447,13 @@ def plan(home, config, settings, now):
     """Dry run: what a daily run would read and do. Nothing is written and no model is called."""
     ingested = _ingest_sources(home, config, settings, now, write=False)
     state = st.load(home)
-    step = next_action(state)
-    added = sum(source["stats"].get("added", 0) for source in ingested)
+    allowed = config["llm_policy"]["allowed_classifications"]
+    step = next_action(state, allowed)
+    added = sum(source["stats"].get("eligible", 0) for source in ingested)
     if step["action"] == "stage":
         calls = len(st.STAGES) - st.STAGES.index(step["stage"])
     elif step["action"] == "start_cycle" or (step["action"] == "none" and added):
-        step = {"action": "start_cycle", "fresh": len(st.fresh(state)) + added}
+        step = {"action": "start_cycle", "fresh": len(st.fresh(state, allowed)) + added}
         calls = len(st.STAGES)
     else:
         calls = 0
@@ -453,6 +474,7 @@ def run_daily(home, config, settings, now, invoke=None, budget=None, timer=time.
         budget = budget or agents.Budget(home, now, config["budget"]["max_cost_per_day"])
         invoke = agent_invoker(home, config, settings, budget)
     limits, started, calls, output = settings["limits"], timer(), 0, None
+    allowed = config["llm_policy"]["allowed_classifications"]
     with locked(st.root(home) / "run.lock", blocking=False):
         summary: dict = {
             "ingest": _ingest_sources(home, config, settings, now, write=True),
@@ -460,9 +482,9 @@ def run_daily(home, config, settings, now, invoke=None, budget=None, timer=time.
         }
         while True:
             state = st.load(home)
-            step = next_action(state)
+            step = next_action(state, allowed)
             if step["action"] == "start_cycle":
-                start_cycle(home, settings, now)
+                start_cycle(home, settings, now, allowed)
             elif step["action"] == "finalize":
                 summary["cycles"].append(finalize(home, now, settings))
             elif step["action"] == "stage":
@@ -490,17 +512,17 @@ def run_daily(home, config, settings, now, invoke=None, budget=None, timer=time.
             else:
                 break
         summary["llm_calls"] = calls
-        summary["next"] = next_action(st.load(home))
+        summary["next"] = next_action(st.load(home), allowed)
         return summary
 
 
 def step_prompt(home, config, settings, stage, now):
     """What an interactive session needs to run one stage by hand. Opens a cycle when one is due."""
-    state = st.load(home)
-    if next_action(state)["action"] == "start_cycle":
-        start_cycle(home, settings, now)
+    state, allowed = st.load(home), config["llm_policy"]["allowed_classifications"]
+    if next_action(state, allowed)["action"] == "start_cycle":
+        start_cycle(home, settings, now, allowed)
         state = st.load(home)
-    step = next_action(state)
+    step = next_action(state, allowed)
     if step["action"] != "stage" or step["stage"] != stage:
         raise GateFailed(f"stage {stage} is not the next one: {step}")
     body, classification = payload(state, _open(state), stage)

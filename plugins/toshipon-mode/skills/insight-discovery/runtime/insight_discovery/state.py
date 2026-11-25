@@ -59,7 +59,8 @@ def append(home, record_type, data, now):
 
 
 def week_of(moment):
-    year, week, _ = moment.isocalendar()
+    # Local time, like the scheduler's slots: "this week" is the user's week.
+    year, week, _ = moment.astimezone().isocalendar()
     return f"{year}-W{week:02d}"
 
 
@@ -114,7 +115,8 @@ def fold(records):
             state["cycles"][data["cycle_id"]]["finished"] = {**data, "at": record["created_at"]}
             state["open_cycle"] = None
         elif kind == "candidate_registered":
-            state["candidates"][data["id"]] = copy.deepcopy(data)
+            # A second registration of an id never replaces a candidate that has moved on.
+            state["candidates"].setdefault(data["id"], copy.deepcopy(data))
         elif kind == "handoff_recorded":
             state["handoffs"].append({**data, "at": record["created_at"]})
             if candidate:
@@ -157,6 +159,16 @@ def analyzed(state):
     return {item for cycle in state["cycles"].values() for item in cycle["evidence_ids"]}
 
 
-def fresh(state):
+def fresh(state, allowed=None):
+    """Evidence no cycle has looked at. With `allowed`, only what may be shown to a model."""
     seen = analyzed(state)
-    return [item for item in state["evidence"] if item not in seen]
+    return [
+        name
+        for name, item in state["evidence"].items()
+        if name not in seen and (allowed is None or item["classification"] in allowed)
+    ]
+
+
+def withheld(state, allowed):
+    """How much unanalyzed evidence the llm_policy keeps away from a model."""
+    return len(fresh(state)) - len(fresh(state, allowed))
