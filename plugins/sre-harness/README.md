@@ -26,6 +26,7 @@ Claude Code のセッション内で実行します。
 - 実行データと生成物をリポジトリの中に書きません。保存先が git の作業ツリーの中にあると、exit 3 で止まります。
 - 修正候補は Unified Diff のファイルとして出すだけで、適用しません。
 - 候補の承認は人が行います。
+- 時系列の分割（`review split`）が外すのは `t1` 以降のコメントと commit だけです。生成側の thread の `is_resolved` / `is_outdated` と PR 本文は収集した時点の値なので、`t1` より後の状態（後から解決された、本文が書き換えられた）が生成側に残ります。
 
 読み取り専用は、許可リストとテストで担保しています。
 
@@ -86,10 +87,11 @@ export REVIEW_READ_TOKEN=...   # 読み取り専用の fine-grained PAT
 - backend が出した lesson は、JSON Schema に加えて次の検査を通ったものだけを `lessons.jsonl` に入れます。引用（`quotes[].text`）が該当コメント本文の部分文字列であること、参照する thread と comment が送った DATA に存在すること。通らなかった lesson は理由付きで `rejected-lessons.jsonl` に入り、全件が通らなければ exit 1 です。
 - 次の値は backend の自己申告ではなく、harness が規則で決めます。
   - `confidence`: `confidence_basis`（thread 数、レビュアー数、PR 数、反対する thread 数）から `review/analyze.py` の `CONFIDENCE_RULES` で決めます。3 thread 以上・3 PR 以上・3 人以上で反対がなければ `strong`、3 thread 以上・2 PR 以上・2 人以上なら `recurring`、それ以外は `candidate` です。
-  - `source_trust`: lesson を支える thread の最初のコメントの投稿者です。owner / member / collaborator の人がいれば `member_supported`、bot だけなら `bot_only`、それ以外（外部、ghost、association 不明）は `external_only` です。
+  - `source_trust`: lesson を支える thread の最初のコメントの投稿者です。owner / member / collaborator の人がいれば `member_supported`、bot だけなら `bot_only`、それ以外（外部、ghost、association 不明）は `external_only` です。最初のコメントだけで決まるので、返信の投稿者は反映されません。返信は次の `untrusted_quotes` で扱います。
+  - `untrusted_quotes`: lesson が引用した（`quotes`）コメントと、自由文（`target`、`problem`、`rationale`、`fix_summary`、`applies_when`、`exceptions`）が文面を写したコメントのうち、owner / member / collaborator の人以外（外部、bot、ghost、mannequin、association 不明）のものです。コメント ID、投稿者の種別、association、見つかったフィールドを記録します。自由文の検査は、大文字小文字と空白を揃えたうえでの部分文字列の一致（12 文字以上）です。言い換えた文は検出できません。コメント中の `>` で始まる引用行は、そのコメントの投稿者の文面として扱いません。
   - `reviewer_agreement`: 解決済みか修正が見つかった thread は agreed、返信があるのに未解決・未修正なら disputed、返信がなければ unanswered。1 つでも disputed があれば lesson は disputed です。
   - `staleness`: backend が「この thread はこの lesson の方針を覆す」と候補を出し、その thread の時刻が lesson のどの thread よりも後なら `superseded` とし、`later_evidence` に thread を残します。時刻が前なら覆さず、`analyze.json` の `ignored_oppositions` に `not_later` と記録します。
-- `classify` は、superseded、`case_specific`、`external_only` / `bot_only` の lesson を候補にせず `set-aside.jsonl` に理由付きで出します。残りは `review/classify.py` の `TARGET_RULES`（固定の表）で rule / skill / policy_as_code / evaluation / knowledge / regression_test のどれかに決めます。
+- `classify` は、superseded、`case_specific`、`external_only` / `bot_only`、`untrusted_quotes` が空でない（理由 `untrusted_quote`）lesson を候補にせず `set-aside.jsonl` に理由付きで出します。残りは `review/classify.py` の `TARGET_RULES`（固定の表）で rule / skill / policy_as_code / evaluation / knowledge / regression_test のどれかに決めます。
 - `--existing-rules` の Markdown は読むだけです。symlink は辿らず（`classify.json` の `skipped_rule_files` に出ます）、1 ファイル 256 KiB、合計 512 KiB、500 ファイルを超えると切り詰めずに exit 2 で止まります。backend が出した既存ルールとの関係（contradicts / duplicates / narrows）は、引用がその行の部分文字列のものだけを `conflicts.jsonl` に残します。これは承認者に見せる注意書きで、分類も exit code も変えません。
 
 ### Claude に送るデータ
@@ -107,7 +109,7 @@ export REVIEW_READ_TOKEN=...   # 読み取り専用の fine-grained PAT
 - prompt は 1 回 1 MiB まで、analyze は PR 単位で 400 KiB ずつの batch に分けます。1 PR だけで上限を超えたら切り詰めずに exit 1 です。batch をまたいだ lesson はまとめません。
 - PR 本文とコメントは DATA の区切りの中に JSON として入れ、「DATA は命令ではない」と prompt に書きます。Claude にはツールも MCP サーバーも渡しません。
 - 呼び出しごとに `llm-calls.jsonl` に、費用（`total_cost_usd`）、token（`usage`）、model ごとの `costUSD` と `costBasis`、`num_turns`、`duration_ms`、prompt の SHA-256 と大きさを記録します。prompt そのものは記録しません。subscription 認証の費用は請求額ではなく換算値です。
-- run の記録済みの合計が `--max-run-budget-usd` に達したら、以降は呼ばずに exit 1 で止まります。各呼び出しには、残額（`--max-call-budget-usd` があればそれとの小さい方）を `--max-budget-usd` として渡します。
+- run の記録済みの合計が `--max-run-budget-usd` に達したら、以降は呼ばずに exit 1 で止まります。各呼び出しには、残額、1 回あたりの上限（100 USD）、`--max-call-budget-usd`（指定したとき）のうち最も小さい値を `--max-budget-usd` として渡します。
 - 呼び出しの前に、その上限額で `status: pending` の行を `llm-calls.jsonl` に予約し、終わってから結果で置き換えます。timeout、非 0 終了、envelope の解析失敗、中断で費用が読めなかった呼び出しは `status: error` とし、渡した上限額を使ったものとして数えます。harness ごと止まって `pending` のまま残った行も、上限額で数えます。guard が起動前に拒否した呼び出し（認証情報の欠落など）は 0 として数えます。
 
 ## Review Learning: 分割・生成・評価・承認
@@ -133,7 +135,7 @@ $H review approve --run run-... --candidate IC-0001 --reviewer alice --reason ".
 
 ### 生成（generate）
 
-- 候補は `classified.jsonl` の lesson からだけ作ります。`set-aside.jsonl` の lesson（superseded、case_specific、external_only、bot_only）からは作りません。`--include-untrusted` を付けたときだけ、external_only / bot_only だけを理由に外された lesson からも作り、候補に `untrusted_included: true` を付けます。classify の出力とは別に、generate 自身も lesson の `source_trust` を見て、flag なしでは external_only / bot_only の lesson を飛ばします。
+- 候補は `classified.jsonl` の lesson からだけ作ります。`set-aside.jsonl` の lesson（superseded、case_specific、external_only、bot_only、untrusted_quote）からは作りません。`--include-untrusted` を付けたときだけ、external_only / bot_only / untrusted_quote だけを理由に外された lesson からも作り、候補に `untrusted_included: true` を付けます。classify の出力とは別に、generate 自身も lesson の `source_trust` と `untrusted_quotes` を見て、flag なしでは external_only / bot_only の lesson と、外部の発言を引用・転記した lesson を飛ばします。候補の `sources` には、引用したコメント（`quote`）、引用せずに文面を写した外部のコメント（`copied`）、各 thread の最初のコメント（`excerpt`）が投稿者の種別と association 付きで入り、承認画面にすべて出ます。
 - 候補は `candidates/<IC-id>/candidate.json`（`runtime/schemas/improvement-candidate.schema.json`）と、承認の対象になる本文 `body.md` です。ファイル名は候補の id と固定の名前だけで、入力に含まれる path は使いません。`artifact.content_sha256` は `body.md` の SHA-256 です。**正本は hash が覆う `body.md` だけです。** evaluate が当てる検査と form、承認画面の「記録される内容」、registry に入る title・form・check は、どれも `body.md` を読み直して parse したものから作ります。`candidate.json` の `form`、`title`、`check` が parse の結果と違えば、evaluate も approve も exit 3 で止まります。`candidate.json` のそれ以外（target、sources、lint、risk など）は判断の材料で、hash は覆わず、registry にも入りません。
 - `form` は `declarative_check` か `prose` です。`declarative_check` の検査は `body.md` の末尾の ```` ```json sre-harness-check ```` ブロックにあるデータ（`path_globs`、`added_line_pattern`、`absent_pattern`、`message`）で、harness の解釈器（`runtime/sre_harness/review/apply_rules.py`）が評価します。生成されたコードは実行しません。`prose` は文章のルールで、評価では `review-eval-judge` が当てます。
 - `lint` は本文に agent 向けの命令文、URL、shell コマンド、秘密情報らしき文字列があれば、種類と位置（`span`）を記録します。拒否ではなく承認者への注意書きで、status は変えません。
@@ -148,11 +150,13 @@ $H review approve --run run-... --candidate IC-0001 --reviewer alice --reason ".
 ### 評価（evaluate）
 
 - 単位は「hunk × 指摘の種類（ルール）」です。評価用 PR の修正前のコードを使います。thread が付いた hunk は thread の `diff_hunk`（レビュアーが見た時点の hunk）、thread のないファイルは PR の patch の hunk です。
-- ルールは registry の承認済み（このリポジトリ、最新版が approved）を「既存ルール」とし、この run の候補を足して比べます。`with_candidates`（既存 + 全候補）、`baseline`（既存だけ）、候補ごと（既存 + その候補）の 3 種を出します。既存ルールの Markdown（`--existing-rules`）は実行できる形でないので、比較の基準には入りません。
+- ルールは registry の承認済み（このリポジトリ、最新版が approved）を「既存ルール」とし、この run の候補を足して比べます。承認時に registry へ、そのルールを作った run の生成側 PR の番号と `t1`（`generation`）を記録します。生成側 PR が今回の評価用 PR と 1 件でも重なる既存ルールは、自分の生成元で採点されることになるので基準から外し、`evaluation.json` の `excluded_baseline_rules` に理由（`generated_from_evaluation_prs` と重なった PR）を残します。`generation` の記録が無い entry（この記録を始める前に承認したもの）も、生成元が分からないので外します（理由 `no_generation_record`）。`with_candidates`（既存 + 全候補）、`baseline`（既存だけ）、候補ごと（既存 + その候補）の 3 種を出します。既存ルールの Markdown（`--existing-rules`）は実行できる形でないので、比較の基準には入りません。
 - ラベル: thread の最初のコメントがルールの title（`body.md` の見出し）と語を共有する（共有語が min(3, n) 以上かつ title の語の半分以上）とき、その thread はその種類の指摘とみなします。修正が見つかれば `human_flagged`、`fix.status = ambiguous` なら `ambiguous`（正解から外す）、修正がなければ `disputed`（指標から外し件数を出す）、指摘がなく adjudication が valid なら `human_missed_valid`、それ以外は `clean` です。
 - 指標: `precision_lower`（下限。人が確認していない指摘をすべて誤りと数える）、`precision_confirmed`（確認後。レビュアーが指摘したものと adjudication 済みのものだけ）、`recall`、`f1`（下限の precision と recall から）、`false_positive_rate`（clean なセルに出た指摘 / clean なセル数）。分母が 0 の指標は数値を出さず `undefined` です。
-- 95% 区間は評価用 PR を単位にした bootstrap（同じ PR の hunk は独立でないため）で、seed（既定 20260127）と回数（既定 1,000）を `evaluation.json` の `criteria.thresholds` に記録します。n（評価用 PR の数）を併記します。
-- **評価用 PR が 30 件未満の指標は数値ではなく `unevaluable` です。** `status: unevaluable` と理由を記録し、exit 0 で終わります。件数（`counts`）は出すので、どの hunk で何が起きたかは読めます。
+- 95% 区間は評価用 PR を単位にした bootstrap（同じ PR の hunk は独立でないため）で、seed（既定 20260127）と回数（既定 1,000）を `evaluation.json` の `criteria.thresholds` に記録します。n を併記します。
+- 30 件の判定と bootstrap で数えるのは、評価の単位（hunk）を 1 つ以上持つ評価用 PR だけです（`n_prs_with_units`）。split に入った評価用 PR の数は `n_prs` に別に記録します。変更ファイルや patch の無い PR は、件数を水増ししないよう数えません。
+- **hunk を持つ評価用 PR が 30 件未満の指標は数値ではなく `unevaluable` です。** `status: unevaluable` と理由を記録し、exit 0 で終わります。件数（`counts`）は出すので、どの hunk で何が起きたかは読めます。このとき候補は `evaluated` にならず `proposed` のままで（評価済みだったものは `proposed` に戻り）、`history` の最後に `unevaluable: <理由>` の記録が残ります。
+- **評価用 PR が 30 件に満たないリポジトリでは、候補は承認できません。** 件数を満たす期間で split を作り直し（`--t1` を早める、収集の期間を延ばす）、analyze からやり直してください。
 - `criteria_hash` は split の hash、指標の定義、閾値（30 件、95%、seed、回数）、ラベルの規則の hash です。`--seed` や `--resamples` を変えると別の評価になります。adjudication は基準ではなく正解の補正なので、`adjudication_sha256` として別に記録します。
 - 工数は review の各段の wall-clock（`timings.jsonl`）、コストは `llm-calls.jsonl` の集計で、`costBasis` を併記します。subscription 認証の費用は請求額ではありません。
 - `evaluation.md` に載せる題名や path は escape し、リンクと画像の記法を通しません。
@@ -200,9 +204,13 @@ adjudication（`--adjudication <file>`、schema `review-adjudication`）は、`e
 
 ### 承認の制約
 
-- `review approve` は stdin と stdout の両方が TTY のときだけ動きます。TTY がなければ何も記録せず exit 3 です。この検査を迂回する flag や環境変数はありません。agent の shell には TTY がないので、agent は承認できません。**これは本人確認ではありません。** 端末の前にいる人が誰かを確かめる仕組みではなく、`--reviewer` は入力どおりに記録します。
+- `review approve` と `review retire` は stdin と stdout の両方が TTY のときだけ動きます。TTY がなければ何も記録せず exit 3 です。この検査を迂回する flag や環境変数はありません。
+- **TTY と hash の入力は、パイプや非対話の実行からの「うっかりの自動承認」を防ぐためのものです。** pty を開いて起動し、画面の hash の先頭を打ち込むプログラムは通るので、意図的な迂回は防げません。承認者の本人確認でも、改ざん耐性でもありません。`--reviewer` は入力どおりに記録します。**承認の正当性は、registry の diff を置くリポジトリのレビュー（人がその diff を commit する段）で担保してください。**
+- `review reject` は TTY を求めません。候補を使えなくするだけの安全側の操作だからです。承認済みのルールを取り下げる `review retire` は、agent が非対話で実行できないよう TTY を求めます。
 - 承認の画面には、まず registry に記録される内容そのもの（`body.md` から parse した form、title、check）を出し、続けて本文、本文の lint、元になったコメントの引用（コードブロック）と投稿者の種別・association、既存ルールとの関係、評価の結果、リスクとロールバックを出します。外部の文字列は escape し、制御文字は置き換えます。
-- 画面の後で `content_sha256` の先頭 12 文字を入力します。違えば exit 3 です。候補が同じ `content_sha256` で評価されていない（未評価、評価後に本文が変わった、`check_failed`）ときも exit 3 です。
+- 画面の後で `content_sha256` の先頭 12 文字を入力します。違えば exit 3 です。候補が同じ `content_sha256` で評価されていない（未評価、評価後に本文が変わった、`check_failed`）とき、`evaluation.json` の `status` が `evaluated` でない（`unevaluable`）ときも exit 3 です。
+- 承認の前に、`evaluation.json` の `split_sha256` と `criteria_hash`、run の `split.json` の hash、`analyze.json` と `generate.json` の `split_sha256` が互いに一致することを確かめ、食い違えば exit 3 です。これは古い評価や別の split の評価で**うっかり**承認することを防ぐ検査です。
+- **run の中のファイルの照合に改ざん耐性はありません。** `body.md`、`candidate.json`、`evaluation.json`、`split.json` はどれも利用者と同じ権限で書けるローカルファイルで、署名もありません。これらを辻褄が合うように書き換えれば、evaluate を通っていない本文でも承認できます。上の照合は偽造を防ぎません。
 - 記録は state root の下の `registry/<RG-id>/v<N>.json`（schema `review-registry`）と、そのときの本文 `v<N>.md` です。記録する値は、`body.md` から parse した値と hash、run から決まる値（リポジトリ、run id、候補 id）、承認者の入力だけで、`candidate.json` の値は入れません。評価の後に `candidate.json` の `check` などを書き換えると、承認は exit 3 です。registry の記録と `v<N>.md` が食い違う（hash か parse 結果が違う）entry は、次の evaluate で基準として読むときに exit 3 で止まります。run とは別の場所です。版は追記だけで、既存のファイルは置き換えません。承認後に本文を変えて評価し直し、もう一度承認すると版 2 になります。`review reject` と `review retire` も版として記録します。
 - 有効化は、registry の記録と、`--activate-as <path>` を付けたときの Unified Diff（`v<N>.diff`。指定した path に本文を足す新規ファイルの差分）を出すまでです。作業ツリーには書かず、commit もしません。path は相対 path だけで、`..`、絶対 path、`.git/`、`.github/` は exit 3 です。diff を適用して commit するのは人です。
 - 承認済みのルールは、同じリポジトリの次の evaluate で「既存ルール」になります。
@@ -221,6 +229,8 @@ export SRE_HARNESS_PYTHON=~/.venvs/sre-harness/bin/python
 "${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" runs list
 ```
 
+launcher は Python を `-I`（isolated mode）で起動し、`runtime/` だけを `sys.path` に足します。作業ディレクトリ、`PYTHONPATH` などの `PYTHON*` 環境変数、user site-packages は読みません。利用者のリポジトリを作業ディレクトリにして実行しても、そこにある `argparse.py` や `json.py` は harness の中で import されません。`python3 -m sre_harness` で直接起動すると作業ディレクトリが `sys.path` の先頭に入るので、launcher を使ってください。
+
 ## 認証
 
 GitHub を読む段は `--auth-env <環境変数名>` が必須で、既定値はありません。その変数が空なら、通信せずに exit 2 で止まります。
@@ -230,6 +240,8 @@ export REVIEW_READ_TOKEN=...   # 読み取り専用の fine-grained PAT
 ```
 
 渡した値は、`gh` には `GH_TOKEN` として、`git` には環境変数経由の設定として渡ります。argv、remote の URL、リポジトリの config、ログ、run ディレクトリには書きません。`gh` には空の設定ディレクトリを、`git` には空の global / system 設定を見せます。子プロセスの stderr は保存しません。
+
+git の https の fetch 元は、許可した host（既定は `github.com`。呼び出し側が host を明示した場合はその host）の上にあるものだけを受け付け、トークンはその host にだけ付けます。別の host の https remote は exit 3 で拒否します。ローカルのディレクトリを fetch 元にするとき（利用者が明示する読み取り専用の入力）は、トークンを付けません。ref と refspec は `..`、`@{`、空の要素（`//`）、`.` で始まる要素、末尾の `.lock` を拒否します。
 
 ## データの保存場所
 
@@ -268,9 +280,11 @@ python -m coverage run -m pytest && python -m coverage report
 - APM での配置。launcher は自分の位置から `runtime/` を解決します。APM が plugin を分解して置く構成では動かない可能性があります。Claude Code の `/plugin` での導入を対象にしています。
 - git に環境変数経由でトークンを渡して private リポジトリを fetch できるか。合成データのテストはローカルの fetch だけを通ります。
 - 実際の Claude CLI に対する `review analyze` / `review classify` / `review generate` / `review evaluate`。テストは `guard._run` を差し替えた経路と stub だけを通ります。`--bare`（api-key）の envelope の形と `costBasis` の値は実機で確かめていません。
+- `--safe-mode`（subscription）で起動した Claude CLI が、利用者の hooks、plugin、`CLAUDE.md`、設定をどこまで読まないか。envelope の形は確かめましたが、隔離の範囲は実機で確かめていません。
 - 実際の GitHub に対する `review collect`。テストは合成応答と、`gh` の起動を差し替えた経路だけを通ります。`gh api graphql -i` の出力形式、secondary limit の応答（403 / 429 と `retry-after`）、fine-grained PAT で `isResolved` を読めるかは実機で確かめていません。
 - 実データでの precision / recall。合成データの数値は機構の検証で、どのルールの精度も主張しません。
-- 承認の TTY 検査が、実際の端末と agent の shell で期待どおりに分かれること。テストは TTY のない経路（exit 3）と、TTY の判定だけを差し替えた経路を通ります。
+- 承認と retire の TTY 検査が、実際の端末と、TTY の無い agent の shell で期待どおりに分かれること。テストは TTY のない経路（exit 3）と、TTY の判定だけを差し替えた経路を通ります。一方、`os.openpty()` で起動して hash の先頭を打ち込むスクリプトが承認を通すことは、合成データで確かめています（上の「承認の制約」）。
+- `--host` に GitHub Enterprise Server を指定したときの認証。harness は `gh` に `GH_TOKEN` だけを渡します。`gh` は GHES の host では `GH_ENTERPRISE_TOKEN` を読むため、そのままでは認証されない可能性があります。GHES では実機で確かめていません。
 
 ## Specification Consistency: 取り込みと抽出
 

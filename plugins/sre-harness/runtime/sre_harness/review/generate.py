@@ -1,10 +1,10 @@
 """`review generate`: classified lessons to improvement candidates (status proposed).
 
 1. Candidates are built from `classified.jsonl` only. Lessons in `set-aside.jsonl` are not used,
-   except that `--include-untrusted` admits those set aside only for being external_only or
-   bot_only. Independently of classify, a lesson whose `source_trust` is external_only or
-   bot_only is skipped without that flag (the invariant holds even if classified.jsonl was
-   edited by hand).
+   except that `--include-untrusted` admits those set aside only for being external_only,
+   bot_only or untrusted_quote. Independently of classify, a lesson whose `source_trust` is
+   external_only or bot_only, or whose `untrusted_quotes` is not empty, is skipped without that
+   flag (the invariant holds even if classified.jsonl was edited by hand).
 2. One backend call per lesson proposes a form (`declarative_check` or `prose`), a title, the
    rule text, the check (for declarative_check), a risk and a rollback. The answer passes the
    JSON Schema and the interpreter's own check validation; others go to
@@ -28,6 +28,7 @@ from . import split as split_stage
 STAGE = "generate"
 OUTPUT_SCHEMA = "llm-review-candidates"
 UNTRUSTED = {"external_only", "bot_only"}
+UNTRUSTED_REASONS = UNTRUSTED | {"untrusted_quote"}
 EXCERPT = 300
 
 INSTRUCTIONS = """\
@@ -141,8 +142,14 @@ def _source(thread_id, comment, text, kind):
     return source
 
 
+def untrusted(lesson):
+    """Raised only by outside accounts or bots, or quoting / copying one."""
+    return lesson["source_trust"] in UNTRUSTED or bool(lesson["untrusted_quotes"])
+
+
 def sources(lesson, threads):
-    """The quoted comments, then the first comment of every thread that was not quoted."""
+    """The quoted comments, the outside comments the lesson copies without quoting, then the
+    first comment of every thread that was not shown yet."""
     comments = {
         comment["id"]: (thread_id, comment)
         for thread_id in lesson["thread_ids"]
@@ -153,6 +160,12 @@ def sources(lesson, threads):
         thread_id, comment = comments[quote["comment_id"]]
         found.append(_source(thread_id, comment, quote["text"], "quote"))
         quoted.add(comment["id"])
+    for row in lesson["untrusted_quotes"]:
+        if row["comment_id"] not in quoted:
+            thread_id, comment = comments[row["comment_id"]]
+            excerpt = (comment.get("body") or "").strip()[:EXCERPT] or "(empty)"
+            found.append(_source(thread_id, comment, excerpt, "copied"))
+            quoted.add(comment["id"])
     for thread_id in lesson["thread_ids"]:
         root = threads[thread_id]["comments"][0]
         if root["id"] not in quoted:
@@ -179,13 +192,13 @@ def plan(run_dir, include_untrusted):
         rows += [
             (row, set(row["reasons"]))
             for row in _read_optional(run_dir, "set-aside.jsonl")
-            if set(row["reasons"]) <= UNTRUSTED
+            if set(row["reasons"]) <= UNTRUSTED_REASONS
         ]
     for row, reasons in rows:
         lesson = lessons.get(row["lesson_id"])
         if lesson is None:
             raise InputError(f"{row['id']} names a lesson that is not in lessons.jsonl.")
-        if lesson["source_trust"] in UNTRUSTED and not include_untrusted:
+        if untrusted(lesson) and not include_untrusted:
             skipped.append({"lesson_id": lesson["id"], "source_trust": lesson["source_trust"]})
             continue
         if reasons is None:
@@ -286,7 +299,7 @@ def generate(run_dir, session, include_untrusted=False, split=None):
             "conflicts": conflicts.get(basis_id, []),
             "sources": sources(lesson, threads),
             "source_trust": lesson["source_trust"],
-            "untrusted_included": lesson["source_trust"] in UNTRUSTED,
+            "untrusted_included": untrusted(lesson),
             "status": "proposed",
             "version": 1,
             "evaluation_ref": None,

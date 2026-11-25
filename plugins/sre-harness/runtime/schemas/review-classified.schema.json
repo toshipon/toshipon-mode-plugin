@@ -43,7 +43,9 @@
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": { "enum": ["superseded", "case_specific", "external_only", "bot_only"] }
+          "items": {
+            "enum": ["superseded", "case_specific", "external_only", "bot_only", "untrusted_quote"]
+          }
         }
       }
     }

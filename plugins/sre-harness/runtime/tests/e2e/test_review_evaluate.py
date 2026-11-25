@@ -8,7 +8,7 @@ candidates or judgements would be, and synthetic numbers are not a claim of accu
 import json
 from pathlib import Path
 
-from examples.synthetic.github_responses import SPLIT_T1, evaluation_scenario
+from examples.synthetic.github_responses import SPLIT_T1, TIMEOUT_FINDING, evaluation_scenario
 from sre_harness import llm, records
 from tests.helpers import RULES_TEXT, collect_fixture, read_jsonl, run_cli, run_dir
 
@@ -33,10 +33,12 @@ def test_the_review_learning_evaluation_runs_end_to_end(tmp_path, home, clock):
     (rules / "http.md").write_text(RULES_TEXT)
     argv = ["review", "classify", "--run", run_id, "--existing-rules", str(rules), *STUB]
     code, classified = run_cli(argv, home)
-    assert code == 0 and classified["classified"] == 2
+    # The outside account's reply quoted by the timeout lesson sets it aside (untrusted_quote).
+    assert code == 0 and classified["classified"] == 1
 
-    code, generated = run_cli(["review", "generate", "--run", run_id, *STUB, *split], home)
-    assert code == 0 and generated["candidates"] == 2 and generated["skipped_untrusted"] == 0
+    argv = ["review", "generate", "--run", run_id, *STUB, *split]
+    code, generated = run_cli([*argv, "--include-untrusted"], home)
+    assert code == 0 and generated["candidates"] == 4 and generated["include_untrusted"]
 
     argv = ["review", "evaluate", "--run", run_id, *STUB, *split]
     code, evaluated = run_cli(argv, home)
@@ -53,14 +55,19 @@ def test_the_review_learning_evaluation_runs_end_to_end(tmp_path, home, clock):
     for folder in sorted((directory / "candidates").iterdir()):
         record = json.loads((folder / "candidate.json").read_text())
         assert records.violations("improvement-candidate", record) == []
-        assert record["status"] == "evaluated"
+        assert record["status"] == "proposed"  # unevaluable: too few evaluation PRs
         assert record["artifact"]["content_sha256"] == records.sha256(
             (folder / "body.md").read_bytes()
         )
-    lint = json.loads((directory / "candidates" / "IC-0001" / "candidate.json").read_text())["lint"]
-    assert {"imperative_to_agent", "url"} <= {item["kind"] for item in lint}
+    built = [
+        json.loads((f / "candidate.json").read_text()) for f in (directory / "candidates").iterdir()
+    ]
+    (timeout,) = [record for record in built if record["problem"] == TIMEOUT_FINDING]
+    assert timeout["untrusted_included"] is True
+    assert {"imperative_to_agent", "url"} <= {item["kind"] for item in timeout["lint"]}
     stages = [row["stage"] for row in read_jsonl(directory / llm.CALLS_FILE)]
-    assert stages == ["analyze", "classify", "generate", "generate", "evaluate"]
+    # One generate call per lesson; one judge call per prose candidate (the timeout one is a check).
+    assert stages == ["analyze", "classify", *["generate"] * 4, *["evaluate"] * 3]
     assert llm.spent_usd(directory) == 0
     assert (directory / "evaluation.md").read_text().startswith("# Review evaluation")
     assert Path(made["split"]).parent == directory

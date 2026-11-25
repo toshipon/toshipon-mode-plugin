@@ -117,6 +117,7 @@ def active_rules(root, repo):
                 **parsed,
                 "body": text,
                 "content_sha256": block["content_sha256"],
+                "generation": latest.get("generation"),
             }
         )
     return rules
