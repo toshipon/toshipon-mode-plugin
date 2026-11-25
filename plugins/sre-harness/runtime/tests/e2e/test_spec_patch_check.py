@@ -283,6 +283,78 @@ def test_check_patch_refuses_a_rewritten_sidecar(scenario, home):
     assert code == 3
 
 
+def _rewrite(path, change):
+    data = json.loads(path.read_text())
+    change(data)
+    path.write_text(json.dumps(data))
+
+
+def test_check_patch_refuses_an_old_patch_whose_sidecar_names_the_new_head(scenario, home):
+    """main moves (an unrelated file); only the sidecar's `target_head_sha` is rewritten.
+    `impact-report.json` still names the old head, so the patch is not offered."""
+    run_id, value, _ = reported(home, scenario)
+    item = _by_path(value)["docs/requirements.md"]
+    new = advance_branch(scenario.source, {"docs/runbook/later.md": "# later\n"})
+    sidecar = run_dir(home, run_id) / "patches" / f"{item['id']}.json"
+    _rewrite(sidecar, lambda data: data.update(target_head_sha=new))
+    code, _ = check_patch(home, run_id, scenario, item["id"])
+    assert code == 3
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda entry: entry.update(content_sha256="0" * 64),
+        lambda entry: entry.update(paths=[DANGER_PATH]),
+        lambda entry: entry.update(target_pr=SUPERSEDED_PR),
+        lambda entry: entry.update(preimage_blob_shas={"docs/requirements.md": "0" * 40}),
+    ],
+    ids=["content_sha256", "paths", "target_pr", "preimage_blob_shas"],
+)
+def test_check_patch_refuses_a_sidecar_that_differs_from_the_report(scenario, home, change):
+    run_id, value, _ = reported(home, scenario)
+    item = _by_path(value)["docs/requirements.md"]
+
+    def edit(report_value):
+        change(next(p for p in report_value["patches"] if p["id"] == item["id"]))
+
+    _rewrite(run_dir(home, run_id) / "impact-report.json", edit)
+    code, _ = check_patch(home, run_id, scenario, item["id"])
+    assert code == 3
+
+
+def test_check_patch_refuses_a_patch_the_report_does_not_list(scenario, home):
+    run_id, value, _ = reported(home, scenario)
+    item = _by_path(value)["docs/requirements.md"]
+
+    def drop(report_value):
+        report_value["patches"] = [p for p in report_value["patches"] if p["id"] != item["id"]]
+
+    _rewrite(run_dir(home, run_id) / "impact-report.json", drop)
+    code, _ = check_patch(home, run_id, scenario, item["id"])
+    assert code == 3
+
+
+def test_check_patch_refuses_both_records_rewritten_when_the_target_file_changed(scenario, home):
+    """The sidecar and the report both name the new head, but the patched file changed on
+    main: its blob is not the preimage the patch was made for."""
+    run_id, value, _ = reported(home, scenario)
+    item = _by_path(value)["docs/requirements.md"]
+    before = run_git(scenario.source, "show", f"{item['target_head_sha']}:docs/requirements.md")
+    new = advance_branch(scenario.source, {"docs/requirements.md": before + "\n追記です。\n"})
+
+    def to_new(data):
+        entries = data["patches"] if "patches" in data else [data]
+        for entry in entries:
+            if entry["id"] == item["id"]:
+                entry["target_head_sha"] = new
+
+    _rewrite(run_dir(home, run_id) / "patches" / f"{item['id']}.json", to_new)
+    _rewrite(run_dir(home, run_id) / "impact-report.json", to_new)
+    code, _ = check_patch(home, run_id, scenario, item["id"])
+    assert code == 3
+
+
 @pytest.mark.parametrize(("name", "code"), [("PT-9999", 2), ("../x", 3), ("PT-0001.diff", 3)])
 def test_check_patch_names_must_be_patch_ids_of_the_run(scenario, home, monkeypatch, name, code):
     run_id, _, _ = reported(home, scenario)

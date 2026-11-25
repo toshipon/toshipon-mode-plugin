@@ -600,12 +600,39 @@ def _sidecar(run_dir, name):
     return sidecar, data
 
 
+# What `spec report` recorded about a patch in `impact-report.json` and what the sidecar
+# says must agree on these, so rewriting one file does not re-target an old patch.
+BOUND_FIELDS = (
+    "id",
+    "target_pr",
+    "target_head_sha",
+    "content_sha256",
+    "paths",
+    "preimage_blob_shas",
+)
+
+
+def _reported(run_dir, name, sidecar):
+    """Refuse a sidecar that differs from the report's `patches[]` entry with the same id."""
+    value = records.read_json(paths.child(run_dir, "impact-report.json"))
+    entry = next((item for item in value.get("patches", []) if item.get("id") == name), None)
+    if entry is None:
+        raise BoundaryError(f"impact-report.json lists no patch {name}; it is not checked.")
+    differ = [key for key in BOUND_FIELDS if entry.get(key) != sidecar.get(key)]
+    if differ:
+        raise BoundaryError(
+            f"{name}: the sidecar differs from impact-report.json in {', '.join(differ)}; "
+            "run `spec analyze` and `spec report` again."
+        )
+
+
 def check(run_dir, name, context):
     """`spec check-patch`: the current head against the patch's target, then the gate again.
 
     `context` carries transport, limiter, source, token, root. Returns (output, exit code)."""
     name = patch_id(name)
     sidecar, data = _sidecar(run_dir, name)
+    _reported(run_dir, name, sidecar)
     allow = Allow.from_run(run_dir)
     try:
         found = screen(data, allow)
@@ -650,7 +677,10 @@ def check(run_dir, name, context):
     except Refused as error:
         raise BoundaryError(f"{name} does not pass the patch gate: {error}") from None
     if admitted["preimage_blob_shas"] != sidecar["preimage_blob_shas"]:
-        raise BoundaryError(f"{name}: the files differ from the ones the patch was made for.")
+        raise BoundaryError(
+            f"{name}: the files at the current head differ from the ones the patch was made "
+            "for (preimage_blob_shas)."
+        )
     output = {
         "patch": name,
         "finding_id": sidecar["finding_id"],
