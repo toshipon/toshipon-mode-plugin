@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from jsonschema import Draft202012Validator
 
 from sre_harness.spec import findings as fd
@@ -23,6 +24,21 @@ def test_a_cell_shows_links_images_html_and_pipes_as_text():
     assert "\\|" in text and "| " not in text.replace("\\| ", "")
     assert "\\`code\\`" in text
     assert "://" not in text and "\n" not in text
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "see www.example.invalid/x now",
+        "WWW.example.invalid",
+        "mail admin@example.invalid",
+        "https://example.invalid/a",
+        "mailto:admin@example.invalid",
+    ],
+)
+def test_a_cell_leaves_no_gfm_autolink(value):
+    text = report.cell(value)
+    assert "www." not in text.lower() and "@" not in text and "://" not in text
 
 
 def test_a_block_cannot_be_closed_by_its_content():
@@ -116,3 +132,11 @@ def test_the_markdown_keeps_external_text_out_of_markup():
     assert HOSTILE in text  # in a code block, as written
     assert "| FD-0001 | impact | info | explicit | REQ-0001 | #1 | E1 | E2 |" in text
     assert "| - | TL-0001 refines |" in text
+
+
+def test_moved_since_analysis_is_unchecked_not_false():
+    value = {**_report([_pr(1)]), "generated_at": "2026-01-15T00:00:00Z", "schema_version": 1}
+    value["default_branch"] = {**value["default_branch"], "moved_since_analysis": None}
+    from sre_harness import records
+
+    assert records.violations("impact-report", value) == []

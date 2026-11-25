@@ -1,4 +1,5 @@
-"""Invariant: an inferred trace link is never the only ground of a critical (or high) finding.
+"""Invariant: an inferred trace link is never the only ground of a critical (or high) finding,
+and neither is an inferred entity (a decision or requirement the backend proposed).
 
 Held in three places, each checked here: the builder caps the severity, the checker refuses a
 finding that breaks it, and the impact-report schema refuses it too.
@@ -40,3 +41,31 @@ def test_the_builder_never_makes_it(kind):
     item = fd.draft(kind, [], prs, [fd.evidence("x", "inferred")], "x")
     assert fd.SEVERITIES.index(item["severity"]) >= fd.SEVERITIES.index(fd.INFERRED_CAP)
     assert fd.check(fd.numbered([item])) == []
+
+
+def _about_inferred(severity, basis):
+    return {**_finding(severity, basis), "inferred_entities": ["RQI-0001"]}
+
+
+@pytest.mark.parametrize("severity", ["critical", "high"])
+def test_a_finding_about_an_inferred_entity_is_never_severe(severity):
+    for basis in ("explicit", "inferred"):
+        assert records.violations("impact-report", _about_inferred(severity, basis), "finding")
+        assert fd.check([_about_inferred(severity, basis)]) != []
+    assert records.violations("impact-report", _about_inferred("medium", "explicit"), "finding")
+    assert fd.check([_about_inferred("medium", "explicit")]) != []
+    assert fd.check([_about_inferred("medium", "inferred")]) == []
+
+
+@pytest.mark.parametrize("kind", fd.KINDS)
+def test_the_builder_caps_a_finding_about_an_inferred_entity(kind):
+    prs = [1, 2] if kind == "semantic_conflict" else [1]
+    item = fd.draft(kind, ["RQI-0001", "REQ-0001"], prs, [fd.evidence("x", "explicit")], "x")
+    (marked,) = fd.mark_inferred([item], {"RQI-0001", "DCI-0001"})
+    assert marked["basis"] == "inferred" and marked["inferred_entities"] == ["RQI-0001"]
+    assert fd.SEVERITIES.index(marked["severity"]) >= fd.SEVERITIES.index(fd.INFERRED_CAP)
+    assert fd.check(fd.numbered([marked])) == []
+    (plain,) = fd.mark_inferred(
+        [fd.draft(kind, ["REQ-0001"], prs, [fd.evidence("x", "explicit")], "x")], {"RQI-0001"}
+    )
+    assert plain["basis"] == "explicit" and "inferred_entities" not in plain

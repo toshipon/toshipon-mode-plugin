@@ -316,7 +316,10 @@ def _write(repository, files):
             target.unlink()
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
+        if isinstance(text, bytes):
+            target.write_bytes(text)
+        else:
+            target.write_bytes(text.encode("utf-8"))  # as written: no newline translation
 
 
 def _commit(repository, message):

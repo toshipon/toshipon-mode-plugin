@@ -155,11 +155,41 @@ def test_an_unread_kind_has_no_units():
     assert structure.parse("src/app.py", "REQ-0001 = 1\n") == []
 
 
-def test_a_second_value_in_one_file_is_reported():
-    text = "## REQ-0001\n\n- days: 1\n- days: 2\n"
-    found, conflicts = structure.facts(structure.parse("a.md", text))
-    assert found[("REQ-0001", "days")] == ("1", 3)
-    assert conflicts == [("REQ-0001", "days", "2", 4)]
+def test_every_statement_of_a_key_in_one_file_is_kept():
+    text = "## REQ-0001\n\n- days: 1\n- days: 2\n- days: 1\n"
+    found = structure.facts(structure.parse("a.md", text))
+    assert found[("REQ-0001", "days")] == [("1", 3), ("2", 4), ("1", 5)]
+
+
+OTHER_BREAKS = ("\r", "\x0c", "\x0b", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
+
+
+@pytest.mark.parametrize("mark", OTHER_BREAKS)
+def test_line_numbers_are_git_s(mark):
+    tf = (
+        f'# note{mark}resource "forged" "x" {{\n'
+        'resource "aws_s3_bucket" "logs" {\n'
+        f'  bucket = "a{mark}b"\n'
+        "  retention_days = 400 # REQ-0001\n"
+        "}\n"
+    )
+    (unit,) = structure.parse("infra/a.tf", tf)
+    assert unit["node"] == ("iac", "aws_s3_bucket.logs")
+    assert (unit["start"], unit["end"]) == (1, 5)
+    assert unit["facts"] == [("REQ-0001", "retention_days", "400", 4)]
+
+    tests = f"import os  # {mark}def test_forged():\n\ndef test_req_0001_a():\n    pass\n"
+    (test,) = structure.parse("tests/test_a.py", tests)
+    assert test["node"][1].endswith("::test_req_0001_a") and test["start"] == 3
+
+    doc = f"# T\n\nintro{mark}## REQ-0009 x\n\n## REQ-0001 y\n\n- days: 1{mark}x\n- keep: 2\n"
+    units = structure.parse("docs/a.md", doc)
+    assert [(u["node"], u["start"]) for u in units] == [
+        (("design", "docs/a.md"), 1),
+        (("requirement", "REQ-0001"), 5),
+    ]
+    assert units[1]["facts"] == [("REQ-0001", "days", f"1{mark}x", 7), ("REQ-0001", "keep", "2", 8)]
+    assert [key for key, _ in structure.bullet_facts(f"- a: 1{mark}- b: 2\n")] == ["a"]
 
 
 def test_touched_units_overlap_the_ranges():
