@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from .evaluation import run_command
-from .store import SCHEMA_DIR, HarnessError, locked, read_json, validate, write_json
+from .store import HarnessError, locked, read_json, schema_location, validate, write_json
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_TIMEOUT = 900
@@ -68,8 +68,9 @@ class Budget:
 
 def _transport_schema(name):
     """Inline one schema for --json-schema. The CLI rejects the 2020-12 meta-schema URI."""
-    filename, _, definition = name.partition("#")
-    document = json.loads((SCHEMA_DIR / f"{filename}.schema.json").read_text(encoding="utf-8"))
+    path, reference = schema_location(name)
+    definition = reference.partition("#/$defs/")[2]
+    document = json.loads(path.read_text(encoding="utf-8"))
     schema = copy.deepcopy(document)
     if definition:
         schema = {**schema["$defs"][definition], "$defs": schema["$defs"]}

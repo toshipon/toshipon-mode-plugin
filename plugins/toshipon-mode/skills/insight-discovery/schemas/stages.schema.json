@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "insight-discovery/stages.schema.json",
+  "title": "What a model returns at each stage of the discovery loop. Every output is checked again by checks.py before it is used.",
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "observe_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observations", "interpretations"],
+      "properties": {
+        "observations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "evidence_refs", "quotes"],
+            "properties": {
+              "text": { "$ref": "#/$defs/text" },
+              "evidence_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+              "quotes": { "description": "Verbatim substrings of the referenced evidence.", "type": "array", "items": { "$ref": "#/$defs/text" } }
+            }
+          }
+        },
+        "interpretations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "based_on"],
+            "properties": {
+              "text": { "$ref": "#/$defs/text" },
+              "based_on": { "description": "Positions in observations, starting at 0.", "type": "array", "items": { "type": "integer", "minimum": 0 } }
+            }
+          }
+        }
+      }
+    },
+    "structure_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["groups"],
+      "properties": {
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["observations", "abstracted_problem", "levels", "doubted_premise"],
+            "properties": {
+              "observations": { "type": "array", "items": { "type": "string", "pattern": "^O[0-9]+$" } },
+              "abstracted_problem": { "$ref": "#/$defs/text" },
+              "levels": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["individual", "structural", "premise"],
+                "properties": {
+                  "individual": { "$ref": "#/$defs/text" },
+                  "structural": { "$ref": "#/$defs/text" },
+                  "premise": { "$ref": "#/$defs/text" }
+                }
+              },
+              "doubted_premise": { "$ref": "#/$defs/text" }
+            }
+          }
+        }
+      }
+    },
+    "hypothesize_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hypotheses"],
+      "properties": {
+        "hypotheses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["group", "statement", "generator", "falsification", "counter_evidence"],
+            "properties": {
+              "group": { "type": "string", "pattern": "^G[0-9]+$" },
+              "statement": { "$ref": "#/$defs/text" },
+              "generator": { "enum": ["inversion", "analogy", "constraint_removal", "constraint_addition", "counterexample"] },
+              "analogy": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["source_domain", "mapping", "where_it_breaks"],
+                "properties": {
+                  "source_domain": { "$ref": "#/$defs/text" },
+                  "mapping": { "$ref": "#/$defs/text" },
+                  "where_it_breaks": { "$ref": "#/$defs/text" }
+                }
+              },
+              "falsification": { "$ref": "#/$defs/text" },
+              "counter_evidence": { "type": "array", "items": { "$ref": "#/$defs/text" } }
+            }
+          }
+        }
+      }
+    },
+    "scored": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "reason"],
+      "properties": {
+        "score": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "reason": { "$ref": "#/$defs/text" }
+      }
+    },
+    "assess_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assessments"],
+      "properties": {
+        "assessments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "hypothesis", "scores", "minimal_experiment", "success_criteria", "kill_criteria",
+              "estimated_cost", "confidence", "confidence_reason", "unverified"
+            ],
+            "properties": {
+              "hypothesis": { "type": "string", "pattern": "^H[0-9]+$" },
+              "scores": {
+                "description": "3 is best on every axis: for cost, 3 means cheapest.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["value", "delta_from_prior_art", "testability", "cost"],
+                "properties": {
+                  "value": { "$ref": "#/$defs/scored" },
+                  "delta_from_prior_art": { "$ref": "#/$defs/scored" },
+                  "testability": { "$ref": "#/$defs/scored" },
+                  "cost": { "$ref": "#/$defs/scored" }
+                }
+              },
+              "minimal_experiment": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["procedure", "comparison", "estimated_hours"],
+                "properties": {
+                  "procedure": { "$ref": "#/$defs/text" },
+                  "comparison": { "$ref": "#/$defs/text" },
+                  "estimated_hours": { "type": "number", "minimum": 0 }
+                }
+              },
+              "success_criteria": { "$ref": "#/$defs/text" },
+              "kill_criteria": { "$ref": "#/$defs/text" },
+              "estimated_cost": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["hours", "money", "note"],
+                "properties": {
+                  "hours": { "type": "number", "minimum": 0 },
+                  "money": { "type": "number", "minimum": 0 },
+                  "note": { "type": "string" }
+                }
+              },
+              "confidence": { "enum": ["low", "medium", "high"] },
+              "confidence_reason": { "$ref": "#/$defs/text" },
+              "unverified": { "type": "array", "items": { "$ref": "#/$defs/text" } }
+            }
+          }
+        }
+      }
+    },
+    "manual_export": {
+      "description": "Hand-written export read by the manual adapter.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "classification": { "enum": ["public", "synthetic", "internal", "confidential"] },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "task_key", "text"],
+            "properties": {
+              "kind": { "type": "string" },
+              "task_key": { "type": "string" },
+              "domain_tag": { "type": "string" },
+              "label": { "type": "string" },
+              "text": { "type": "string" },
+              "occurrences": { "type": "integer", "minimum": 1 },
+              "sessions": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "search_results": {
+      "description": "What a person or an interactive session brings back from an approved search.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queries", "prior_art"],
+      "properties": {
+        "queries": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "prior_art": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title", "url", "claim", "relation"],
+            "properties": {
+              "title": { "$ref": "#/$defs/text" },
+              "url": { "type": "string", "minLength": 1 },
+              "claim": { "$ref": "#/$defs/text" },
+              "relation": { "enum": ["same", "partial", "different"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}
