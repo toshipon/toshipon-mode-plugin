@@ -509,7 +509,8 @@ def test_the_subscription_login_gets_the_user_name_it_is_stored_under(tmp_path):
     # On macOS the login sits in the keychain under the account name; without USER the CLI
     # answers "Not logged in". Checked against the real CLI on 2026-11-25.
     ambient = {"HOME": "/home/alice", "USER": "alice", "LOGNAME": "alice", "PATH": "/usr/bin"}
-    ambient.update(ANTHROPIC_API_KEY="unused", GH_TOKEN="ambient", AWS_PROFILE="ambient")
+    for name in ("ANTHROPIC_API_KEY", "GH_TOKEN", "AWS_PROFILE"):
+        ambient[name] = "ambient"
     child = guard._claude_env("subscription", str(tmp_path), ambient)
     assert child == {"HOME": "/home/alice", "USER": "alice", "LOGNAME": "alice", "PATH": "/usr/bin"}
     with_key = guard._claude_env("api-key", str(tmp_path), ambient)
