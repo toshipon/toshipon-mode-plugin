@@ -4,7 +4,9 @@
    sections and, when `spec report` already ran, the patches. All of it is DATA in the prompt.
 2. The auditor is `agents/spec-auditor.md`: the same file is the Claude Code subagent and,
    below a short task, the instructions of the call. The answer (`llm-spec-audit`) carries
-   findings, limitations and the axes it could not assess; it has no field for a status.
+   findings, limitations, the axes it could not assess and `reviewed`: the analysis findings
+   it checked, each `upheld` or `disputed` (the auditor's view, not a pass). It has no field
+   for a status.
 3. Checks, in this order, on every answer:
    - the schema (`llm.Session.ask`);
    - finding ids are unique;
@@ -13,16 +15,24 @@
      failing critical or high finding refuses the whole answer, so a severe claim is either
      checked or the audit fails, never silently lost;
    - limitations do not park a severe concern (`check_limitations`): no severity word, no
-     input id that no kept finding cites, no finding id, no claim repeated.
+     input id that no kept finding cites, no finding id, no claim repeated;
+   - every critical and high finding of the analysis is treated (`check_reviewed`): named in
+     `reviewed` or in the evidence of a kept finding. An answer that says nothing about them
+     (an empty answer, say) is refused, so silence never reads as a pass.
    A refused or schema-breaking answer is asked again, with the problems named in the
    instructions, up to `max_iterations` calls in all. The analysis itself is not run again:
    apart from inferred links and explanation text it is fixed rules over git and the
    registry, and the audit's findings do not feed it.
-4. Status by rule (`axis_status`, `axes`): critical or high -> fail, only medium or low ->
-   concerns, no finding -> pass when the axis was assessed, else not_assessed. An axis is not
-   assessed when the audit did not complete, the auditor said so, every finding of the axis
-   was dropped, or the input is empty. Any kept critical or high finding blocks: exit 1, and
-   audit.json is written all the same.
+4. Status by rule (`axis_status`, `axes`, `overall`, all through `decide`): critical or high
+   -> fail, only medium or low -> concerns, no finding -> pass when the axis was assessed, else
+   not_assessed. An axis is not assessed when the audit did not complete, the auditor said so,
+   every finding of the axis was dropped, or the input is empty. Any kept critical or high
+   finding blocks, and so does a critical or high analysis finding the audit did not dispute
+   (`analysis_blocking`). An accepted answer that assessed no axis is `not_assessed`. Anything
+   but `passed` exits 1, and audit.json is written all the same.
+5. `load` (for `spec report`) runs `decide` again on the recorded findings and `reviewed`; a
+   record whose status, axes or blocking differ is shown as stale. That is a consistency
+   check, not a defence against forgery: rewriting the findings too passes it.
 """
 
 import re
@@ -55,8 +65,9 @@ _EVIDENCE = re.compile(rf"({_ID})(?::\s*(.+))?", re.DOTALL)
 _NAMED_ID = re.compile(rf"(?<![A-Za-z0-9-]){_ID}(?![0-9])")
 _FINDING_ID = re.compile(r"(?<![A-Za-z0-9-])F[0-9]+(?![A-Za-z0-9])")
 _SEVERITY_WORDS = re.compile(
-    r"(?i)\b(?:critical|high|severe|severity|blockers?|blocking|fatal)\b"
-    r"|重大|致命|深刻|クリティカル"
+    r"(?i)\b(?:critical|high|severe|severity|serious|blockers?|blocking|fatal|showstoppers?"
+    r"|release-stopping|stop-ship)\b"
+    r"|重大|致命|深刻|クリティカル|重篤|看過"
 )
 _QUOTES = (('"', '"'), ("「", "」"), ("“", "”"), ("'", "'"))
 MIN_REPEAT = 12
@@ -66,10 +77,13 @@ Task: audit the specification analysis in DATA independently, along the eight ax
 `axes`. `findings` are what the analysis reported, `prs` the open pull requests it read,
 `decisions` and `requirements` the registry, `trace` the links, `documents` the source
 sections, `patches` the candidate fixes when there are any. Return `findings` (ids F1, F2, ...,
-each with one category from the axes), `limitations` and `not_assessed`. Every evidence entry is
-an id from DATA (FD-0001, DEC-0001, REQ-0001, TL-0001, PT-0001, DOC-0001 or DOC-0001#S1),
-optionally followed by ": " and a quote copied exactly from that item. Do not give a status,
-a score or a verdict: the harness computes them from the severities.
+each with one category from the axes), `limitations`, `not_assessed` and `reviewed`. In
+`reviewed`, name every analysis finding you checked (`ref`: FD-0001, ...) with `verdict`
+`upheld` (it stands) or `disputed` (the source does not support it) and a `note`; every
+critical and high analysis finding must be there or in the evidence of a finding. Every
+evidence entry is an id from DATA (FD-0001, DEC-0001, REQ-0001, TL-0001, PT-0001, DOC-0001 or
+DOC-0001#S1), optionally followed by ": " and a quote copied exactly from that item. Do not
+give a status, a score or a pass / fail: the harness computes them from the severities.
 
 The instructions of the spec-auditor agent follow."""
 
@@ -120,6 +134,75 @@ def axes(findings, not_assessed, rejected_axes, completed):
 
 def blocking(findings):
     return [item["id"] for item in findings if item["severity"] in BLOCKING]
+
+
+def severe_analysis(data):
+    """Ids of the analysis's critical and high findings, in input order."""
+    return [item["id"] for item in data["findings"] if item["severity"] in BLOCKING]
+
+
+def _cited(findings):
+    return {
+        match.group(1)
+        for item in findings
+        for entry in item["evidence"]
+        for match in [_EVIDENCE.match(entry.strip())]
+        if match
+    }
+
+
+def check_reviewed(reviewed, findings, data):
+    """Problems: a `reviewed` ref that is not an analysis finding or comes twice, and every
+    critical or high analysis finding that neither `reviewed` nor a kept finding names."""
+    known = {item["id"] for item in data["findings"]}
+    problems, seen = [], set()
+    for entry in reviewed:
+        if entry["ref"] not in known:
+            problems.append(f"unknown_reviewed: {entry['ref']}")
+        elif entry["ref"] in seen:
+            problems.append(f"duplicate_reviewed: {entry['ref']}")
+        seen.add(entry["ref"])
+    treated = seen | _cited(findings)
+    problems += [f"unreviewed: {name}" for name in severe_analysis(data) if name not in treated]
+    return problems
+
+
+def analysis_blocking(reviewed, findings, data):
+    """The analysis's critical and high findings that still stand: treated and not disputed.
+    A finding treated only through an audit finding's evidence is upheld."""
+    disputed = {entry["ref"] for entry in reviewed if entry["verdict"] == "disputed"}
+    treated = {entry["ref"] for entry in reviewed} | _cited(findings)
+    return [name for name in severe_analysis(data) if name in treated and name not in disputed]
+
+
+def overall(accepted, own, analysis, axis_map):
+    """The audit's status: failed, then blocked, then not_assessed, then passed."""
+    if not accepted:
+        return "failed"
+    if own or analysis:
+        return "blocked"
+    if all(entry["status"] == "not_assessed" for entry in axis_map.values()):
+        return "not_assessed"
+    return "passed"
+
+
+def decide(data, accepted, findings, rejected, not_assessed, reviewed):
+    """{status, axes, blocking, analysis_blocking}: the one place the rules meet."""
+    has_input = bool(data["findings"] or data["requirements"] or data["decisions"])
+    axis_map = axes(
+        findings,
+        {entry["axis"] for entry in not_assessed},
+        {item["category"] for item in rejected},
+        completed=accepted and has_input,
+    )
+    own = blocking(findings)
+    analysis = analysis_blocking(reviewed, findings, data) if accepted else []
+    return {
+        "status": overall(accepted, own, analysis, axis_map),
+        "axes": axis_map,
+        "blocking": own,
+        "analysis_blocking": analysis,
+    }
 
 
 # Input and the validator ------------------------------------------------------------------
@@ -198,13 +281,7 @@ def _normal(text):
 
 def check_limitations(limitations, findings):
     """Problems of limitations that would hide a severe or specific concern outside findings."""
-    cited = {
-        match.group(1)
-        for item in findings
-        for entry in item["evidence"]
-        for match in [_EVIDENCE.match(entry.strip())]
-        if match
-    }
+    cited = _cited(findings)
     claims = [_normal(item["claim"]) for item in findings]
     problems = []
     for position, text in enumerate(limitations):
@@ -434,6 +511,14 @@ def stub_audit(data):
             )
     return {
         "findings": findings,
+        "reviewed": [
+            {
+                "ref": name,
+                "verdict": "upheld",
+                "note": "The stub has no rule to dispute a finding of the analysis.",
+            }
+            for name in severe_analysis(data)
+        ],
         "limitations": [STUB_LIMITATION],
         "not_assessed": [
             {"axis": axis, "reason": "the stub has no rule for this axis"}
@@ -450,7 +535,7 @@ def _last_call(run_dir, before):
     return rows[-1]["id"] if len(rows) > before else None
 
 
-def _judge(output, index):
+def _judge(output, index, data):
     """(kept, rejected, problems). Problems refuse the whole answer."""
     problems, kept, rejected, seen = [], [], [], set()
     for item in output["findings"]:
@@ -475,6 +560,7 @@ def _judge(output, index):
                 f"unchecked_{item['severity']}: {item['id']} ({'; '.join(reasons)[:200]})"
             )
     problems += check_limitations(output["limitations"], kept)
+    problems += check_reviewed(output["reviewed"], kept, data)
     return kept, rejected, problems
 
 
@@ -505,7 +591,7 @@ def audit(run_dir, session, max_iterations=DEFAULT_ITERATIONS):
                 }
             )
             continue
-        kept, rejected, problems = _judge(output, index)
+        kept, rejected, problems = _judge(output, index, data)
         attempts.append(
             {
                 "attempt": attempt,
@@ -517,38 +603,35 @@ def audit(run_dir, session, max_iterations=DEFAULT_ITERATIONS):
         if not problems:
             accepted = (output, kept, rejected)
             break
-    has_input = bool(data["findings"] or data["requirements"] or data["decisions"])
     if accepted is None:
-        output, kept, rejected = {"limitations": [], "not_assessed": []}, [], []
-        status = "failed"
+        output, kept, rejected = {"limitations": [], "not_assessed": [], "reviewed": []}, [], []
     else:
         output, kept, rejected = accepted
-        status = "blocked" if blocking(kept) else "passed"
-    named = {entry["axis"] for entry in output["not_assessed"]}
+    decided = decide(
+        data, accepted is not None, kept, rejected, output["not_assessed"], output["reviewed"]
+    )
     value = {
         "schema_version": records.SCHEMA_VERSION,
         "run_id": run_dir.name,
         "created_at": records.iso(),
         "backend": session.backend,
-        "status": status,
+        "model": session.model if session.backend == "claude" else None,
+        "status": decided["status"],
         "input_sha256": digest,
         "max_iterations": max_iterations,
         "attempts": attempts,
         "findings": kept,
         "limitations": list(output["limitations"]),
         "not_assessed": list(output["not_assessed"]),
+        "reviewed": list(output["reviewed"]),
         "rejected_findings": rejected,
-        "axes": axes(
-            kept,
-            named,
-            {item["category"] for item in rejected},
-            completed=accepted is not None and has_input,
-        ),
-        "blocking": blocking(kept),
+        "axes": decided["axes"],
+        "blocking": decided["blocking"],
+        "analysis_blocking": decided["analysis_blocking"],
     }
     records.validate("spec-audit", value)
     records.write_json(paths.child(run_dir, FILE), value)
-    return value, (0 if status == "passed" else 1)
+    return value, (0 if value["status"] == "passed" else 1)
 
 
 def summary(value):
@@ -557,6 +640,7 @@ def summary(value):
         "status": value["status"],
         "axes": {axis: entry["status"] for axis, entry in value["axes"].items()},
         "blocking": value["blocking"],
+        "analysis_blocking": value["analysis_blocking"],
         "findings": len(value["findings"]),
         "rejected_findings": len(value["rejected_findings"]),
         "attempts": len(value["attempts"]),
@@ -571,20 +655,55 @@ def unassessed():
     return axes([], set(), set(), completed=False)
 
 
-def load(run_dir):
-    """(report view, audit.json value or None). Without a current audit.json every axis is
-    not_assessed: a missing or stale audit never reads as a pass."""
-    path = paths.child(run_dir, FILE)
-    if not path.is_file():
-        return {"ref": None, "status": "not_run", "axes": unassessed(), "blocking": []}, None
-    value = records.read_json(path)
-    records.validate("spec-audit", value)
-    if value["input_sha256"] != fingerprint(run_dir):
-        return {"ref": FILE, "status": "stale", "axes": unassessed(), "blocking": []}, None
-    view = {
+def view(value, status=None):
+    """The report's view of audit.json. With `status` (not_run, stale) every axis is
+    not_assessed and nothing of the record is shown."""
+    if status is not None:
+        return {
+            "ref": None if status == "not_run" else FILE,
+            "status": status,
+            "backend": None,
+            "model": None,
+            "axes": unassessed(),
+            "limitations": [],
+            "blocking": [],
+            "analysis_blocking": [],
+        }
+    return {
         "ref": FILE,
         "status": value["status"],
+        "backend": value["backend"],
+        "model": value["model"],
         "axes": value["axes"],
+        "limitations": value["limitations"],
         "blocking": value["blocking"],
+        "analysis_blocking": value["analysis_blocking"],
     }
-    return view, value
+
+
+def _recorded(value, data):
+    """Whether the record's status, axes and blocking are what its findings give."""
+    accepted = any(attempt["outcome"] == "accepted" for attempt in value["attempts"])
+    decided = decide(
+        data,
+        accepted,
+        value["findings"],
+        value["rejected_findings"],
+        value["not_assessed"],
+        value["reviewed"],
+    )
+    return all(value[key] == decided[key] for key in decided)
+
+
+def load(run_dir):
+    """(report view, audit.json value or None). Without a current audit.json every axis is
+    not_assessed: a missing, stale or inconsistent audit never reads as a pass."""
+    path = paths.child(run_dir, FILE)
+    if not path.is_file():
+        return view(None, "not_run"), None
+    value = records.read_json(path)
+    records.validate("spec-audit", value)
+    data, digest = audit_input(run_dir)
+    if value["input_sha256"] != digest or not _recorded(value, data):
+        return view(None, "stale"), None
+    return view(value), value

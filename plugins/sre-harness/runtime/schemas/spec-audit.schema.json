@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:sre-harness:spec-audit",
   "title": "spec-audit",
-  "description": "audit.json, written by `spec audit`. `findings` and `limitations` have the outer shape of the v2 audit.schema.json. `axes`, `status` and `blocking` are computed by rule from the kept findings: critical or high block, an axis with only medium or low is concerns, an axis with no finding is pass when it was assessed and not_assessed otherwise.",
+  "description": "audit.json, written by `spec audit`. `findings` and `limitations` have the outer shape of the v2 audit.schema.json. `axes`, `status`, `blocking` and `analysis_blocking` are computed by rule from the kept findings and `reviewed`; `spec report` computes them again and shows a record that differs as stale: critical or high block, an axis with only medium or low is concerns, an axis with no finding is pass when it was assessed and not_assessed otherwise.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10,6 +10,7 @@
     "run_id",
     "created_at",
     "backend",
+    "model",
     "status",
     "input_sha256",
     "max_iterations",
@@ -17,9 +18,11 @@
     "findings",
     "limitations",
     "not_assessed",
+    "reviewed",
     "rejected_findings",
     "axes",
-    "blocking"
+    "blocking",
+    "analysis_blocking"
   ],
   "properties": {
     "schema_version": {
@@ -37,12 +40,24 @@
         "stub"
       ]
     },
+    "model": {
+      "description": "The --model passed to the Claude CLI; null for the stub or the CLI's default.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "status": {
-      "description": "passed: an answer was accepted and nothing blocks. blocked: an accepted answer has a critical or high finding. failed: no answer was accepted within max_iterations.",
+      "description": "passed: an answer was accepted, at least one axis was assessed and nothing blocks. blocked: an accepted answer has a critical or high finding, or leaves a critical or high analysis finding undisputed. not_assessed: an accepted answer assessed no axis. failed: no answer was accepted within max_iterations (an answer that does not treat every critical and high analysis finding is refused).",
       "enum": [
         "passed",
         "blocked",
-        "failed"
+        "failed",
+        "not_assessed"
       ]
     },
     "input_sha256": {
@@ -143,6 +158,37 @@
         }
       }
     },
+    "reviewed": {
+      "description": "The analysis findings (FD-...) the audit checked, with the auditor's view. `verdict` is not a pass or a fail: upheld means the finding stands, disputed that the source does not support it. Every critical and high analysis finding must appear here or in the evidence of a finding.",
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ref",
+          "verdict",
+          "note"
+        ],
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^FD-[0-9]{4,}$"
+          },
+          "verdict": {
+            "enum": [
+              "upheld",
+              "disputed"
+            ]
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
+      }
+    },
     "rejected_findings": {
       "description": "Findings of the accepted answer that the validator dropped, with the reasons.",
       "type": "array",
@@ -200,6 +246,14 @@
       "items": {
         "type": "string",
         "pattern": "^F[0-9]+$"
+      }
+    },
+    "analysis_blocking": {
+      "description": "Ids of the analysis's critical and high findings the audit did not dispute. Any of them blocks.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^FD-[0-9]{4,}$"
       }
     }
   },
@@ -344,14 +398,18 @@
       }
     },
     "report_view": {
-      "description": "impact-report.json `audit`. ref is null and status not_run when no audit.json exists; stale when audit.json was made from another input. In both cases every axis is not_assessed.",
+      "description": "impact-report.json `audit`. ref is null and status not_run when no audit.json exists; stale when audit.json was made from another input or its status, axes or blocking differ from what its findings give. In both cases every axis is not_assessed and backend, model and limitations are empty.",
       "type": "object",
       "additionalProperties": false,
       "required": [
         "ref",
         "status",
+        "backend",
+        "model",
         "axes",
-        "blocking"
+        "limitations",
+        "blocking",
+        "analysis_blocking"
       ],
       "properties": {
         "ref": {
@@ -369,18 +427,59 @@
             "passed",
             "blocked",
             "failed",
+            "not_assessed",
             "not_run",
             "stale"
           ]
         },
+        "backend": {
+          "anyOf": [
+            {
+              "enum": [
+                "claude",
+                "stub"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "axes": {
           "$ref": "#/$defs/axes"
+        },
+        "limitations": {
+          "description": "audit.json's limitations in full.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
         },
         "blocking": {
           "type": "array",
           "items": {
             "type": "string",
             "pattern": "^F[0-9]+$"
+          }
+        },
+        "analysis_blocking": {
+          "description": "Ids of the analysis's critical and high findings the audit did not dispute. Any of them blocks.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^FD-[0-9]{4,}$"
           }
         }
       }

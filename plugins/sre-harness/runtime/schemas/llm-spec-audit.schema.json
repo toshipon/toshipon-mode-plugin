@@ -2,13 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:sre-harness:llm-spec-audit",
   "title": "llm-spec-audit",
-  "description": "What the backend returns to `spec audit`: findings along the eight axes, limitations and the axes it could not assess. It carries no status, score or verdict: the harness computes the axis status from the severities and decides the gate.",
+  "description": "What the backend returns to `spec audit`: findings along the eight axes, limitations, the axes it could not assess and the analysis findings it reviewed. It carries no status, score or verdict: the harness computes the axis status from the severities and decides the gate.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "findings",
     "limitations",
-    "not_assessed"
+    "not_assessed",
+    "reviewed"
   ],
   "properties": {
     "findings": {
@@ -122,6 +123,37 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 300
+          }
+        }
+      }
+    },
+    "reviewed": {
+      "description": "The analysis findings (FD-...) the audit checked, with the auditor's view. `verdict` is not a pass or a fail: upheld means the finding stands, disputed that the source does not support it. Every critical and high analysis finding must appear here or in the evidence of a finding.",
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ref",
+          "verdict",
+          "note"
+        ],
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^FD-[0-9]{4,}$"
+          },
+          "verdict": {
+            "enum": [
+              "upheld",
+              "disputed"
+            ]
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
           }
         }
       }
