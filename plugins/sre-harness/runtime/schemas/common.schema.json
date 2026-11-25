@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:common",
+  "title": "Definitions shared by every record",
+  "$defs": {
+    "schema_version": { "const": 1 },
+    "record_id": { "type": "string", "pattern": "^[A-Z]{2,4}-[0-9]{4,}$" },
+    "run_id": { "type": "string", "pattern": "^run-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "git_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "basis": { "enum": ["explicit", "inferred"] },
+    "severity": { "enum": ["critical", "high", "medium", "low"] },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "locator", "retrieved_at"],
+      "anyOf": [{ "required": ["sha"] }, { "required": ["content_sha256"] }],
+      "properties": {
+        "source_id": { "type": "string", "minLength": 1 },
+        "locator": { "type": "string", "minLength": 1 },
+        "sha": { "$ref": "#/$defs/git_sha" },
+        "content_sha256": { "$ref": "#/$defs/sha256" },
+        "retrieved_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "evidence": {
+      "description": "id, ref and note are the improvement harness's evaluator evidence; quote is ours.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "ref"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "ref": { "type": "string", "minLength": 1 },
+        "note": { "type": "string" },
+        "quote": { "type": "string", "minLength": 1 }
+      }
+    },
+    "record": {
+      "description": "Fields every stored record carries.",
+      "type": "object",
+      "required": ["schema_version", "id", "run_id", "created_at"],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schema_version" },
+        "id": { "$ref": "#/$defs/record_id" },
+        "run_id": { "$ref": "#/$defs/run_id" },
+        "created_at": { "$ref": "#/$defs/timestamp" },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    }
+  }
+}

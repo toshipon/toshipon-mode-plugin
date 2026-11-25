@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "sre-harness",
+  "displayName": "SRE harness",
+  "version": "0.1.0",
+  "description": "Read-only harnesses for review learning and specification consistency. Collects GitHub review history into structured lessons and improvement candidates that a person approves, traces decisions and requirements across open pull requests, and defines the evidence contract for IaC delivery. Run data stays outside the repository; nothing is pushed, merged or applied.",
+  "author": {
+    "name": "toshipon",
+    "url": "https://github.com/toshipon"
+  },
+  "homepage": "https://github.com/toshipon/toshipon-mode-plugin",
+  "repository": "https://github.com/toshipon/toshipon-mode-plugin",
+  "license": "MIT",
+  "keywords": [
+    "code-review",
+    "harness",
+    "requirements",
+    "sre",
+    "traceability"
+  ]
+}

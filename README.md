@@ -29,6 +29,12 @@ Claude Code のセッション内で以下を実行してください。
 /plugin install toshipon-mode@toshipon-tools
 ```
 
+GitHub のレビュー履歴と仕様文書を読む `sre-harness` は別の plugin です。GitHub のトークンを扱うので、使う場合だけ入れてください。
+
+```
+/plugin install sre-harness@toshipon-tools
+```
+
 ### microsoft/apm で入れる場合
 
 [APM（Agent Package Manager）](https://github.com/microsoft/apm) を使う場合は、リポジトリ直下の `apm.yml` を経由して、本体と公開されている依存 skill をまとめて入れられます。
@@ -121,6 +127,10 @@ APM でインストールした場合は、公開されている取得元があ�
 `/toshipon-mode:insight-discovery` は、成果物でも作業手法でもなく、問題設定を扱います。作業メモ、土台の実行記録、レビュー指摘、Claude Code `/insights` が残した構造化項目を証拠として取り込み、異なる業務に共通する形を探して、前提を疑う仮説を作ります。モデルが返すのは各段の JSON だけで、証拠 ID の実在、引用が原文にあること、複数の業務にまたがること、反証条件があることを script が検査します。独立監査が「既存の手法で足りる」とした候補は autonomous-improvement / harness-evolution 宛てのメモとして引き渡し、研究課題だけを最大 3 件残します。
 
 週次では、利用者が自分の仮説を先に書いてから生成された仮説を読み、実験を 1 件だけ選びます。既存手法の外部検索は、対話で実行ごとに承認したときだけ行い、調べていない候補は「未調査」と表示します。日次・週次の実行は autonomous-improvement の scheduler に載せられますが、既定では何も自動起動しません。手順、入力の形式、制限は [insight-discovery README](plugins/toshipon-mode/skills/insight-discovery/README.md) にあります。
+
+## レビューの学習と仕様の整合性（sre-harness plugin）
+
+`sre-harness` は、GitHub のレビュー履歴から改善候補を作る Review Learning、決定と要求を open PR にまたがって追跡する Specification Consistency、IaC の状態遷移と証跡の契約を、読み取り専用で提供します。push、merge、クラウドの変更は行わず、実行データは repository の外（既定 `~/.local/state/ai-harness/sre-harness/`）に置きます。制約、認証、保存場所は [sre-harness README](plugins/sre-harness/README.md) にあります。
 
 ## 非機能要件と AWS 方式設計
 

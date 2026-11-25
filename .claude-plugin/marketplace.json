@@ -1,6 +1,6 @@
 {
   "name": "toshipon-tools",
-  "description": "toshipon 個人用の Claude Code プラグイン集。playbook 駆動の作業モードとそのサブ skill を配布する。",
+  "description": "toshipon 個人用の Claude Code プラグイン集。playbook 駆動の作業モードとそのサブ skill、読み取り専用の SRE harness を配布する。",
   "owner": { "name": "toshipon", "url": "https://github.com/toshipon" },
   "plugins": [
     {
@@ -8,6 +8,13 @@
       "source": "./plugins/toshipon-mode",
       "description": "Playbook-driven working mode for non-trivial tasks: verbatim playbook todolists, engineering principles, evidence-gated completion, plus the how/why/unslop/technical-writing/arena/interrogate skill set it routes to.",
       "version": "0.19.0",
+      "author": { "name": "toshipon" }
+    },
+    {
+      "name": "sre-harness",
+      "source": "./plugins/sre-harness",
+      "description": "Read-only harnesses for review learning and specification consistency: structured lessons from GitHub review history, decision and requirement traceability across open pull requests, and an evidence contract for IaC delivery.",
+      "version": "0.1.0",
       "author": { "name": "toshipon" }
     }
   ]

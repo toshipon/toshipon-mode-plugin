@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Launcher. Resolves the bundled runtime from this file's own location. Python runs isolated
+# (-I) so the working directory, PYTHONPATH and the user site-packages are not on sys.path.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+runtime="$(cd "$here/../runtime" && pwd)"
+exec "${SRE_HARNESS_PYTHON:-python3}" -I "$runtime/sre_harness_main.py" "$@"
