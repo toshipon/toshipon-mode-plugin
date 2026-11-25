@@ -593,3 +593,82 @@ def test_a_worker_answer_out_of_shape_is_a_quality_failure(monkeypatch, returnco
     )
     with pytest.raises(QualityGateError):
         guard.regex_search(["a"], ["a"], timeout=5)
+
+
+# opa: one bundled policy, one bundled capabilities file, one fixed query ---------------
+
+
+def test_opa_runs_the_bundled_policy_with_a_fixed_argv_and_the_plan_on_stdin(calls):
+    plan = '{"resource_changes": [{"address": "--data=/etc", "type": "x; touch /tmp/owned"}]}'
+    guard.opa_risk(plan, timeout=30)
+    (call,) = calls
+    assert call.argv == [
+        "/usr/bin/opa",
+        "eval",
+        "--format",
+        "json",
+        "--strict",
+        "--strict-builtin-errors",
+        "--capabilities",
+        str(guard.OPA_CAPABILITIES),
+        "--data",
+        str(guard.OPA_POLICY),
+        "--stdin-input",
+        guard.OPA_QUERY,
+    ]
+    assert call.input == plan
+    assert not any("/etc" in argument or "owned" in argument for argument in call.argv)
+    assert call.timeout == 30 and call.check is False and call.text is True
+    assert set(call.env) <= {"PATH", "LANG", "LC_ALL", "TMPDIR", "SYSTEMROOT"}
+    assert not Path(call.cwd).exists()  # an empty directory, removed afterwards
+
+
+def test_opa_never_sees_the_users_environment(calls):
+    ambient = {"PATH": "/usr/bin", "HOME": "/home/alice", "OPA_TOKEN": "x", "AWS_PROFILE": "x"}
+    guard.opa_risk("{}", timeout=30, env=ambient)
+    assert calls[0].env == {"PATH": "/usr/bin"}
+
+
+def test_opa_takes_no_policy_query_or_flag_from_the_caller():
+    import inspect
+
+    assert list(inspect.signature(guard.opa_risk).parameters) == ["plan_text", "timeout", "env"]
+    with pytest.raises(TypeError):
+        guard.opa_risk("{}", timeout=30, policy="/tmp/other.rego")  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    "plan_text, timeout",
+    [(b"{}", 30), (None, 30), ("{}", 0), ("{}", 301), ("{}", True), ("{}", 1.5)],
+)
+def test_opa_refuses_odd_input_before_a_process_starts(calls, plan_text, timeout):
+    with pytest.raises(BoundaryError):
+        guard.opa_risk(plan_text, timeout=timeout)
+    assert calls == []
+
+
+def test_an_oversized_plan_stops_instead_of_being_cut(calls, monkeypatch):
+    monkeypatch.setattr(guard, "OPA_MAX_INPUT_BYTES", 10)
+    with pytest.raises(QualityGateError):
+        guard.opa_risk('{"resource_changes": []}', timeout=30)
+    assert calls == []
+
+
+def test_a_missing_opa_is_its_own_input_error(monkeypatch):
+    def missing(name):
+        raise InputError(f"{name} is not installed or not on PATH.")
+
+    monkeypatch.setattr(guard, "_executable", missing)
+    with pytest.raises(guard.OpaMissing):
+        guard.opa_risk("{}", timeout=30)
+    assert issubclass(guard.OpaMissing, InputError)
+
+
+def test_an_opa_timeout_is_a_quality_failure(monkeypatch):
+    def slow(argv, **options):
+        raise TimeoutExpired(argv, options["timeout"])
+
+    monkeypatch.setattr(guard, "_run", slow)
+    monkeypatch.setattr(guard, "_executable", lambda name: f"/usr/bin/{name}")
+    with pytest.raises(QualityGateError):
+        guard.opa_risk("{}", timeout=30)
