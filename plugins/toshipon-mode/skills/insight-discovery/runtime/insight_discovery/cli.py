@@ -6,21 +6,24 @@ settings, 3 a safety boundary refused.
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from collections import Counter
 from pathlib import Path
 
-from . import decisions, evidence, pipeline, ranking, report, routing
+from . import decisions, evidence, jobs, pipeline, ranking, report, routing
 from . import state as st
 from .adapters import ADAPTERS
 from .foundation import (
+    AUTOMATED_ENV,
     SKILL_ROOT,
     Busy,
     GateFailed,
     HarnessError,
     Queue,
     Refusal,
+    dispatch,
     find_deny_terms,
     find_secrets,
     load_config,
@@ -98,6 +101,9 @@ def _parser():
     add("status", "state of the loop, for a dashboard to read")
     add("scan", "look for secrets and forbidden terms in files").add_argument("paths", nargs="*")
     add("demo", "set up the synthetic example in a new directory", "directory")
+    tick = add("schedule-tick", "scheduler entry point: queue due jobs, then work the queue")
+    tick.add_argument("--dry-run", action="store_true")
+    add("dispatch", "work the queue once, with the foundation's jobs and Insight's")
     return parser
 
 
@@ -218,6 +224,11 @@ def _execute(args):
         return report.render(state, settings, now)
     if name == "status":
         return overview(home, config, settings, now)
+    if name in ("schedule-tick", "dispatch"):
+        os.environ[AUTOMATED_ENV] = "1"  # human gates refuse from here on
+        if name == "dispatch":
+            return {"jobs": dispatch.dispatch(home, config, handlers=jobs.all_handlers())}
+        return jobs.rehearse(home, config, now) if args.dry_run else jobs.tick(home, config, now)
     return scan(args.paths, config)
 
 

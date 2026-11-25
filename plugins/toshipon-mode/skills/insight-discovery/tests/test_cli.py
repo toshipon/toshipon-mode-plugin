@@ -100,6 +100,15 @@ class EndToEnd(CliCase):
         self.assertEqual(records[-1]["type"], "handoff_recorded")
         self.assertEqual([record["seq"] for record in records], list(range(1, len(records) + 1)))
 
+    def test_a_run_by_hand_is_held_to_the_daily_cost_cap(self):
+        settings = json.loads((st.root(self.home) / "config.json").read_text(encoding="utf-8"))
+        paid = {"claude": {"max_budget_usd": 2}}
+        settings["agents"] = {"analyst": paid, "auditor": paid}
+        foundation.write_json(st.root(self.home) / "config.json", settings)
+        foundation.write_json(self.home / "config.json", {"budget": {"max_cost_per_day": 1}})
+        summary = self.json("run", "--daily")  # the cap is below one call: nothing is started
+        self.assertEqual((summary["llm_calls"], summary["stopped"]["limit"]), (0, "cost"))
+
     def test_stages_by_hand_and_a_search(self):
         sys.path.insert(0, str(EXAMPLES))
         import stub_agent
@@ -145,6 +154,17 @@ class ExitCodes(CliCase):
         self.write("state/insight/config.json", {"limits": {"max_candidates": 9}})
         code, _, err = self.cli("status")
         self.assertEqual((code, "schema violation" in err), (2, True))
+
+    def test_the_shipped_examples_match_their_schemas(self):
+        example = json.loads((ROOT / "config" / "insight.example.json").read_text(encoding="utf-8"))
+        foundation.validate(f"{foundation.SCHEMAS}:insight-config", example)
+        schedule = [
+            {"kind": "insight_daily", "hour": 3, "minute": 0},
+            {"kind": "insight_weekly", "weekday": 0, "hour": 9, "minute": 30},
+        ]
+        foundation.validate("config", {"schedule": schedule})
+        notes = json.loads((EXAMPLES / "records" / "notes.json").read_text(encoding="utf-8"))
+        foundation.validate(f"{foundation.SCHEMAS}:stages#manual_export", notes)
 
     def test_empty_state_is_a_normal_zero(self):
         self.assertEqual(self.json("next")["action"], "none")

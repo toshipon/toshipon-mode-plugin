@@ -109,6 +109,11 @@ def _brief(item):
     return brief
 
 
+def _cited(observations, group):
+    """The group's observations with their ids, so a text that says "O4" can be followed."""
+    return [{"id": name, "text": observations[name]["text"]} for name in group["observations"]]
+
+
 def _hypothesis_views(cycle, only=None):
     done = cycle["stages"]
     groups = {group["id"]: group for group in done["structure"]["accepted"]["groups"]}
@@ -125,7 +130,7 @@ def _hypothesis_views(cycle, only=None):
                 "levels": group["levels"],
                 "doubted_premise": group["doubted_premise"],
                 "evidence_summary": group["evidence_summary"],
-                "observations": [observations[name]["text"] for name in group["observations"]],
+                "observations": _cited(observations, group),
             }
         )
     return views
@@ -160,10 +165,7 @@ def payload(state, cycle, stage):
         observations = {item["id"]: item for item in done["observe"]["accepted"]["observations"]}
         body = {
             "groups": [
-                {
-                    **group,
-                    "observations": [observations[name]["text"] for name in group["observations"]],
-                }
+                {**group, "observations": _cited(observations, group)}
                 for group in done["structure"]["accepted"]["groups"]
             ],
             "already_rejected": statements["rejected"],
@@ -446,7 +448,10 @@ def plan(home, config, settings, now):
 
 def run_daily(home, config, settings, now, invoke=None, budget=None, timer=time.monotonic):
     """Ingest what is new, then advance the loop until it is done or a limit stops it."""
-    invoke = invoke or agent_invoker(home, config, settings, budget)
+    if not invoke:
+        # A run started by hand spends from the same daily cap as the scheduled ones.
+        budget = budget or agents.Budget(home, now, config["budget"]["max_cost_per_day"])
+        invoke = agent_invoker(home, config, settings, budget)
     limits, started, calls, output = settings["limits"], timer(), 0, None
     with locked(st.root(home) / "run.lock", blocking=False):
         summary: dict = {

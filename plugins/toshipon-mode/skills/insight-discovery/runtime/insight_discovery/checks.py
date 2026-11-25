@@ -63,6 +63,8 @@ def observe(output, evidence):
             _reject(rejected, position, "unknown_evidence")
         elif _blank(item["text"]):
             _reject(rejected, position, "blank")
+        elif claims_novelty(item["text"]):
+            _reject(rejected, position, "unsupported_novelty_claim")
         elif any(not any(quote in source for source in sources) for quote in item["quotes"]):
             _reject(rejected, position, "quote_not_in_source")
         else:
@@ -108,6 +110,8 @@ def structure(output, observations, evidence, gates):
         texts = [group["abstracted_problem"], group["doubted_premise"], *group["levels"].values()]
         if _blank(*texts):
             _reject(rejected, position, "blank")
+        elif claims_novelty(*texts):
+            _reject(rejected, position, "unsupported_novelty_claim")
         elif summary["count"] < gates["min_evidence"]:
             _reject(rejected, position, "insufficient_evidence", evidence=summary["count"])
         elif summary["distinct_contexts"] < gates["min_distinct_contexts"]:

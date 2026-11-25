@@ -178,6 +178,25 @@ class NoveltyClaims(LoopCase):
         self.assertEqual(reasons, ["unsupported_novelty_claim"] * 2)
         self.assertEqual(self.candidates(), {})
 
+    def test_a_claim_in_an_observation_or_a_problem_statement_is_dropped(self):
+        def boast_observation(output, body):
+            output["observations"][0]["text"] += "（前例がない現象）"
+
+        self.run_daily(Backend(observe=boast_observation))
+        cycle = next(iter(self.state()["cycles"].values()))
+        reasons = [item["reason"] for item in cycle["stages"]["observe"]["rejected"]]
+        self.assertIn("unsupported_novelty_claim", reasons)
+
+        self.setUp()
+
+        def boast_problem(output, body):
+            output["groups"][0]["abstracted_problem"] = "世界初の問題設定である"
+
+        self.run_daily(Backend(structure=boast_problem))
+        cycle = next(iter(self.state()["cycles"].values()))
+        reasons = [item["reason"] for item in cycle["stages"]["structure"]["rejected"]]
+        self.assertEqual(reasons, ["unsupported_novelty_claim"])
+
     def test_a_claim_in_the_assessment_is_dropped_too(self):
         def boast(output, body):
             output["assessments"][0]["scores"]["delta_from_prior_art"]["reason"] = (
@@ -277,6 +296,17 @@ class HostileInstructions(LoopCase):
         _, body, _ = backend.calls[0]
         self.assertIn(attack, [item.get("text") for item in body["evidence"]])
         self.assertEqual(set(body), {"stage", "evidence", "signals"})
+
+    def test_later_stages_see_observations_with_their_ids(self):
+        _, backend = self.run_daily()
+        shown = {stage: body for stage, body, _ in backend.calls}
+        for cited in (
+            shown["hypothesize"]["groups"][0]["observations"],
+            shown["audit"]["hypotheses"][0]["observations"],
+            shown["assess"]["hypotheses"][0]["observations"],
+        ):
+            self.assertEqual(cited[0]["id"], "O1")
+            self.assertIn("rerun-after-late-check", cited[0]["text"])
 
     def test_the_prompt_puts_every_payload_after_the_data_marker(self):
         for role, _, _ in foundation.STAGE_ROLES.values():

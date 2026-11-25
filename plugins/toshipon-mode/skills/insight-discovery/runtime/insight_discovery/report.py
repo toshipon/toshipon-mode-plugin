@@ -151,7 +151,7 @@ def render(state, settings, now):
         lines += [f"今週の実験として選択済み: {selected}", ""]
     lines += ["## 引き渡したもの", ""]
     lines += [
-        f"- {note['insight_id']} → {note['target']}: {note['abstracted_problem']}（理由: {note['reason']}）"
+        f"- {note['insight_id']} → {note['target']}: {note['statement']}（理由: {note['reason']}）"
         for note in state["handoffs"]
     ] or ["- なし"]
     lines += ["", "## 見送ったもの", ""]
