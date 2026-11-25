@@ -86,24 +86,7 @@ def _analyze(args, env, out):
     root = paths.state_root(env)
     run_dir = paths.open_run(root, args.run)
     owner, name = _repo(args.repo)
-    token = None
-    if args.auth_env is not None:
-        # The token is read before anything else; an empty variable stops here, unsent.
-        token = guard.read_token(args.auth_env, env)
-        if args.git_source is not None:
-            raise InputError(
-                "--git-source is for --fixture runs; with --auth-env git fetches "
-                "from the GitHub host."
-            )
-        transport = GhTransport(token, host=args.host, env=env)
-        source = f"https://{args.host or 'github.com'}/{owner}/{name}.git"
-    else:
-        if args.git_source is None:
-            raise InputError("--fixture needs --git-source <absolute path of a local repository>.")
-        local = Path(args.git_source)
-        if not local.is_absolute() or not local.is_dir():
-            raise InputError(f"--git-source must be an absolute directory: {args.git_source}")
-        transport, source = FixtureTransport(Path(args.fixture)), str(local)
+    transport, source, token = _sources(args, env, owner, name)
     session = None
     if args.backend is not None:
         session = _session(args, run_dir, env, ANALYZE_SENDING)
@@ -139,6 +122,26 @@ def _report(args, env, out):
         }
         print(json.dumps(summary, indent=2), file=out)
     return EXIT_QUALITY if value["status"] != "complete" else EXIT_OK
+
+
+def _sources(args, env, owner, name):
+    """(transport, git source, token) from --auth-env or --fixture with --git-source. The token
+    is read before anything else; an empty variable stops here, unsent."""
+    if args.auth_env is not None:
+        token = guard.read_token(args.auth_env, env)
+        if args.git_source is not None:
+            raise InputError(
+                "--git-source is for --fixture runs; with --auth-env git fetches "
+                "from the GitHub host."
+            )
+        transport = GhTransport(token, host=args.host, env=env)
+        return transport, f"https://{args.host or 'github.com'}/{owner}/{name}.git", token
+    if args.git_source is None:
+        raise InputError("--fixture needs --git-source <absolute path of a local repository>.")
+    local = Path(args.git_source)
+    if not local.is_absolute() or not local.is_dir():
+        raise InputError(f"--git-source must be an absolute directory: {args.git_source}")
+    return FixtureTransport(Path(args.fixture)), str(local), None
 
 
 def _llm_arguments(parser, required):

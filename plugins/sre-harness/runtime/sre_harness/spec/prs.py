@@ -140,22 +140,28 @@ class Repository:
     def __repr__(self):
         return f"Repository({str(self.git_dir)!r})"  # the token never appears
 
-    @classmethod
-    def open(cls, root, owner, name, source, token=None):
-        """The cache entry for (repository, fetch source), created on first use."""
+    @staticmethod
+    def _names(root, owner, name, source):
         key = records.sha256(f"{owner}/{name}\n{source}")[:12]
         git_dir = paths.child(root, "cache", "git", f"{owner}--{name}--{key}.git")
         marker = paths.child(root, "cache", "git", f"{owner}--{name}--{key}.json")
+        return git_dir, marker
+
+    @classmethod
+    def open(cls, root, owner, name, source, token=None):
+        """The cache entry for (repository, fetch source), created on first use."""
+        git_dir, marker = cls._names(root, owner, name, source)
         repository = cls(git_dir, source, token)
         if not (git_dir / "HEAD").is_file():
             records.write_json(marker, {"repo": f"{owner}/{name}", "source": source})
             repository.run(["init", "--bare", "--quiet"])
         return repository
 
-    def run(self, arguments, allowed=(0,)):
-        """(exit code, stdout). An exit code outside `allowed` stops the stage."""
+    def run(self, arguments, allowed=(0,), index_file=None):
+        """(exit code, stdout). An exit code outside `allowed` stops the stage. `index_file`
+        points git at a temporary index instead of the repository's own."""
         self.calls += 1
-        code, out = guard.git(self.git_dir, arguments, token=self._token)
+        code, out = guard.git(self.git_dir, arguments, token=self._token, index_file=index_file)
         if code not in allowed:
             raise QualityGateError(f"git {arguments[0]} failed with exit code {code}.")
         return code, out
