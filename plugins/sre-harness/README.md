@@ -312,7 +312,7 @@ python -m coverage run -m pytest && python -m coverage report
 - symlink は辿りません。途中のディレクトリとファイル自体を `lstat` で確かめ、`O_NOFOLLOW` で開きます。symlink があれば exit 3 です。manifest 自体が symlink でも exit 3 です。
 - ファイルは読むだけです。1 文書 2 MiB、run の合計 64 MiB を超えたら、切り詰めずに exit 1 で止まり、run を作りません。
 - manifest にあるのに無いファイル、通常のファイルでないもの、UTF-8 でないもの、形の違う export は、既定値で埋めずに `ingest.json` の `input_missing` に理由（`file_not_found`、`not_a_regular_file`、`not_utf8`、`unreadable_export`）付きで記録します。読めた分は `documents.jsonl` に書き、run は `partial`、exit 1 です。
-- `patch_globs` は後続の patch の段が使う「patch を出してよい文書」の glob です。この段では検査（`..`、絶対 path、`.git/`、`.github/` は exit 3）して `ingest.json` に保存するだけです。
+- `patch_globs` は `spec report` が使う「patch を出してよい文書」の glob です（`*` は 1 つの path 区切りの中、`**` は 0 個以上の区切りに一致します）。この段では検査（`..`、絶対 path、`.git/`、`.github/` は exit 3）して `ingest.json` に保存するだけです。manifest の `files` の path と `patch_globs` は、リポジトリのルートからの path として照合します（manifest をリポジトリのルートに置く前提です）。
 - 出力ファイル名と文書 ID（`DOC-0001`）は harness が決めます。入力の path は `provenance.locator` に入るだけで、ファイル名には使いません。
 
 ### 文書の形
@@ -364,6 +364,8 @@ GitHub は `gh api --method GET` で `repos/{owner}/{repo}/pulls/{number}` と `
 - 実際の GitHub に対する `spec analyze`。テストは合成リポジトリ（ローカルの path から fetch）と fixture の PR 一覧だけを通ります。`https://<host>/<owner>/<repo>.git` からトークン付きで `refs/pull/<n>/head` を fetch できるか、fork が削除された PR の ref がどう見えるかは実機で確かめていません。
 - 指摘の精度。合成の 25 件で期待した件数が出ることを確かめただけで、実際のリポジトリでの誤検知率と見落とし率は測っていません。構造化記述（下の形）を書いていない文書の変更は `impact` にしかなりません。
 - `--backend claude` の推定リンクと説明文の質。テストは stub と `guard._run` を差し替えた経路だけを通ります。
+- 実際の GitHub に対する `spec check-patch --auth-env`。テストは合成リポジトリと fixture の PR 一覧だけを通ります。
+- patch の header 解析は、許可する形を狭く決めて、それ以外を拒否する作りです。git のすべての版の `git apply` の解釈と突き合わせたわけではありません（確かめたのは git 2.54 と CI の git だけです）。
 
 ## Specification Consistency: トレースと open PR の分析
 
@@ -377,6 +379,10 @@ GitHub は `gh api --method GET` で `repos/{owner}/{repo}/pulls/{number}` と `
 "${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" spec report --run run-...
 # v2 の evaluator adapter として使うとき（標準出力に evaluation.schema.json の $defs/output）
 "${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" spec report --run run-... --format evaluator-output
+# patch を適用する直前に（head を取り直して検査する。harness は適用しない）
+"${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" spec check-patch --run run-... --patch PT-0001 \
+  --auth-env SPEC_READ_TOKEN
+# => {"patch": "PT-0001", "current_head_sha": "...", "apply_check": "passed", "applied": false, ...}
 ```
 
 合成データで試すときは `runtime/` で `python -m examples.synthetic.spec_repo <dir>` を実行すると、25 件の open PR を持つ合成リポジトリ（`--git-source` に渡す）と PR 一覧の fixture（`--fixture` に渡す）ができます。`--fixture` と `--git-source <絶対 path>` は組で使い、通信しません。`--auth-env` のときは `https://<host>/<owner>/<repo>.git` から fetch し、トークンは guard が環境変数経由の設定で渡します。`--auth-env` の変数が空なら何も起動せずに exit 2 です。open PR が無いときは `--default-branch` が要ります（PR 一覧の `base.repo.default_branch` から読むため）。
@@ -437,11 +443,42 @@ trace-link は Decision → Requirement → Design → IaC → Test のつなが
 
 ### 報告
 
-`impact-report.json`（schema `impact-report`）は `run_id`、`generated_at`、`criteria_hash`（規則の版、重大度の表、inferred の上限、台帳の hash）、`default_branch{name, sha, moved_since_analysis}`、`prs[{number, head_sha, merge_base, analyzed_head_sha, stale}]`、`findings[]`、`limitations[]` を持ちます。`patches` と `audit` は後続の段が埋めます。`moved_since_analysis` は `spec report` が fetch しないので常に false です。
+`impact-report.json`（schema `impact-report`）は `run_id`、`generated_at`、`criteria_hash`（規則の版、重大度の表、inferred の上限、台帳の hash）、`default_branch{name, sha, moved_since_analysis}`、`prs[{number, head_sha, merge_base, analyzed_head_sha, stale}]`、`findings[]`、`patches[]`、`patch_rejections[]`、`limitations[]` を持ちます。`audit` は後続の段が埋めます。`moved_since_analysis` は `spec report` が fetch しないので常に false です。分析の後に default branch や PR の head が動いたかを `spec report` は確かめられないので、`limitations` にそう書き、patch ごとの再検査は `spec check-patch` が行います（下の「修正候補（patch）」）。
 
 `impact-report.md` に載せる外部入力（PR タイトル、文書の引用、ファイルの値、説明文）は、表のセルではリンク・画像・HTML・`|`・バッククォートの記法をエスケープし、`://` を文字参照にします。引用と説明文は、本文中のバッククォートより長い fence のコードブロックに入れます。findings.json の `status` が `stale` か `partial` なら `spec report` も exit 1 です。
 
 `--format evaluator-output` は toshipon-mode の Autonomous Improvement Harness v2 の `evaluation.schema.json` の `$defs/output` の形で、種類ごとの件数（`findings_<kind>`）、`findings_total`、`findings_inferred`、`prs_total`、`prs_stale`、`prs_unanalyzed` と、指摘ごとの evidence（`impact-report.json#FD-0001`）を出します。分析できた PR が 0 件なら `unevaluable` を付けます。
+
+### 修正候補（patch）
+
+`spec report` は、規則で直し方が決まる指摘にだけ、文書への修正候補を Unified Diff で出します。LLM は diff を書きません（将来 LLM に書かせる場合も、下の gate を通ったものだけを出します）。
+
+| 指摘 | patch | 出さない場合 |
+|---|---|---|
+| `contradiction` | 指摘が引用した行（Markdown の `- key: value` か front-matter の `key: value`）の値を台帳の値にする | 台帳に値が無い（ファイル同士の食い違い。どちらが正しいかは人が決めます） |
+| `superseded_dependency` | 置換された決定を名指す行を、後継の決定の ID にする（`ADR-0002` → `ADR-0005`。内部 ID なら内部 ID）。台帳が根拠の指摘（`requirements.json#REQ-0004`）は、その要求の元の section の行から探します | `superseded_by` を辿った先が 1 つの approved な決定にならない |
+
+`semantic_conflict`、`not_reflected`、`missing_test`、`ambiguous_requirement`、`input_missing`、`impact`、`stale_sha` には patch を出しません。
+
+patch の対象:
+
+- default branch の指摘は default branch の SHA、PR の指摘はその PR の分析した head SHA に対する patch です。stale な PR（`stale_sha`）、分析できなかった PR の指摘には出しません。
+- 対象にできる path は、manifest の `files` にある Markdown / ADR / 議事録と、`patch_globs` に一致する文書だけです。さらに次の path は常に拒否します: `.` か `..` の区切りを含む path、絶対 path、`~` で始まる path、`A-Z a-z 0-9 . _ + -` 以外の文字（空白、引用符、`\`、タブ、日本語など）を含む path、大文字小文字を問わず `.git` で始まる区切り（`.git/`、`.gitmodules` など）、`.github` で始まる区切り。Markdown（`*.md`、`*.markdown`）以外、つまり IaC（`*.tf`）、テスト、コードは patch しません。
+
+すべての diff が通る gate（`runtime/sre_harness/spec/patch.py` の `admit`）:
+
+1. 1 MiB 以下（超えたら切り詰めずに exit 1）、UTF-8、改行は LF だけ。
+2. header を狭い形だけ受け付けます。各ファイルは `diff --git a/P b/P`、任意の `index <a>..<b> 100644|100755`、`--- a/P`、`+++ b/P`、hunk の順で、P は 3 か所で同じです。引用符で囲まれた path、`a/` `b/` の接頭辞の無い形、タブの後のタイムスタンプ、`/dev/null`、`rename` / `copy` / `similarity`、`new file` / `deleted file` / `old mode` / `new mode`、mode が 100644 / 100755 でない `index` 行（symlink の 120000 など）、binary patch、hunk の行数と合わない行、最初の `diff --git` より前の行、hunk の後の余分な行（git が別の patch として読みうるもの）は拒否します。読んだ path と git が適用する path が食い違う形を、受け付けないことで避けています。
+3. 対象の commit で、各 path が通常のファイル（mode 100644 か 100755）であること。symlink と submodule は拒否します。
+4. 一時 index での検査: 一時ディレクトリの新しい index に `git read-tree <対象 SHA>` を読み、同じ index に対して `git apply --cached --check <patch>` を実行します。作業ツリーは作らず、bare リポジトリの ref と既定の index は変えません。通らない patch（古い commit 向けなど）は出しません。
+
+出した patch は run の `patches/<PT-id>.diff` と `patches/<PT-id>.json`（schema `spec-patch`。`id`、`finding_id`、`target_pr`（default branch 向けは null）、`target_ref`、`target_head_sha`、`paths[]`、`preimage_blob_shas{path: blob SHA}`、`apply_check`、`content_sha256`）で、ファイル名は ID から作ります。`impact-report.json` の `patches[]` に同じ内容が、指摘には `patch_ref` が入ります。出さなかった修正候補は `patch_rejections[]` に `reason`（`github_dir`、`dotdot`、`iac_or_code`、`not_allowed`、`stale_sha`、`apply_check_failed` など）と `detail` 付きで残り、`impact-report.md` にも表で出ます。
+
+適用の手順（harness は適用しません）:
+
+1. `impact-report.md` と `patches/<PT-id>.diff` を人が読みます。
+2. 適用する直前に `spec check-patch --run <run_id> --patch <PT-id> (--auth-env NAME | --fixture <dir> --git-source <絶対 path>)` を実行します。PR 向けなら open PR の一覧を読み直して ref を fetch し直し、default branch 向けならその ref を fetch し直して、今の head を `target_head_sha` と比べます。違えば exit 3（古い SHA への修正は出しません。`spec analyze` と `spec report` をやり直してください）。PR が open でなくなっていても exit 3 です。patch ファイルの `content_sha256` が sidecar と違う、sidecar と patch の path が違う、gate を通らないときも exit 3 です。同じなら一時 index で `git apply --cached --check` をやり直し、結果を標準出力に出します（通れば exit 0、通らなければ exit 1）。`--auth-env` の変数が空なら何も起動せず exit 2、`--patch` が `PT-0001` の形でなければ exit 3、run に無い patch は exit 2 です。
+3. 通ったら、人が自分の checkout で `git apply patches/<PT-id>.diff` を実行し、commit します。
 
 ### Claude に送るデータ（spec analyze）
 

@@ -814,6 +814,7 @@ def analyze(run_dir, context):
         {
             **head,
             **summary,
+            "source": context["source"],
             "backend": session.backend if session else None,
             "link_call": link_call,
             "rejected_links": rejected,

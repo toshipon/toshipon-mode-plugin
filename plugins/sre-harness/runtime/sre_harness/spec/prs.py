@@ -157,6 +157,17 @@ class Repository:
             repository.run(["init", "--bare", "--quiet"])
         return repository
 
+    @classmethod
+    def existing(cls, root, owner, name, source):
+        """The cache entry `spec analyze` filled. Nothing is created or fetched."""
+        git_dir, _ = cls._names(root, owner, name, source)
+        if git_dir.is_symlink() or not (git_dir / "HEAD").is_file():
+            raise InputError(
+                "the bare repository `spec analyze` used is gone (cache/git/); run the analysis "
+                "again."
+            )
+        return cls(git_dir, source)
+
     def run(self, arguments, allowed=(0,), index_file=None):
         """(exit code, stdout). An exit code outside `allowed` stops the stage. `index_file`
         points git at a temporary index instead of the repository's own."""
@@ -203,6 +214,29 @@ class Repository:
             ["diff", *DIFF_ARGS[:3], "--no-renames", "--name-status", EMPTY_TREE, sha]
         )
         return [unquote(line.split("\t", 1)[1]) for line in _decode(out, "a path").splitlines()]
+
+    def entry(self, sha, path):
+        """(mode, blob sha) of `path` in the commit's tree, or None when it is not a blob.
+
+        Read with `git cat-file -p` of the parent tree (`<sha>:<dir>`, or the commit's tree for
+        a top-level path), so a symlink (120000) or a submodule (160000) shows as such."""
+        directory, _, base = path.rpartition("/")
+        if directory:
+            code, out = self.run(["cat-file", "-p", f"{sha}:{directory}"], allowed=range(0, 256))
+        else:
+            code, out = self.run(["cat-file", "-p", sha], allowed=range(0, 256))
+            tree = re.match(rb"tree ([0-9a-f]{40})\n", out) if code == 0 else None
+            if tree is None:
+                return None
+            code, out = self.run(["cat-file", "-p", tree.group(1).decode()], allowed=range(0, 256))
+        if code != 0:
+            return None
+        for line in out.decode("utf-8", "replace").splitlines():
+            meta, _, name = line.partition("\t")
+            fields = meta.split(" ")
+            if name == base and len(fields) == 3 and fields[1] == "blob":
+                return fields[0], fields[2]
+        return None
 
     def blob(self, sha, path):
         """The file's text at `sha`, or None when it is absent or not UTF-8. Read once."""

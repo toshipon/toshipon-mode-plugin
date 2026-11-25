@@ -1,6 +1,10 @@
-"""`spec report`: findings.json and trace.json to impact-report.json and impact-report.md.
+"""`spec report`: findings.json and trace.json to impact-report.json, impact-report.md and the
+candidate fixes in `patches/` (`patch`).
 
-No network, no git, no model. The Markdown carries external text (PR titles, quotes from
+No network and no model. git runs only against the bare repository `spec analyze` filled, to
+read the files a fix changes and to check each diff in a temporary index; nothing is fetched,
+so whether a head moved after the analysis is not known here (`spec check-patch` re-checks it
+right before a patch is applied). The Markdown carries external text (PR titles, quotes from
 documents, values from files): in a table cell it is escaped so that no link, image, HTML or
 column break survives, and anything longer goes into a fenced code block whose fence is
 longer than any backtick run in the text.
@@ -16,6 +20,8 @@ import re
 from .. import paths, records
 from ..errors import InputError
 from . import findings as fd
+from . import patch as patch_stage
+from . import prs as git_prs
 
 _MARKUP = re.compile(r"([\\`*_\[\]()!|~])")
 
@@ -52,7 +58,10 @@ def build(run_dir):
     explicit = sum(1 for item in links["links"] if item["basis"] == "explicit")
     limitations = list(found["limitations"])
     limitations.append(
-        "default_branch.moved_since_analysis is not re-checked by `spec report` (no fetch)."
+        "`spec report` does not fetch: whether the default branch or a PR head moved after "
+        "`spec analyze` is not re-checked here (default_branch.moved_since_analysis stays "
+        "false). Each patch names the SHA it was made for; run `spec check-patch` right before "
+        "applying one, which fetches again and refuses a moved head with exit 3."
     )
     limitations.append(
         "inferred trace links come from the backend or its stub; they are listed apart and "
@@ -142,6 +151,7 @@ def markdown(report, links):
             f"| {cell(source)} | {cell(target)} | {cell(', '.join(found['explicit'])) or '-'} | "
             f"{cell(', '.join(found['inferred'])) or '-'} |\n"
         )
+    text += _patches_markdown(report)
     text += "\n## 制約\n\n" + "".join(f"- {cell(line)}\n" for line in report["limitations"])
     return text
 
@@ -179,9 +189,60 @@ def evaluator_output(report):
     return output
 
 
-def report(run_dir):
-    """(impact-report, markdown text). Both are written to the run."""
+def _target(item):
+    return f"PR #{item['target_pr']}" if item.get("target_pr") else "default branch"
+
+
+def _patches_markdown(report):
+    patches, rejected = report.get("patches", []), report.get("patch_rejections", [])
+    text = "\n## 修正候補（patch）\n\n"
+    text += (
+        "harness は patch を適用しません。適用する前に `spec check-patch --run <run_id> "
+        "--patch <PT-id>` を実行し、対象の head が動いていないこと（動いていれば exit 3）と、"
+        "一時 index で `git apply --cached --check` が通ることを確かめてください。\n\n"
+    )
+    if patches:
+        text += "| patch | 指摘 | 対象 | head | path | apply check |\n|---|---|---|---|---|---|\n"
+        for item in patches:
+            text += (
+                f"| {item['id']} | {item['finding_id']} | {_target(item)} | "
+                f"{item['target_head_sha']} | {cell(', '.join(item['paths']))} | "
+                f"{item['apply_check']} |\n"
+            )
+    else:
+        text += "patch はありません。\n"
+    if rejected:
+        text += "\n出さなかった修正候補:\n\n| 指摘 | 対象 | path | 理由 | 詳細 |\n"
+        text += "|---|---|---|---|---|\n"
+        for item in rejected:
+            text += (
+                f"| {item['finding_id']} | {_target(item)} | {cell(item.get('path', '-'))} | "
+                f"{item['reason']} | {cell(item['detail'])} |\n"
+            )
+    return text
+
+
+def _repository(run_dir, root, report):
+    def open_repository():
+        analysis = records.read_json(paths.child(run_dir, "analyze.json"))
+        if not isinstance(analysis.get("source"), str):
+            raise InputError("analyze.json names no git source: run `spec analyze` again.")
+        owner, _, name = report["repo"].partition("/")
+        return git_prs.Repository.existing(root, owner, name, analysis["source"])
+
+    return open_repository
+
+
+def report(run_dir, root):
+    """(impact-report, markdown text). Both are written to the run, with the patches."""
     value, links = build(run_dir)
+    patches, rejected = patch_stage.generate(run_dir, value, _repository(run_dir, root, value))
+    refs = {item["finding_id"]: item["id"] for item in patches}
+    for item in value["findings"]:
+        if item["id"] in refs:
+            item["patch_ref"] = refs[item["id"]]
+    value["patches"], value["patch_rejections"] = patches, rejected
+    records.validate("impact-report", value)
     records.write_json(paths.child(run_dir, "impact-report.json"), value)
     text = markdown(value, links)
     paths.write_private(paths.child(run_dir, "impact-report.md"), text)
