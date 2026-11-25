@@ -20,7 +20,7 @@ import math
 import re
 
 from . import guard, paths, privacy, records
-from .errors import InputError, QualityGateError
+from .errors import BoundaryError, InputError, QualityGateError
 
 BACKENDS = ("claude", "stub")
 AUTH_MODES = tuple(guard.CLAUDE_AUTH)
@@ -109,6 +109,37 @@ def parse_envelope(stdout, strict=True):
     return parsed
 
 
+def _strings(value):
+    """Every string in a JSON-like value, dict keys included, as it is before JSON escaping."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from _strings(key)
+            yield from _strings(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _strings(item)
+
+
+def check_sendable(what, values, deny_terms):
+    """Refuse before anything leaves the machine: a deny term, or text shaped like a secret.
+
+    Checked on the raw strings, because serialising to JSON escapes quotes, backslashes and
+    control characters and a term containing them would no longer match. Only the shape names
+    are reported, never the matched text.
+    """
+    texts = [text for value in values for text in _strings(value)]
+    for text in texts:
+        privacy.assert_sendable(text, deny_terms, what)
+    shapes = sorted({shape for text in texts for shape in privacy.find_secrets(text)})
+    if shapes:
+        raise BoundaryError(
+            f"refused to send {what}: it contains text shaped like {', '.join(shapes)}; "
+            "nothing was sent."
+        )
+
+
 def calls(run_dir):
     path = paths.child(run_dir, CALLS_FILE)
     return records.read_jsonl(path) if path.is_file() else []
@@ -129,6 +160,7 @@ class Session:
         *,
         auth_mode=None,
         max_run_budget_usd=None,
+        max_call_budget_usd=None,
         deny_terms=(),
         timeout=DEFAULT_TIMEOUT,
         model=None,
@@ -142,10 +174,13 @@ class Session:
             budget = _money(max_run_budget_usd)
             if not budget:
                 raise InputError("--backend claude needs --max-run-budget-usd above 0.")
+        if max_call_budget_usd is not None and not _money(max_call_budget_usd):
+            raise InputError("--max-call-budget-usd must be above 0.")
         self.run_dir = run_dir
         self.backend = backend
         self.auth_mode = auth_mode
         self.budget = _money(max_run_budget_usd) or 0.0
+        self.call_budget = _money(max_call_budget_usd)
         self.deny_terms = list(deny_terms)
         self.timeout = timeout
         self.model = model
@@ -154,8 +189,9 @@ class Session:
 
     def ask(self, stage, instructions, data, schema_name, stub):
         """One call. Returns the schema-valid answer and the id of the recorded call."""
+        # One path for both backends: the stub refuses exactly what claude would refuse.
+        check_sendable(f"the {stage} prompt", (instructions, data), self.deny_terms)
         prompt = render_prompt(instructions, data)
-        privacy.assert_sendable(prompt, self.deny_terms, f"the {stage} prompt")
         size = len(prompt.encode("utf-8"))
         if size > MAX_PROMPT_BYTES:
             raise QualityGateError(
@@ -188,28 +224,40 @@ class Session:
             raise QualityGateError(
                 f"the run budget of {self.budget} USD is used up; no further claude call was made."
             )
-        row.update(auth_mode=self.auth_mode, max_budget_usd=remaining)
+        cap = min(remaining, self.call_budget) if self.call_budget else remaining
+        row.update(auth_mode=self.auth_mode, max_budget_usd=cap)
         if self.model is not None:
             row["model"] = self.model
-        code, stdout = guard.claude(
-            prompt,
-            records.schema(schema_name),
-            auth_mode=self.auth_mode,
-            timeout=self.timeout,
-            max_budget_usd=remaining,
-            model=self.model,
-            env=self.env,
-        )
+        # Reserve the cap before the process starts: a call that never reports back (timeout,
+        # crash, interrupt, killed harness) still counts against the run budget.
+        self._record(row, status="pending", cost_usd=None, cost_known=False, charged_usd=cap)
+        try:
+            code, stdout = guard.claude(
+                prompt,
+                records.schema(schema_name),
+                auth_mode=self.auth_mode,
+                timeout=self.timeout,
+                max_budget_usd=cap,
+                model=self.model,
+                env=self.env,
+            )
+        except (InputError, BoundaryError):
+            # guard refuses these before any process starts, so nothing was spent.
+            self._settle(row, status="error", charged_usd=0, error="refused before starting")
+            raise
+        except BaseException:
+            self._settle(row, status="error", charged_usd=cap, error="the call did not finish")
+            raise
         parsed = parse_envelope(stdout, strict=False)
         error = parsed["error"] if code == 0 else f"claude exited with code {code}"
         known = parsed["cost_usd"] is not None
         extra = {key: parsed[key] for key in ("num_turns", "duration_ms") if key in parsed}
-        self._record(
+        self._settle(
             row,
             status="error" if error else "ok",
             cost_usd=parsed["cost_usd"],
             cost_known=known,
-            charged_usd=parsed["cost_usd"] if known else remaining,
+            charged_usd=parsed["cost_usd"] if known else cap,
             usage=parsed["usage"],
             model_usage=parsed["model_usage"],
             **({"error": error} if error else {}),
@@ -230,3 +278,10 @@ class Session:
         )
         records.validate("llm-call", row)
         records.write_jsonl(paths.child(self.run_dir, CALLS_FILE), [*existing, row])
+
+    def _settle(self, row, **fields):
+        """Replace a reserved row with its outcome."""
+        row.update(fields)
+        records.validate("llm-call", row)
+        rows = [row if old["id"] == row["id"] else old for old in calls(self.run_dir)]
+        records.write_jsonl(paths.child(self.run_dir, CALLS_FILE), rows)

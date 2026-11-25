@@ -90,6 +90,7 @@ def _session(args, run_dir, env, rules=False):
         args.backend,
         auth_mode=args.auth_mode,
         max_run_budget_usd=args.max_run_budget_usd,
+        max_call_budget_usd=args.max_call_budget_usd,
         deny_terms=deny_terms,
         timeout=args.timeout,
         model=args.model,
@@ -129,6 +130,11 @@ def _backend_options(parser):
         "--max-run-budget-usd",
         type=float,
         help="required with claude: stop calling once the run's recorded spend reaches this",
+    )
+    parser.add_argument(
+        "--max-call-budget-usd",
+        type=float,
+        help="optional cap per claude call (default: whatever is left of the run budget)",
     )
     parser.add_argument(
         "--deny-terms-file", help="terms that must not leave the machine; a hit stops with exit 3"
