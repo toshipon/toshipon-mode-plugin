@@ -63,6 +63,8 @@ export REVIEW_READ_TOKEN=...   # 読み取り専用の fine-grained PAT
 
 渡した値は、`gh` には `GH_TOKEN` として、`git` には環境変数経由の設定として渡ります。argv、remote の URL、リポジトリの config、ログ、run ディレクトリには書きません。`gh` には空の設定ディレクトリを、`git` には空の global / system 設定を見せます。子プロセスの stderr は保存しません。
 
+git の https の fetch 元は、許可した host（既定は `github.com`。呼び出し側が host を明示した場合はその host）の上にあるものだけを受け付け、トークンはその host にだけ付けます。別の host の https remote は exit 3 で拒否します。ローカルのディレクトリを fetch 元にするとき（利用者が明示する読み取り専用の入力）は、トークンを付けません。ref と refspec は `..`、`@{`、空の要素（`//`）、`.` で始まる要素、末尾の `.lock` を拒否します。
+
 ## データの保存場所
 
 | 項目 | 場所 |
