@@ -1,0 +1,8 @@
+{
+  "session_id": "synthetic-session-a",
+  "underlying_goal": "SYNTHETIC FREE TEXT that the adapter must never read",
+  "brief_summary": "SYNTHETIC FREE TEXT that the adapter must never read",
+  "goal_categories": { "debugging": 2, "refactoring": 1 },
+  "outcome": "partially_achieved",
+  "friction_counts": { "wrong_approach": 2, "misunderstood_request": 1 }
+}

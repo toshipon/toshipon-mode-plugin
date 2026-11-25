@@ -43,7 +43,10 @@
         "additionalProperties": false,
         "required": ["kind", "hour", "minute"],
         "properties": {
-          "kind": { "enum": ["evolve", "weekly_report"] },
+          "kind": {
+            "description": "insight_daily and insight_weekly are handled by the insight-discovery skill's own entry point.",
+            "enum": ["evolve", "weekly_report", "insight_daily", "insight_weekly"]
+          },
           "weekday": { "description": "0 = Monday. Omit for every day.", "type": "integer", "minimum": 0, "maximum": 6 },
           "hour": { "type": "integer", "minimum": 0, "maximum": 23 },
           "minute": { "type": "integer", "minimum": 0, "maximum": 59 }

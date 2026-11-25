@@ -1,0 +1,5 @@
+-r requirements.txt
+coverage==7.10.7; python_version < "3.11"
+coverage==7.17.1; python_version >= "3.11"
+pyright==1.1.414
+ruff==0.17.3

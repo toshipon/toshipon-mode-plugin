@@ -37,6 +37,8 @@ agents/harness-evolution.md
 
 設定は JSON です。Python の標準ライブラリに YAML parser が無く、依存を `jsonschema` だけに保つためです。
 
+この runtime の上に別の skill を載せるための登録点が 3 つあります。`store.register_schemas` は別 skill の schema を同じ検証経路に通し、`store.append_log` の `schema` 引数は台帳の record を検査する schema を選び、`dispatch.dispatch` の `handlers` 引数は job の種類を足します。`insight-discovery` skill がこれらを使っています。
+
 ## 準備
 
 Python 3.10 以上と git が必要です。依存は利用側の venv に入れます。plugin cache は書き換えません。
@@ -205,7 +207,7 @@ adapter は `agents.<役割>` に設定します。ローカルコマンド（`a
 | `retention_days` | `gc` が消す基準。既定 30 日 |
 | `queue.*` | retry 回数、backoff、lease |
 | `budget.*` | 1 回の dispatch の job 数・秒数、1 日の費用上限 |
-| `schedule` | `kind`（`evolve` / `weekly_report`）、`hour`、`minute`、任意で `weekday` |
+| `schedule` | `kind`（`evolve` / `weekly_report`。`insight_daily` / `insight_weekly` は insight-discovery skill の job で、その skill の `insight.py schedule-tick` が処理する）、`hour`、`minute`、任意で `weekday` |
 | `evolution.*` | パターンを対象にする件数と出所の数 |
 | `llm_policy.allowed_classifications` | adapter に渡してよいデータ分類 |
 | `agents.*` | 役割ごとの adapter。`claude` には `max_budget_usd` が必須 |
