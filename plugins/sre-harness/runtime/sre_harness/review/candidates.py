@@ -2,8 +2,10 @@
 
 `body.md` is what a person reads, approves and later copies into a repository. Its SHA-256 is
 `artifact.content_sha256`. A declarative check lives in the artifact as one fenced block
-(`CHECK_INFO`); the record's `check` is parsed from it, so the hash covers the check as well as
-the prose. A person may edit `body.md`: the next `review evaluate` sees the new hash, starts a
+(`CHECK_INFO`), so the hash covers the check as well as the prose. `body.md` is the only source
+of what is applied and recorded: `content` parses the title, form and check from it, and refuses
+a record whose copies of them disagree. Everything else in candidate.json is context the hash
+does not cover. A person may edit `body.md`: the next `review evaluate` sees the new hash, starts a
 new version and evaluates that. `review approve` refuses a body whose hash differs from the
 record.
 
@@ -14,7 +16,7 @@ import json
 import re
 
 from .. import paths, privacy, records
-from ..errors import InputError, QualityGateError
+from ..errors import BoundaryError, InputError, QualityGateError
 from . import apply_rules
 
 DIRECTORY = "candidates"
@@ -86,6 +88,10 @@ def parse(text):
     """(title, check or None, problems) from an artifact text."""
     problems = []
     title = _TITLE.match(text)
+    if title is None:
+        problems.append("the artifact does not start with a '# ' title")
+    elif len(title.group(1).strip()) > 200:
+        problems.append("the title is over 200 characters")
     blocks = _CHECK_BLOCK.findall(text)
     check = None
     if len(blocks) > 1:
@@ -141,6 +147,27 @@ def load(run_dir, candidate_id):
         raise InputError(f"{candidate_id}/{BODY} is not UTF-8 text.") from None
 
 
+def content(record, text):
+    """What the artifact hash covers, parsed from body.md: {form, title, check?}.
+
+    These are the only values evaluate applies and approve records. A record whose own form,
+    title or check differ from them was changed after the artifact was written: refused (exit 3).
+    """
+    title, check, problems = parse(text)
+    if problems:
+        raise BoundaryError(f"{record['id']}/body.md cannot be read: " + "; ".join(problems))
+    parsed = {"form": "prose" if check is None else "declarative_check", "title": title}
+    if check is not None:
+        parsed["check"] = check
+    kept = {key: record[key] for key in ("form", "title", "check") if key in record}
+    if kept != parsed:
+        raise BoundaryError(
+            f"{record['id']}/candidate.json does not match its artifact (form, title or check); "
+            "only body.md, which the hash covers, may define them. Nothing was used."
+        )
+    return parsed
+
+
 def content_sha256(text):
     return records.sha256(text)
 
@@ -181,7 +208,7 @@ def refresh(record, text, now):
     record["version"] += 1
     record["artifact"]["content_sha256"] = digest
     record["lint"] = lint(text)
-    record["title"] = (title or record["title"])[:200]
+    record["title"] = title
     record.pop("check", None)
     record["form"] = "prose" if check is None else "declarative_check"
     if check is not None:

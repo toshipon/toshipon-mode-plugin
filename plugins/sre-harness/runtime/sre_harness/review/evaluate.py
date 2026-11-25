@@ -127,8 +127,8 @@ def build_units(run_dir, split):
 # Labels -----------------------------------------------------------------------------------
 
 
-def same_kind(text, problem):
-    words = classify._tokens(problem)
+def same_kind(text, title):
+    words = classify._tokens(title)
     shared = words & classify._tokens(text or "")
     return bool(words) and len(shared) >= min(3, len(words)) and 2 * len(shared) >= len(words)
 
@@ -143,7 +143,7 @@ def label_cells(units, threads, rules, adjudication):
                 threads[t]
                 for t in unit["thread_ids"]
                 if threads[t]["comments"]
-                and same_kind(threads[t]["comments"][0].get("body"), rule["problem"])
+                and same_kind(threads[t]["comments"][0].get("body"), rule["title"])
             ]
             verdict = adjudication.get((unit["hunk_sha256"], rule["id"]))
             statuses = {(thread.get("fix") or {}).get("status") for thread in raised}
@@ -310,7 +310,11 @@ def _config(rule_ids, kinds, cells, findings, invalid, units, prs, thresholds):
 
 
 def _candidate_rules(run_dir, now):
-    """Candidates to evaluate as rules, after bringing edited artifacts to a new version."""
+    """Candidates to evaluate as rules, after bringing edited artifacts to a new version.
+
+    The rule (title, form, check) comes from body.md through `candidates.content`; a record that
+    disagrees with its artifact stops the stage (exit 3) before anything is written.
+    """
     rules, failed, records_by_id = [], {}, {}
     for candidate_id in candidates.ids(run_dir):
         record, text = candidates.load(run_dir, candidate_id)
@@ -321,16 +325,7 @@ def _candidate_rules(run_dir, now):
         if problems:
             failed[candidate_id] = "invalid_artifact: " + "; ".join(problems)
             continue
-        rule = {
-            "id": candidate_id,
-            "title": record["title"],
-            "problem": record["problem"],
-            "form": record["form"],
-            "body": text,
-        }
-        if "check" in record:
-            rule["check"] = record["check"]
-        rules.append(rule)
+        rules.append({"id": candidate_id, **candidates.content(record, text), "body": text})
     return rules, failed, records_by_id
 
 

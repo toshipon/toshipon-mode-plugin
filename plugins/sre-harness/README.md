@@ -134,7 +134,7 @@ $H review approve --run run-... --candidate IC-0001 --reviewer alice --reason ".
 ### 生成（generate）
 
 - 候補は `classified.jsonl` の lesson からだけ作ります。`set-aside.jsonl` の lesson（superseded、case_specific、external_only、bot_only）からは作りません。`--include-untrusted` を付けたときだけ、external_only / bot_only だけを理由に外された lesson からも作り、候補に `untrusted_included: true` を付けます。classify の出力とは別に、generate 自身も lesson の `source_trust` を見て、flag なしでは external_only / bot_only の lesson を飛ばします。
-- 候補は `candidates/<IC-id>/candidate.json`（`runtime/schemas/improvement-candidate.schema.json`）と、承認の対象になる本文 `body.md` です。ファイル名は候補の id と固定の名前だけで、入力に含まれる path は使いません。`artifact.content_sha256` は `body.md` の SHA-256 です。
+- 候補は `candidates/<IC-id>/candidate.json`（`runtime/schemas/improvement-candidate.schema.json`）と、承認の対象になる本文 `body.md` です。ファイル名は候補の id と固定の名前だけで、入力に含まれる path は使いません。`artifact.content_sha256` は `body.md` の SHA-256 です。**正本は hash が覆う `body.md` だけです。** evaluate が当てる検査と form、承認画面の「記録される内容」、registry に入る title・form・check は、どれも `body.md` を読み直して parse したものから作ります。`candidate.json` の `form`、`title`、`check` が parse の結果と違えば、evaluate も approve も exit 3 で止まります。`candidate.json` のそれ以外（target、sources、lint、risk など）は判断の材料で、hash は覆わず、registry にも入りません。
 - `form` は `declarative_check` か `prose` です。`declarative_check` の検査は `body.md` の末尾の ```` ```json sre-harness-check ```` ブロックにあるデータ（`path_globs`、`added_line_pattern`、`absent_pattern`、`message`）で、harness の解釈器（`runtime/sre_harness/review/apply_rules.py`）が評価します。生成されたコードは実行しません。`prose` は文章のルールで、評価では `review-eval-judge` が当てます。
 - `lint` は本文に agent 向けの命令文、URL、shell コマンド、秘密情報らしき文字列があれば、種類と位置（`span`）を記録します。拒否ではなく承認者への注意書きで、status は変えません。
 - `risk`、`rollback`、元になったコメント（`sources`：引用と投稿者の種別・association）、classify が見つけた既存ルールとの関係（`conflicts`）を持ちます。autonomous-improvement の提案（差分、測定結果、リスク、ロールバック）と同じ要素です。
@@ -149,7 +149,7 @@ $H review approve --run run-... --candidate IC-0001 --reviewer alice --reason ".
 
 - 単位は「hunk × 指摘の種類（ルール）」です。評価用 PR の修正前のコードを使います。thread が付いた hunk は thread の `diff_hunk`（レビュアーが見た時点の hunk）、thread のないファイルは PR の patch の hunk です。
 - ルールは registry の承認済み（このリポジトリ、最新版が approved）を「既存ルール」とし、この run の候補を足して比べます。`with_candidates`（既存 + 全候補）、`baseline`（既存だけ）、候補ごと（既存 + その候補）の 3 種を出します。既存ルールの Markdown（`--existing-rules`）は実行できる形でないので、比較の基準には入りません。
-- ラベル: thread の最初のコメントがルールの problem と語を共有する（共有語が min(3, n) 以上かつ problem の語の半分以上）とき、その thread はその種類の指摘とみなします。修正が見つかれば `human_flagged`、`fix.status = ambiguous` なら `ambiguous`（正解から外す）、修正がなければ `disputed`（指標から外し件数を出す）、指摘がなく adjudication が valid なら `human_missed_valid`、それ以外は `clean` です。
+- ラベル: thread の最初のコメントがルールの title（`body.md` の見出し）と語を共有する（共有語が min(3, n) 以上かつ title の語の半分以上）とき、その thread はその種類の指摘とみなします。修正が見つかれば `human_flagged`、`fix.status = ambiguous` なら `ambiguous`（正解から外す）、修正がなければ `disputed`（指標から外し件数を出す）、指摘がなく adjudication が valid なら `human_missed_valid`、それ以外は `clean` です。
 - 指標: `precision_lower`（下限。人が確認していない指摘をすべて誤りと数える）、`precision_confirmed`（確認後。レビュアーが指摘したものと adjudication 済みのものだけ）、`recall`、`f1`（下限の precision と recall から）、`false_positive_rate`（clean なセルに出た指摘 / clean なセル数）。分母が 0 の指標は数値を出さず `undefined` です。
 - 95% 区間は評価用 PR を単位にした bootstrap（同じ PR の hunk は独立でないため）で、seed（既定 20260127）と回数（既定 1,000）を `evaluation.json` の `criteria.thresholds` に記録します。n（評価用 PR の数）を併記します。
 - **評価用 PR が 30 件未満の指標は数値ではなく `unevaluable` です。** `status: unevaluable` と理由を記録し、exit 0 で終わります。件数（`counts`）は出すので、どの hunk で何が起きたかは読めます。
@@ -201,9 +201,9 @@ adjudication（`--adjudication <file>`、schema `review-adjudication`）は、`e
 ### 承認の制約
 
 - `review approve` は stdin と stdout の両方が TTY のときだけ動きます。TTY がなければ何も記録せず exit 3 です。この検査を迂回する flag や環境変数はありません。agent の shell には TTY がないので、agent は承認できません。**これは本人確認ではありません。** 端末の前にいる人が誰かを確かめる仕組みではなく、`--reviewer` は入力どおりに記録します。
-- 承認の画面には、本文、lint、元になったコメントの引用（コードブロック）と投稿者の種別・association、既存ルールとの関係、評価の結果、リスクとロールバックを出します。外部の文字列は escape し、制御文字は置き換えます。
+- 承認の画面には、まず registry に記録される内容そのもの（`body.md` から parse した form、title、check）を出し、続けて本文、本文の lint、元になったコメントの引用（コードブロック）と投稿者の種別・association、既存ルールとの関係、評価の結果、リスクとロールバックを出します。外部の文字列は escape し、制御文字は置き換えます。
 - 画面の後で `content_sha256` の先頭 12 文字を入力します。違えば exit 3 です。候補が同じ `content_sha256` で評価されていない（未評価、評価後に本文が変わった、`check_failed`）ときも exit 3 です。
-- 記録は state root の下の `registry/<RG-id>/v<N>.json`（schema `review-registry`）と、そのときの本文 `v<N>.md` です。run とは別の場所です。版は追記だけで、既存のファイルは置き換えません。承認後に本文を変えて評価し直し、もう一度承認すると版 2 になります。`review reject` と `review retire` も版として記録します。
+- 記録は state root の下の `registry/<RG-id>/v<N>.json`（schema `review-registry`）と、そのときの本文 `v<N>.md` です。記録する値は、`body.md` から parse した値と hash、run から決まる値（リポジトリ、run id、候補 id）、承認者の入力だけで、`candidate.json` の値は入れません。評価の後に `candidate.json` の `check` などを書き換えると、承認は exit 3 です。registry の記録と `v<N>.md` が食い違う（hash か parse 結果が違う）entry は、次の evaluate で基準として読むときに exit 3 で止まります。run とは別の場所です。版は追記だけで、既存のファイルは置き換えません。承認後に本文を変えて評価し直し、もう一度承認すると版 2 になります。`review reject` と `review retire` も版として記録します。
 - 有効化は、registry の記録と、`--activate-as <path>` を付けたときの Unified Diff（`v<N>.diff`。指定した path に本文を足す新規ファイルの差分）を出すまでです。作業ツリーには書かず、commit もしません。path は相対 path だけで、`..`、絶対 path、`.git/`、`.github/` は exit 3 です。diff を適用して commit するのは人です。
 - 承認済みのルールは、同じリポジトリの次の evaluate で「既存ルール」になります。
 

@@ -45,7 +45,7 @@ METRICS = {
 LABEL_RULES = {
     "unit": "hunk x kind of finding (one rule)",
     "kind_match": "a thread's first comment shares at least min(3, n) and at least half of the n "
-    "word tokens of the rule's problem",
+    "word tokens of the rule's title, read from its artifact",
     "human_flagged": "a matching thread on the hunk has fix.status found",
     "ambiguous": "a matching thread has fix.status ambiguous (left out)",
     "disputed": "matching threads exist but none has a fix (left out)",

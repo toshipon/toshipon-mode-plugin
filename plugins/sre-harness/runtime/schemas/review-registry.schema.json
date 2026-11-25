@@ -37,23 +37,13 @@
     },
     "candidate": {
       "type": "object",
+      "description": "What the artifact (artifact_file, hash content_sha256) says: form, title and check are parsed from it, never taken from candidate.json.",
       "additionalProperties": false,
-      "required": [
-        "content_sha256",
-        "candidate_version",
-        "form",
-        "target",
-        "title",
-        "problem",
-        "artifact_file"
-      ],
+      "required": ["content_sha256", "form", "title", "artifact_file"],
       "properties": {
         "content_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
-        "candidate_version": { "type": "integer", "minimum": 1 },
         "form": { "enum": ["declarative_check", "prose"] },
-        "target": { "$ref": "urn:sre-harness:review-classified#/$defs/target" },
         "title": { "type": "string", "minLength": 1 },
-        "problem": { "type": "string", "minLength": 1 },
         "check": { "$ref": "urn:sre-harness:improvement-candidate#/$defs/check" },
         "artifact_file": { "type": "string", "pattern": "^v[0-9]{4,}\\.md$" }
       }

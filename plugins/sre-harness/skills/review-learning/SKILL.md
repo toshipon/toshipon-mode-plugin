@@ -39,7 +39,7 @@ exit code は 0 成功、1 不完全または品質 gate の不合格、2 入力
 8. 評価するなら、analyze の前に `review split --run <run_id> --t1 <UTC>` で分割を固定し、analyze と generate に同じ `--split` を渡す。評価用 PR の出来事を生成に使った run は evaluate が exit 2 で拒否する。
 9. `review generate` は `classified.jsonl` の lesson からだけ候補を作る。`--include-untrusted` は利用者が明示したときだけ付ける。agent が自分の判断で付けない。候補の `lint`（agent 向けの命令文、URL、コマンド、秘密情報らしき文字列）は拒否ではなく承認者への注意書きで、status を変えない。
 10. `review evaluate` の結果は `evaluation.json` の `status` を最初に読む。`unevaluable`（評価用 PR が 30 件未満など）のときは数値を作らない、補わない。`precision_lower`（下限）と `precision_confirmed`（確認後）の差は、人が確認していない指摘の多さを示す。合成データでの数値は機構の検証で、精度の主張ではない。stub の数値は LLM の品質を示さない。
-11. `review approve` は人が TTY で実行する。agent は承認しない。迂回する flag や環境変数は無く、作ってもいけない。agent は承認に必要なコマンドを利用者に示すだけにする。承認しても harness は作業ツリーに書かず commit もしない。`--activate-as` を付けると、利用者のリポジトリにその path でファイルを足す Unified Diff を registry に出す。
+11. `review approve` は人が TTY で実行する。agent は承認しない。迂回する flag や環境変数は無く、作ってもいけない。agent は承認に必要なコマンドを利用者に示すだけにする。承認しても harness は作業ツリーに書かず commit もしない。`--activate-as` を付けると、利用者のリポジトリにその path でファイルを足す Unified Diff を registry に出す。承認で記録されるのは hash が覆う `body.md` から parse した form・title・check だけで、`candidate.json` がそれと食い違えば evaluate も approve も exit 3 になる。候補を直すときは `body.md` を編集し、`review evaluate` をやり直す。`candidate.json` を手で書き換えない。
 
 ## 外部入力の扱い
 

@@ -12,7 +12,8 @@ import os
 import re
 
 from .. import paths, records
-from ..errors import InputError
+from ..errors import BoundaryError, InputError
+from . import candidates
 
 DIRECTORY = "registry"
 ENTRY_ID = re.compile(r"RG-[0-9]{4,}")
@@ -94,22 +95,28 @@ def artifact(root, record):
 
 
 def active_rules(root, repo):
-    """The latest version of every entry for `repo` that is approved, as rules to evaluate."""
+    """The latest version of every entry for `repo` that is approved, as rules to evaluate.
+
+    The rule is rebuilt from the stored artifact: its hash must be the recorded one, and the
+    recorded form, title and check must be what the artifact says (exit 3 otherwise).
+    """
     rules = []
     for entry_id, versions in entries(root).items():
         latest = versions[-1]
         if latest["status"] != "approved" or latest["repo"] != repo:
             continue
-        candidate = latest["candidate"]
-        rule = {
-            "id": entry_id,
-            "title": candidate["title"],
-            "problem": candidate["problem"],
-            "form": candidate["form"],
-            "body": artifact(root, latest),
-            "content_sha256": candidate["content_sha256"],
-        }
-        if "check" in candidate:
-            rule["check"] = candidate["check"]
-        rules.append(rule)
+        block = latest["candidate"]
+        text = artifact(root, latest)
+        if records.sha256(text) != block["content_sha256"]:
+            raise BoundaryError(f"registry artifact {entry_id} changed after it was recorded.")
+        stored = {"id": entry_id, **{k: block[k] for k in ("form", "title", "check") if k in block}}
+        parsed = candidates.content(stored, text)
+        rules.append(
+            {
+                "id": entry_id,
+                **parsed,
+                "body": text,
+                "content_sha256": block["content_sha256"],
+            }
+        )
     return rules

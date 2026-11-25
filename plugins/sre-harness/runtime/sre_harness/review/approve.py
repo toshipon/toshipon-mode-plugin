@@ -6,9 +6,11 @@ instruction, so it is held to a terminal:
 - The command line refuses to run without a TTY on stdin and stdout (exit 3). There is no flag
   or environment variable that skips this. An agent's shell has no TTY, so an agent cannot
   approve; a person at a terminal can. This is not proof of who the person is.
-- The screen shows the artifact, the lint notes, every source comment with its author's type and
-  association, the conflicts with existing rules and the evaluation. External text is escaped
-  or fenced.
+- The screen shows what will be recorded (form, title and check parsed from body.md), the
+  artifact, its lint notes, every source comment with its author's type and association, the
+  conflicts with existing rules and the evaluation. External text is escaped or fenced.
+- Only body.md, which the hash covers, defines what is recorded. A candidate.json whose form,
+  title or check disagree with it is refused (exit 3).
 - The person types the first PREFIX_LENGTH characters of the artifact's SHA-256.
 - The candidate must have been evaluated with exactly that hash (exit 3 otherwise).
 
@@ -17,6 +19,7 @@ to a path the person names in their repository. The harness never writes into a 
 never commits.
 """
 
+import json
 import re
 from pathlib import PurePosixPath
 
@@ -95,15 +98,30 @@ def evaluated(run_dir, record, text):
     return evaluation, entry, records.sha256(path.read_bytes())
 
 
-def screen(record, text, evaluation, entry):
-    """The approval screen as Markdown. Every external string is escaped or fenced."""
-    digest = record["artifact"]["content_sha256"]
+def recorded(content):
+    """The values the registry records besides the hash, as the screen shows them."""
+    return json.dumps(content, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def screen(record, text, content, evaluation, entry):
+    """The approval screen as Markdown. Every external string is escaped or fenced.
+
+    `content` is what the registry will record (parsed from body.md, which the hash covers).
+    The rest comes from candidate.json: context for the decision, not recorded.
+    """
+    digest = candidates.content_sha256(text)
     lines = [
         f"# Approve {record['id']} (run {record['run_id']}, version {record['version']})",
         "",
-        f"- title: {escape(record['title'])}",
-        f"- form: {record['form']}; target: {record['target']}",
         f"- content_sha256: `{digest}`",
+        "",
+        "## What is recorded (parsed from body.md; the hash covers it)",
+        "",
+        code_block(recorded(content), "json"),
+        "",
+        "## Context from candidate.json (not covered by the hash, not recorded)",
+        "",
+        f"- target: {record['target']}",
         f"- source_trust: {record['source_trust']}"
         + (" (admitted with --include-untrusted)" if record["untrusted_included"] else ""),
         "",
@@ -123,10 +141,11 @@ def screen(record, text, evaluation, entry):
             shown = metric["value"] if metric["defined"] else metric.get("reason", "undefined")
             interval = f" (95% CI {metric['ci95']})" if metric["ci95"] else ""
             lines.append(f"  - {name}: {shown}{interval}")
-    lines += ["", "## Lint (notes for you, not refusals)", ""]
-    if not record["lint"]:
+    lines += ["", "## Lint of body.md (notes for you, not refusals)", ""]
+    notes = candidates.lint(text)
+    if not notes:
         lines.append("- none")
-    for item in record["lint"]:
+    for item in notes:
         start, end = item["span"]
         lines += [f"- {item['kind']} at {start}-{end}:", "", code_block(text[start:end]), ""]
     lines += ["", "## Source comments (who wrote what the candidate rests on)", ""]
@@ -174,40 +193,32 @@ def _decision(reviewer, reason, now, via):
     return {"reviewer": reviewer, "reason": reason, "decided_at": now, "via": via}
 
 
-def _candidate_block(record):
-    block = {
-        "content_sha256": record["artifact"]["content_sha256"],
-        "candidate_version": record["version"],
-        "form": record["form"],
-        "target": record["target"],
-        "title": record["title"],
-        "problem": record["problem"],
-        "artifact_file": "",
-    }
-    if "check" in record:
-        block["check"] = record["check"]
-    return block
-
-
-def _place(root, record):
-    """(entry id, existing versions) for the candidate's lineage."""
+def _place(root, run_dir, candidate_id):
+    """(entry id, existing versions) for the candidate's lineage (run id + candidate id)."""
     found = registry.entries(root)
-    entry_id = registry.lineage_of(found, record["run_id"], record["id"]) or registry.next_id(found)
+    entry_id = registry.lineage_of(found, run_dir.name, candidate_id) or registry.next_id(found)
     return entry_id, found.get(entry_id, [])
 
 
-def _version(root, record, status, evaluation, decision, text, path=None):
-    entry_id, versions = _place(root, record)
+def _version(root, run_dir, candidate_id, content, status, evaluation, decision, text, path=None):
+    """Write one registry version. Every recorded value comes from body.md (`content`, the
+    hash), the run (repository, lineage) or the person (decision); none from candidate.json."""
+    entry_id, versions = _place(root, run_dir, candidate_id)
     number = len(versions) + 1
-    block = {**_candidate_block(record), "artifact_file": registry.version_name(number, "md")}
+    block = {
+        "content_sha256": candidates.content_sha256(text),
+        **content,
+        "artifact_file": registry.version_name(number, "md"),
+    }
+    collect = records.read_json(paths.child(run_dir, "collect.json"))
     version = {
         "schema_version": records.SCHEMA_VERSION,
         "id": entry_id,
         "version": number,
         "created_at": decision["decided_at"],
         "status": status,
-        "repo": record["repo"],
-        "lineage": {"run_id": record["run_id"], "candidate_id": record["id"]},
+        "repo": collect["repo"],
+        "lineage": {"run_id": run_dir.name, "candidate_id": candidate_id},
         "candidate": block,
         "evaluation": evaluation,
         "decision": decision,
@@ -233,12 +244,13 @@ def approve(run_dir, root, candidate_id, reviewer, reason, ask, show, activate_a
     path = None if activate_as is None else target_path(activate_as)
     record, text = candidates.load(run_dir, candidate_id)
     evaluation, entry, evaluation_sha = evaluated(run_dir, record, text)
-    digest = record["artifact"]["content_sha256"]
-    show(screen(record, text, evaluation, entry))
+    content = candidates.content(record, text)
+    digest = candidates.content_sha256(text)
+    show(screen(record, text, content, evaluation, entry))
     typed = ask(f"Type the first {PREFIX_LENGTH} characters of content_sha256 to approve: ")
     if not isinstance(typed, str) or typed.strip() != digest[:PREFIX_LENGTH]:
         raise BoundaryError("the typed hash does not match the artifact; nothing was recorded.")
-    _, versions = _place(root, record)
+    _, versions = _place(root, run_dir, candidate_id)
     if versions and versions[-1]["status"] == "approved":
         if versions[-1]["candidate"]["content_sha256"] == digest:
             raise InputError(f"{candidate_id} is already approved with this content.")
@@ -251,7 +263,9 @@ def approve(run_dir, root, candidate_id, reviewer, reason, ask, show, activate_a
         "content_sha256": entry["content_sha256"],
     }
     decision = _decision(reviewer, reason, now, "terminal_hash_prefix")
-    version, folder, _ = _version(root, record, "approved", reference, decision, text, path)
+    version, folder, _ = _version(
+        root, run_dir, candidate_id, content, "approved", reference, decision, text, path
+    )
     record["approval"] = {
         "reviewer": reviewer,
         "reason": reason,
@@ -275,10 +289,11 @@ def approve(run_dir, root, candidate_id, reviewer, reason, ask, show, activate_a
 def reject(run_dir, root, candidate_id, reviewer, reason):
     reviewer, reason = _person(reviewer, reason)
     record, text = candidates.load(run_dir, candidate_id)
+    content = candidates.content(record, text)
     now = records.iso()
     candidates.transition(record, "rejected", "reject", now)
     decision = _decision(reviewer, reason, now, "command")
-    version, _, _ = _version(root, record, "rejected", None, decision, text)
+    version, _, _ = _version(root, run_dir, candidate_id, content, "rejected", None, decision, text)
     candidates.save(run_dir, record)
     return {"candidate": candidate_id, "registry_id": version["id"], "version": version["version"]}
 
