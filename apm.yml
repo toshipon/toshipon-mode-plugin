@@ -5,7 +5,7 @@
 # plugins/toshipon-mode/ に apm.yml を置くと、nested skills があるため APM は SKILL_BUNDLE と判定し、
 # agents/ と commands/ が配布対象から外れる。そのため plugin 側には置かず、Claude plugin として解釈させる。
 name: toshipon-mode-plugin
-version: 0.1.3
+version: 0.1.4
 description: toshipon-mode plugin and the public skills it routes to
 author: toshipon
 license: MIT
@@ -14,5 +14,7 @@ dependencies:
   apm:
     # 本体。同じリポジトリ内の Claude plugin（skills / agents / commands）
     - ./plugins/toshipon-mode
+    # 読み取り専用の SRE harness（Claude plugin）。runtime を同梱するため APM での配置は未検証
+    - ./plugins/sre-harness
     # hdd:hypothesis-first（skill）、hdd:verify / hdd:grilling（command）、hdd:source-traceability（skill）
     - toshipon/hypothesis-driven-development-skills/plugin

@@ -29,6 +29,12 @@ Claude Code のセッション内で以下を実行してください。
 /plugin install toshipon-mode@toshipon-tools
 ```
 
+GitHub のレビュー履歴と仕様文書を読む `sre-harness` は別の plugin です。GitHub のトークンを扱うので、使う場合だけ入れてください。
+
+```
+/plugin install sre-harness@toshipon-tools
+```
+
 ### microsoft/apm で入れる場合
 
 [APM（Agent Package Manager）](https://github.com/microsoft/apm) を使う場合は、リポジトリ直下の `apm.yml` を経由して、本体と公開されている依存 skill をまとめて入れられます。
@@ -112,6 +118,10 @@ APM でインストールした場合は、公開されている取得元があ�
 `/toshipon-mode:harness-evolution` は、その実行記録から繰り返す失敗を拾い、Skill や指示の候補版を隔離 worktree に作って、現行版と train / holdout のケースで比較します。事前に決めた改善条件と独立監査を通った候補だけが、差分・測定結果・リスク・ロールバック手順を含むローカルの提案になります。評価 suite の変更、提案の承認、公開は人が記録します。
 
 実行記録は repository の外（既定 `~/.local/state/ai-harness/`）に置きます。Claude Code の hook と launchd による自動起動は設定例と手順だけを同梱し、既定では何も有効になりません。Python 3.10 以上と `jsonschema` が必要です。手順、設定、停止方法、制限は [autonomous-improvement README](plugins/toshipon-mode/skills/autonomous-improvement/README.md) にあります。
+
+## レビューの学習と仕様の整合性（sre-harness plugin）
+
+`sre-harness` は、GitHub のレビュー履歴から改善候補を作る Review Learning、決定と要求を open PR にまたがって追跡する Specification Consistency、IaC の状態遷移と証跡の契約を、読み取り専用で提供します。push、merge、クラウドの変更は行わず、実行データは repository の外（既定 `~/.local/state/ai-harness/sre-harness/`）に置きます。制約、認証、保存場所は [sre-harness README](plugins/sre-harness/README.md) にあります。
 
 ## 非機能要件と AWS 方式設計
 

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Launcher. Resolves the bundled runtime from this file's own location.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+runtime="$(cd "$here/../runtime" && pwd)"
+PYTHONPATH="$runtime" exec "${SRE_HARNESS_PYTHON:-python3}" -m sre_harness "$@"
