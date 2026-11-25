@@ -44,24 +44,35 @@ RELATIONS = {
 
 
 class Registry:
-    """The registries as the analysis reads them: ids, written ids, status, titles."""
+    """The registries as the analysis reads them: ids, written ids, status, titles.
+
+    An id written in a file reaches an entity by the id its document writes (`external_id`)
+    only: the `DEC-` numbers the harness assigns and the `DCI-` / `RQI-` ids of inferred
+    entries are never a file's target. The backend, which is shown registry ids, names
+    entities by those (`by_id`).
+    """
 
     def __init__(self, decisions, requirements):
         self.decisions = {item["id"]: item for item in decisions}
         self.requirements = {item["id"]: item for item in requirements}
-        self.index = {}
+        self.index = {}  # written id -> registry id
         for item in [*decisions, *requirements]:
-            self.index[item["id"]] = item["id"]
-        for item in [*decisions, *requirements]:
-            if item.get("external_id"):
-                self.index.setdefault(item["external_id"], item["id"])
+            if item["basis"] == "explicit" and item.get("external_id"):
+                self.index[item["external_id"]] = item["id"]
+        self.inferred = {
+            item["id"] for item in [*decisions, *requirements] if item["basis"] == "inferred"
+        }
+
+    def by_id(self, name):
+        """The node of a registry id, or None."""
+        if name in self.decisions:
+            return ("decision", name)
+        return ("requirement", name) if name in self.requirements else None
 
     def resolve(self, written):
-        """The registry node of a written id, or None when the registry does not have it."""
+        """The registry node of a written id, or None when no document writes it."""
         name = self.index.get(written)
-        if name is None:
-            return None
-        return ("decision", name) if name in self.decisions else ("requirement", name)
+        return None if name is None else self.by_id(name)
 
     def node(self, node):
         """A unit's node with its written id replaced by the registry id when there is one."""
@@ -70,7 +81,7 @@ class Registry:
         return node
 
     def entity(self, node):
-        return node[0] in ("decision", "requirement") and node[1] in self.index.values()
+        return node[0] in ("decision", "requirement") and self.by_id(node[1]) is not None
 
     def status(self, name):
         item = self.decisions.get(name)

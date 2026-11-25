@@ -11,6 +11,10 @@ Reading rules, all enforced here:
 - A listed file that is absent, not a regular file, not UTF-8, or an export of another shape
   is recorded as `input_missing`; nothing is guessed in its place.
 
+Lines are counted as git counts them: a line ends at "\n" only (`text_lines`). Form feed,
+\x1c-\x1e, \x85, U+2028/U+2029 and a lone "\r" stay inside the line, so line numbers here
+match `git diff` hunks and `git blame`; a CRLF line loses its "\r".
+
 Front-matter is read without a YAML library: `key: value`, `key: [a, b]` and a `key:` followed
 by `- item` lines. Anything else (nested mappings, block scalars, flow mappings) is listed in
 the document's `missing` as `front_matter.<key>` and left out.
@@ -106,6 +110,23 @@ def check_size(size, name):
         )
 
 
+# Lines ------------------------------------------------------------------------------------
+
+
+def text_lines(text):
+    """The lines of `text` as git numbers them, without their ends (and a CRLF's "\r")."""
+    lines = text.split("\n")
+    if lines[-1] == "":
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
+
+
+def _lines_with_ends(text):
+    lines = [line + "\n" for line in text.split("\n")]
+    lines[-1] = lines[-1][:-1]
+    return lines if lines[-1] else lines[:-1]
+
+
 # Front-matter -----------------------------------------------------------------------------
 
 
@@ -119,7 +140,7 @@ def _scalar(text):
 def front_matter(text):
     """{fields, raw, body, body_line, missing}. `raw` is the block as written, delimiters
     included; `body_line` is the 1-based line where the body starts."""
-    lines = text.splitlines(keepends=True)
+    lines = _lines_with_ends(text)
     absent = {"fields": {}, "raw": None, "body": text, "body_line": 1, "missing": []}
     if not lines or lines[0].rstrip() != "---":
         return absent
@@ -190,7 +211,7 @@ def markdown_sections(text, first_line=1):
     """Split at ATX headings outside code fences. Each section keeps its line range."""
     sections, fenced = [], False
     current = {"heading": "", "level": 0, "start": first_line, "lines": []}
-    for offset, line in enumerate(text.splitlines()):
+    for offset, line in enumerate(text_lines(text)):
         number = first_line + offset
         if _FENCE.match(line):
             fenced = not fenced
@@ -319,7 +340,7 @@ def _text_document(entry, text, parts):
     sections = markdown_sections(parsed["body"], parsed["body_line"])
     leading = []
     if parsed["raw"] is not None:
-        inner = parsed["raw"].splitlines()[1:-1]
+        inner = text_lines(parsed["raw"])[1:-1]
         leading.append(
             {
                 "heading": FRONT_MATTER_HEADING,

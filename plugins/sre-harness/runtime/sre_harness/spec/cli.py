@@ -97,6 +97,7 @@ def _analyze(args, env, out):
         "repo": (owner, name),
         "source": source,
         "token": token,
+        "host": args.host,
         "root": root,
         "default_branch": args.default_branch,
         "session": session,

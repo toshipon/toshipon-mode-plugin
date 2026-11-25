@@ -240,7 +240,7 @@ def test_report_writes_json_and_escaped_markdown(parallel, home):
     directory = run_dir(home, run_id)
     value = json.loads((directory / "impact-report.json").read_text())
     assert records.violations("impact-report", value) == []
-    assert value["default_branch"]["moved_since_analysis"] is False
+    assert value["default_branch"]["moved_since_analysis"] is None  # report does not fetch
     assert {pr["number"] for pr in value["prs"]} == set(ALL_PRS)
     text = (directory / "impact-report.md").read_text()
     outside = _outside_code_blocks(text)

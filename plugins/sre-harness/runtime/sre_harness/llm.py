@@ -12,7 +12,8 @@ Every call, stub included:
 4. holds the answer to the stage's JSON Schema. The stage then runs its own validators.
 
 Claude calls also stop once the run's recorded spend reaches `--max-run-budget-usd`; each call
-gets the remaining amount as the CLI's own `--max-budget-usd`.
+gets the smallest of the remaining amount, guard's per-call ceiling and `--max-call-budget-usd`
+as the CLI's own `--max-budget-usd`.
 """
 
 import json
@@ -224,7 +225,8 @@ class Session:
             raise QualityGateError(
                 f"the run budget of {self.budget} USD is used up; no further claude call was made."
             )
-        cap = min(remaining, self.call_budget) if self.call_budget else remaining
+        limits = [remaining, guard.CLAUDE_MAX_BUDGET_USD]
+        cap = min(limits + [self.call_budget] if self.call_budget else limits)
         row.update(auth_mode=self.auth_mode, max_budget_usd=cap)
         if self.model is not None:
             row["model"] = self.model

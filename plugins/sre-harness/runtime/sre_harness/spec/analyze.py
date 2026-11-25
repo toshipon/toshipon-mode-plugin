@@ -4,9 +4,13 @@ Order of work:
 
 1. Read the run's registries (`spec extract` must have run) and the open PR list.
 2. Fetch the default branch and the PR heads into the harness's bare repository (`prs`).
-   A PR whose head did not arrive is `input_missing`. A PR whose fetched head differs from
-   the head the list gave is `stale` (its head moved in between): it gets one `stale_sha`
-   finding and is left out of everything else, and the stage exits 1.
+   A PR whose head did not arrive, an item of the list without a PR number, a PR whose diff
+   is over the per-diff cap and a changed file that is not UTF-8 are `input_missing`, and the
+   run is `partial` (exit 1). A PR whose fetched head differs from the head the list gave is
+   `stale` (its head moved in between): it gets one `stale_sha` finding and is left out of
+   everything else, and the stage exits 1. A PR whose base is not the default branch is still
+   diffed against its merge base with the default branch; it is marked `base_is_default:
+   false`, and its findings say that the parent's changes may be counted as its own.
 3. Read the default branch's IaC, test and Markdown files (`structure`) and build the trace
    (`trace`). With `--backend`, the backend may propose inferred links for documents that name
    no ID; each proposal is kept only if its quote is in the document and its target exists.
@@ -18,13 +22,19 @@ Order of work:
 5. Per PR, against its merge base with the default branch: `impact` (registry entities the
    changed units reach along the trace), `superseded_dependency` and `input_missing` for
    references the PR adds, `missing_test` (a requirement whose facts the PR changes with no
-   changed test that names it), and the PR's fact changes for the conflict index.
+   changed test that names it), `contradiction` (the PR leaves one key with two values in its
+   head), and the PR's fact changes for the conflict index. A PR changes a key when the set of
+   values its files state for the key differs from the set on the merge base, so a value cannot
+   hide behind an earlier statement of the old one.
 6. `semantic_conflict`: per (entity, key), the PRs that set it to different values, minus the
-   pairs whose diffs overlap on the same base (git reports those as merge conflicts; they are
-   listed in `limitations`). Candidates come from the index only; the backend, when given,
-   writes the explanation text and nothing else.
+   pairs whose hunks that hold the key's statements overlap on the same base (git reports those
+   as merge conflicts; they are listed in `limitations`). An overlap in another file (a
+   changelog both PRs touch) does not settle the values and does not remove the finding.
+   Candidates come from the index only; the backend, when given, writes the explanation text
+   and nothing else.
 
-Nothing here decides approval or state. Severity is fixed per kind (`findings`).
+Nothing here decides approval or state. Severity is fixed per kind (`findings`); a finding
+about an inferred entity is inferred and capped (`findings.mark_inferred`).
 """
 
 from .. import paths, records
@@ -36,6 +46,7 @@ from . import structure, trace
 STAGE = "analyze"
 OUTPUT_SCHEMA = "llm-spec-analyze"
 TITLE_MINIMUM = 7
+MIN_QUOTE = 8  # characters besides spaces in a backend's quote
 RULES_VERSION = 1
 FILE_NODES = ("iac", "test")
 
@@ -44,8 +55,9 @@ Task: `documents` in DATA are files of the repository's default branch that name
 requirement id. `entities` are the decisions and requirements of the registry. For each
 document that clearly refines, depends on, implements or verifies an entity, give
 {path, to, relation, quote}: path as given, to an entity id, relation one of refines,
-depends_on, implements, verifies, conflicts_with, and quote copied exactly from the document.
-Links whose quote is not in the document, or whose target is not an entity, are dropped.
+depends_on, implements, verifies, conflicts_with, and quote copied exactly from the document,
+at least 8 characters besides spaces. Links whose quote is shorter or not in the document, or
+whose target is not an entity, are dropped.
 Do not judge approval, priority or correctness. Return an empty `explanations`."""
 
 EXPLAIN_INSTRUCTIONS = """\
@@ -163,12 +175,13 @@ def _stub_links(data):
             title, text = entity["title"], document["text"]
             if title in text and entity["id"] not in text and entity["written"] not in text:
                 relation = "refines" if entity["type"] == "requirement" else "depends_on"
+                line = next(line for line in text.split("\n") if title in line).strip()
                 links.append(
                     {
                         "path": document["path"],
                         "to": entity["id"],
                         "relation": relation,
-                        "quote": title,
+                        "quote": line,
                     }
                 )
     return {"links": links, "explanations": []}
@@ -207,11 +220,13 @@ def inferred_links(session, registry, tree, texts, rejected):
     sent = {item["path"]: item["text"] for item in documents}
     kept = []
     for index, proposal in enumerate(output["links"]):
-        target = registry.resolve(proposal["to"])
+        target = registry.by_id(proposal["to"]) or registry.resolve(proposal["to"])
         text = sent.get(proposal["path"])
         reasons = []
         if text is None:
             reasons.append("unknown_document: the path was not sent")
+        elif len("".join(proposal["quote"].split())) < MIN_QUOTE:
+            reasons.append(f"quote_too_short: fewer than {MIN_QUOTE} characters besides spaces")
         elif proposal["quote"] not in text:
             reasons.append("quote_not_found: the quote is not in the document")
         if target is None:
@@ -247,9 +262,26 @@ class PullAnalysis:
         self.changed_units = []  # (path, unit) on either side
         self.links = []  # explicit links of both versions of the changed files
         self.added_links, self.added_dangling = [], []
-        self.fact_changes = {}  # (entity, key) -> {"values": set, "evidence": [...]}
+        # (entity, key) -> {"values": set, "evidence": [...], "hunks": {path: [(start, count)]}}
+        self.fact_changes = {}
+        self.split_values = {}  # (entity, key) -> [(where, value)]: two values left in the head
         self.tested = set()  # requirement ids named by changed tests
         self.unreadable = []
+
+
+def _hunks_at(hunks, base_lines, head_lines):
+    """The base side (start, count) of the hunks that hold one of the lines."""
+    out = []
+    for base_start, base_count, head_start, head_count in hunks:
+        if any(base_start <= n < base_start + base_count for n in base_lines) or any(
+            head_start <= n < head_start + head_count for n in head_lines
+        ):
+            out.append((base_start, base_count))
+    return out or [(start, count) for start, count, _, _ in hunks]
+
+
+def _values(statements):
+    return sorted({value for value, _ in statements})
 
 
 def analyze_pull(pull, merge_base, head, repository, cache, registry, addresses, file_paths):
@@ -286,20 +318,30 @@ def analyze_pull(pull, merge_base, head, repository, cache, registry, addresses,
         ]
         old = {(item["from"], item["ref"]) for item in base_dangling}
         result.added_dangling += [d for d in head_dangling if (d["from"], d["ref"]) not in old]
-        base_facts, _ = structure.facts(base_units)
-        head_facts, _ = structure.facts(head_units)
+        base_facts = structure.facts(base_units)
+        head_facts = structure.facts(head_units)
         for written, key in sorted(set(base_facts) | set(head_facts)):
-            was = base_facts.get((written, key), (None, None))[0]
-            now, line = head_facts.get((written, key), (None, None))
-            if was == now:
+            before = base_facts.get((written, key), [])
+            after = head_facts.get((written, key), [])
+            if _values(before) == _values(after):
                 continue
             entity = _entity(registry, written)
             change = result.fact_changes.setdefault(
-                (entity, key), {"values": set(), "evidence": []}
+                (entity, key), {"values": set(), "evidence": [], "hunks": {}}
             )
-            change["values"].add(now)
+            change["values"] |= set(_values(after)) if after else {None}
+            line = after[0][1] if after else None
             where = f"{head}:{path}#L{line}" if line else f"{merge_base}:{path}"
+            was = ", ".join(_values(before)) or None
+            now = ", ".join(_values(after)) or None
             change["evidence"].append((where, was, now))
+            change["hunks"][path] = _hunks_at(
+                entry["hunks"], [n for _, n in before], [n for _, n in after]
+            )
+            if len(_values(after)) > 1:
+                result.split_values.setdefault((entity, key), []).extend(
+                    (f"{head}:{path}#L{n}", value) for value, n in after
+                )
         if kind == "test":
             for unit in structure.touched(head_units, added):
                 for ref in unit["refs"]:
@@ -330,7 +372,7 @@ def pull_findings(analysis, registry, default_links):
         if registry.entity(node):
             entities[node[1]] = ("explicit", [])
     for entity, key in analysis.fact_changes:
-        if entity in registry.index.values():
+        if registry.by_id(entity):
             entities[entity] = ("explicit", [])
     if entities:
         items = [
@@ -382,6 +424,19 @@ def pull_findings(analysis, registry, default_links):
                 missing=dangling["ref"],
             )
         )
+    for (entity, key), stated in sorted(analysis.split_values.items()):
+        values = sorted({value for _, value in stated})
+        out.append(
+            fd.draft(
+                "contradiction",
+                [entity],
+                [number],
+                [fd.evidence(where, "explicit", f"{key}: {value}") for where, value in stated],
+                f"PR #{number} leaves {entity} {key} with {len(values)} values in its head "
+                f"({', '.join(values)}); which one holds depends on the reader.",
+                key=key,
+            )
+        )
     changed_requirements = sorted(
         entity for entity, _ in analysis.fact_changes if entity in registry.requirements
     )
@@ -423,19 +478,26 @@ def semantic_conflicts(analyses, limitations):
     for (entity, key), changes in sorted(index.items(), key=lambda pair: pair[0]):
         if len(changes) < 2:
             continue
-        involved = set()
+        involved, notes = set(), []
         for i, (first, a) in enumerate(changes):
             for second, b in changes[i + 1 :]:
                 if a["values"] == b["values"]:
                     continue
-                if _textual(first, second):
+                if _textual(first, a, second, b):
                     limitations.append(
                         f"PR #{first.number} and PR #{second.number} both change {entity} {key} "
-                        "and their diffs overlap on the same base; git reports this as a merge "
-                        "conflict, so it is not counted as a semantic conflict."
+                        "and the hunks that hold it overlap on the same base; git reports this "
+                        "as a merge conflict, so it is not counted as a semantic conflict."
                     )
                     continue
                 involved |= {first.number, second.number}
+                elsewhere = _overlapping_paths(first, second)
+                if elsewhere:
+                    notes.append(
+                        f"PR #{first.number} and PR #{second.number} also overlap textually in "
+                        f"{', '.join(elsewhere[:5])}; git reports that as a merge conflict, which "
+                        "does not settle these values."
+                    )
         if not involved:
             continue
         items = []
@@ -446,18 +508,31 @@ def semantic_conflicts(analyses, limitations):
         values = {
             n: sorted(str(v) for v in dict(changes)[by_number[n]]["values"]) for n in involved
         }
-        out.append((entity, key, sorted(involved), items, values))
+        out.append((entity, key, sorted(involved), items, values, notes))
     return out
 
 
-def _textual(first, second):
+def _textual(first, a, second, b):
+    """Whether git would conflict on the key itself: the hunks that hold its statements
+    overlap on the same base. An overlap in another file does not count."""
     if first.merge_base != second.merge_base:
         return False
+    return any(
+        git_prs.overlaps(hunks, b["hunks"][path])
+        for path, hunks in a["hunks"].items()
+        if path in b["hunks"]
+    )
+
+
+def _overlapping_paths(first, second):
+    if first.merge_base != second.merge_base:
+        return []
     hunks = {entry["path"]: entry["base"] for entry in first.files}
-    for entry in second.files:
-        if entry["path"] in hunks and git_prs.overlaps(hunks[entry["path"]], entry["base"]):
-            return True
-    return False
+    return sorted(
+        entry["path"]
+        for entry in second.files
+        if entry["path"] in hunks and git_prs.overlaps(hunks[entry["path"]], entry["base"])
+    )
 
 
 # Default-branch findings -----------------------------------------------------------------
@@ -543,7 +618,7 @@ def branch_findings(registry, tree, links, dangling, facts_registry, facts_branc
         out.append(
             fd.draft(
                 "input_missing",
-                [source] if str(source).startswith(("REQ-", "DEC-")) else [],
+                [source] if registry.by_id(str(source)) else [],
                 [],
                 [fd.evidence("extract.json#input_missing", "explicit", note)],
                 f"{ref} is referenced or listed but could not be found.",
@@ -605,7 +680,7 @@ def _explain(session, candidates, titles):
                 {"number": n, "title": titles.get(n, ""), "values": values[n]} for n in numbers
             ],
         }
-        for index, (entity, key, numbers, _, values) in enumerate(candidates, start=1)
+        for index, (entity, key, numbers, _, values, _) in enumerate(candidates, start=1)
     ]
     data = {"documents": [], "entities": [], "conflicts": conflicts}
     output = session.ask(STAGE, EXPLAIN_INSTRUCTIONS, data, OUTPUT_SCHEMA, _stub_explain)
@@ -617,7 +692,7 @@ def _explain(session, candidates, titles):
     }
 
 
-def _pr_record(pull, merge_base=None, analyzed=None, stale=False, reason=None):
+def _pr_record(pull, branch, merge_base=None, analyzed=None, stale=False, reason=None):
     record = {
         "number": pull["number"],
         "head_sha": pull.get("head_sha"),
@@ -629,7 +704,34 @@ def _pr_record(pull, merge_base=None, analyzed=None, stale=False, reason=None):
         record["title"] = pull["title"]
     if reason:
         record["missing"] = reason
+    if "base_ref" in pull:
+        record["base_ref"] = pull["base_ref"]
+        record["base_is_default"] = None if pull["base_ref"] is None else pull["base_ref"] == branch
     return record
+
+
+def _input_missing(number, ref, note, text, missing):
+    prs = [number] if number else []
+    return fd.draft(
+        "input_missing", [], prs, [fd.evidence(ref, "explicit", note)], text, missing=missing
+    )
+
+
+def _note_bases(drafts, records):
+    """A finding of a PR whose base is not the default branch says what that means."""
+    stacked = {r["number"]: r["base_ref"] for r in records if r.get("base_is_default") is False}
+    out = []
+    for item in drafts:
+        mine = [n for n in item["prs"] if n in stacked]
+        if mine:
+            note = "; ".join(f"PR #{n}'s base is {stacked[n]}" for n in mine)
+            text = (
+                f"{item['explanation']} ({note}, not the default branch, so the diff may include "
+                "the parent's changes.)"
+            )
+            item = {**item, "explanation": text[:2000]}
+        out.append(item)
+    return out
 
 
 def analyze(run_dir, context):
@@ -646,7 +748,12 @@ def analyze(run_dir, context):
         raise InputError("the default branch is unknown: pass --default-branch.")
     branch = git_prs.branch_name(branch)
     repository = git_prs.Repository.open(
-        context["root"], owner, name, context["source"], context.get("token")
+        context["root"],
+        owner,
+        name,
+        context["source"],
+        context.get("token"),
+        context.get("host"),
     )
     fetched = repository.fetch_open(branch, [pull["number"] for pull in pulls])
     main_sha = repository.rev_parse(git_prs.main_ref(branch))
@@ -682,27 +789,55 @@ def analyze(run_dir, context):
     )
 
     cache = git_prs.DiffCache(repository, run_dir)
-    pr_records, analyses = [], []
+    pr_records, analyses, incomplete = [], [], False
+    for path in tree.unreadable:
+        incomplete = True
+        drafts.append(
+            _input_missing(
+                None,
+                f"{main_sha}:{path}",
+                "not UTF-8",
+                f"{path} on {branch} is not UTF-8; the values it may hold were not read.",
+                path,
+            )
+        )
     for gap in list_gaps:
         if gap.get("number"):
-            pr_records.append(_pr_record({"number": gap["number"]}, reason=gap["reason"]))
+            pr_records.append(_pr_record({"number": gap["number"]}, branch, reason=gap["reason"]))
             drafts.append(
-                fd.draft(
-                    "input_missing",
-                    [],
-                    [gap["number"]],
-                    [fd.evidence(f"pulls#{gap['number']}", "explicit", gap["reason"])],
+                _input_missing(
+                    gap["number"],
+                    f"pulls#{gap['number']}",
+                    gap["reason"],
                     f"PR #{gap['number']} has no usable head SHA in the PR list.",
-                    missing=f"pull {gap['number']}",
+                    f"pull {gap['number']}",
+                )
+            )
+        else:
+            incomplete = True
+            drafts.append(
+                _input_missing(
+                    None,
+                    f"pulls ({gap['position']})",
+                    gap["reason"],
+                    f"The PR list has an item without a usable PR number ({gap['position']}: "
+                    f"{gap['reason']}); if it is an open PR, it was not analyzed.",
+                    gap["position"],
                 )
             )
     for pull in sorted(pulls, key=lambda item: item["number"]):
         number = pull["number"]
+        if pull.get("base_ref") not in (None, branch):
+            limitations.append(
+                f"PR #{number}: its base is {pull['base_ref']}, not {branch}; it was diffed "
+                f"against its merge base with {branch}, so its parent's changes may be counted "
+                "as its own."
+            )
         if number not in fetched:
             reason = "head_not_fetched" + (
                 "; head repository deleted" if pull["head_repo_missing"] else ""
             )
-            pr_records.append(_pr_record(pull, reason=reason))
+            pr_records.append(_pr_record(pull, branch, reason=reason))
             drafts.append(
                 fd.draft(
                     "input_missing",
@@ -716,7 +851,7 @@ def analyze(run_dir, context):
             continue
         head = repository.rev_parse(git_prs.pull_ref(number))
         if head != pull["head_sha"]:
-            pr_records.append(_pr_record(pull, analyzed=head, stale=True))
+            pr_records.append(_pr_record(pull, branch, analyzed=head, stale=True))
             drafts.append(
                 fd.draft(
                     "stale_sha",
@@ -735,7 +870,7 @@ def analyze(run_dir, context):
             continue
         merge_base = repository.merge_base(main_sha, head)
         if merge_base is None:
-            pr_records.append(_pr_record(pull, analyzed=head, reason="no_merge_base"))
+            pr_records.append(_pr_record(pull, branch, analyzed=head, reason="no_merge_base"))
             drafts.append(
                 fd.draft(
                     "input_missing",
@@ -747,38 +882,66 @@ def analyze(run_dir, context):
                 )
             )
             continue
-        analysis = analyze_pull(
-            pull, merge_base, head, repository, cache, registry, addresses, file_paths
-        )
+        try:
+            analysis = analyze_pull(
+                pull, merge_base, head, repository, cache, registry, addresses, file_paths
+            )
+        except git_prs.DiffTooLarge as error:
+            pr_records.append(_pr_record(pull, branch, merge_base, head, reason="diff_too_large"))
+            drafts.append(
+                _input_missing(
+                    number,
+                    f"pulls#{number}",
+                    str(error),
+                    f"the diff of PR #{number} is over the {git_prs.MAX_DIFF_BYTES}-byte cap; "
+                    "it was not analyzed.",
+                    f"diff {merge_base[:12]}..{pull['head_sha'][:12]}",
+                )
+            )
+            continue
         analyses.append(analysis)
-        pr_records.append(_pr_record(pull, merge_base, head))
-        limitations += [
-            f"PR #{number}: {path} is not UTF-8; not read" for path in analysis.unreadable
-        ]
+        record = _pr_record(pull, branch, merge_base, head)
+        if analysis.unreadable:
+            incomplete = True
+            record["unread_files"] = sorted(analysis.unreadable)
+        pr_records.append(record)
+        for path in sorted(analysis.unreadable):
+            drafts.append(
+                _input_missing(
+                    number,
+                    f"{head}:{path}",
+                    "not UTF-8",
+                    f"PR #{number} changes {path}, which is not UTF-8; the values it may hold "
+                    "were not read, so this PR's conflicts and missing tests may be incomplete.",
+                    path,
+                )
+            )
         drafts += pull_findings(analysis, registry, link_rows)
 
     candidates = semantic_conflicts(analyses, limitations)
     titles = {pull["number"]: pull["title"] for pull in pulls}
     explained = _explain(session, candidates, titles)
-    for index, (entity, key, numbers, items, values) in enumerate(candidates, start=1):
+    for index, (entity, key, numbers, items, values, notes) in enumerate(candidates, start=1):
         listed = "; ".join(f"#{n}: {', '.join(values[n])}" for n in numbers)
         text, by = explained.get(index, (None, "template"))
         text = text or (
-            f"{len(numbers)} PRs set {entity} {key} to different values ({listed}); their diffs "
-            "do not overlap, so git merges them without a conflict and the values disagree."
+            f"{len(numbers)} PRs set {entity} {key} to different values ({listed}); the hunks "
+            "that hold it do not overlap, so git merges them without a conflict and the values "
+            "disagree."
         )
+        text = " ".join([text, *notes])
         drafts.append(
             fd.draft("semantic_conflict", [entity], numbers, items, text, key=key, explained_by=by)
         )
 
-    limitations += [f"{path} on {branch} is not UTF-8; not read" for path in tree.unreadable]
+    drafts = _note_bases(fd.mark_inferred(drafts, registry.inferred), pr_records)
     found = fd.numbered(drafts)
     problems = fd.check(found)
     if problems:
         raise QualityGateError("the findings break their invariants: " + "; ".join(problems[:5]))
     stale = [record["number"] for record in pr_records if record["stale"]]
     unanalyzed = [record["number"] for record in pr_records if record.get("missing")]
-    status = "stale" if stale else ("partial" if unanalyzed else "complete")
+    status = "stale" if stale else ("partial" if unanalyzed or incomplete else "complete")
     head = {"schema_version": records.SCHEMA_VERSION, "run_id": run_id, "created_at": now}
     findings_file = {
         **head,

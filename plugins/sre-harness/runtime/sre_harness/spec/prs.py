@@ -14,8 +14,11 @@
   `diff-cache/<sha256>.diff` and counts what it computed and what it reused. Each PR costs a
   fixed number of git commands plus two blob reads per changed file it can read, so the total
   grows linearly with the number of PRs; pairs of PRs are never diffed against each other.
-- One diff over `MAX_DIFF_BYTES`, a file over `MAX_BLOB_BYTES` or a run's diffs over
-  `MAX_RUN_DIFF_BYTES` stop the stage (exit 1) instead of being cut.
+- One diff over `MAX_DIFF_BYTES` raises `DiffTooLarge`: that PR is not analyzed (the stage
+  records it as `input_missing` and goes on with the others). A file over `MAX_BLOB_BYTES` or
+  a run's diffs over `MAX_RUN_DIFF_BYTES` stop the stage (exit 1) instead of being cut.
+- A diff is read as git writes it: lines end at "\n" only, and a hunk's body is consumed by
+  the line counts in its `@@` header, so nothing inside a changed line is read as a header.
 """
 
 import codecs
@@ -101,12 +104,14 @@ def list_open(transport, limiter, owner, name):
                 f"the open PR list could not be read (page {page}: {reason or 'not_a_list'}); "
                 "nothing was analyzed."
             )
-        for item in data:
+        for position, item in enumerate(data, start=1):
             pull, problem = _pull(item)
             if problem is None:
                 pulls.append(pull)
+            elif pull is None:
+                gaps.append({"reason": problem, "position": f"page {page} item {position}"})
             else:
-                gaps.append({**(pull or {}), "reason": problem})
+                gaps.append({**pull, "reason": problem})
         pages = rest.link_pages(response.headers.get("link"))
         if "next" not in pages:
             return pulls, gaps
@@ -120,6 +125,10 @@ def list_open(transport, limiter, owner, name):
 # The bare repository ----------------------------------------------------------------------
 
 
+class DiffTooLarge(QualityGateError):
+    """One PR's diff is over `MAX_DIFF_BYTES`. That PR is left out; the run goes on."""
+
+
 def _decode(data, what):
     try:
         return data.decode("utf-8")
@@ -130,10 +139,11 @@ def _decode(data, what):
 class Repository:
     """One harness-owned bare repository. Counts the git commands it runs."""
 
-    def __init__(self, git_dir, source, token=None):
+    def __init__(self, git_dir, source, token=None, host=None):
         self.git_dir = git_dir
         self.source = source
         self._token = token
+        self._host = host  # the GitHub host the user named; the guard allows no other
         self.calls = 0
         self._blobs = {}
 
@@ -148,10 +158,10 @@ class Repository:
         return git_dir, marker
 
     @classmethod
-    def open(cls, root, owner, name, source, token=None):
+    def open(cls, root, owner, name, source, token=None, host=None):
         """The cache entry for (repository, fetch source), created on first use."""
         git_dir, marker = cls._names(root, owner, name, source)
-        repository = cls(git_dir, source, token)
+        repository = cls(git_dir, source, token, host)
         if not (git_dir / "HEAD").is_file():
             records.write_json(marker, {"repo": f"{owner}/{name}", "source": source})
             repository.run(["init", "--bare", "--quiet"])
@@ -172,7 +182,9 @@ class Repository:
         """(exit code, stdout). An exit code outside `allowed` stops the stage. `index_file`
         points git at a temporary index instead of the repository's own."""
         self.calls += 1
-        code, out = guard.git(self.git_dir, arguments, token=self._token, index_file=index_file)
+        code, out = guard.git(
+            self.git_dir, arguments, token=self._token, index_file=index_file, host=self._host
+        )
         if code not in allowed:
             raise QualityGateError(f"git {arguments[0]} failed with exit code {code}.")
         return code, out
@@ -213,7 +225,8 @@ class Repository:
         _, out = self.run(
             ["diff", *DIFF_ARGS[:3], "--no-renames", "--name-status", EMPTY_TREE, sha]
         )
-        return [unquote(line.split("\t", 1)[1]) for line in _decode(out, "a path").splitlines()]
+        lines = _decode(out, "a path").split("\n")
+        return [unquote(line.split("\t", 1)[1]) for line in lines if line]
 
     def entry(self, sha, path):
         """(mode, blob sha) of `path` in the commit's tree, or None when it is not a blob.
@@ -299,9 +312,9 @@ class DiffCache:
             if len(data) <= MAX_DIFF_BYTES:
                 paths.write_private(target, data)
         if len(data) > MAX_DIFF_BYTES:
-            raise QualityGateError(
+            raise DiffTooLarge(
                 f"the diff {base[:12]}..{head[:12]} is {len(data)} bytes, over the "
-                f"{MAX_DIFF_BYTES}-byte cap; stopped instead of truncating it."
+                f"{MAX_DIFF_BYTES}-byte cap; not read instead of truncated."
             )
         self.bytes += len(data)
         if self.bytes > MAX_RUN_DIFF_BYTES:
@@ -333,15 +346,32 @@ def _header_path(rest):
 
 
 def parse_diff(text):
-    """[{path, status, base, head}] with the changed line ranges on each side.
+    """[{path, status, base, head, hunks}] with the changed line ranges on each side.
 
     `base` holds (start, count) of every hunk on the merge-base side (count 0 is an insertion
-    after `start`); `head` holds inclusive (start, end) ranges of added lines.
+    after `start`); `head` holds inclusive (start, end) ranges of added lines; `hunks` holds
+    (base start, base count, head start, head count) per hunk.
+
+    Lines end at "\n" only, as git writes them. After an `@@` header the body is read by its
+    counts: its lines are content whatever they contain, never a header or another hunk.
     """
-    files, current = [], None
-    for line in text.splitlines():
+    files, current, old, new = [], None, 0, 0
+    for line in text.split("\n"):
+        if old > 0 or new > 0:
+            tag = line[:1]
+            if tag in (" ", "-", "+", "\\"):
+                old -= tag in (" ", "-")
+                new -= tag in (" ", "+")
+                continue
+            old = new = 0  # a short body: read the line as a header
         if line.startswith("diff --git "):
-            current = {"path": _header_path(line[11:]), "status": "M", "base": [], "head": []}
+            current = {
+                "path": _header_path(line[11:]),
+                "status": "M",
+                "base": [],
+                "head": [],
+                "hunks": [],
+            }
             files.append(current)
         elif current is None:
             continue
@@ -356,8 +386,10 @@ def parse_diff(text):
             start, count = int(hunk.group(1)), int(hunk.group(2) or 1)
             added_start, added = int(hunk.group(3)), int(hunk.group(4) or 1)
             current["base"].append((start, count))
+            current["hunks"].append((start, count, added_start, added))
             if added:
                 current["head"].append((added_start, added_start + added - 1))
+            old, new = count, added
     return files
 
 
