@@ -536,3 +536,68 @@ def regex_search(patterns, texts, *, timeout, env=None):
     ):
         raise QualityGateError("the pattern worker answered in an unexpected shape.")
     return matches
+
+
+# opa: the bundled IaC risk sample only. The policy, the capabilities file and the query are
+# constants; the plan travels on stdin, so nothing from the input reaches argv. The
+# capabilities file lists only the built-ins the policy calls (no http.send, net.lookup_ip_addr
+# or opa.runtime), so a policy that reaches the network or the environment does not compile.
+POLICY_DIR = Path(__file__).resolve().parent.parent / "policies"
+OPA_POLICY = POLICY_DIR / "iac_risk.rego"
+OPA_CAPABILITIES = POLICY_DIR / "iac_risk.capabilities.json"
+OPA_QUERY = "data.sre_harness.iac_risk.result"
+OPA_TIMEOUT = (1, 300)
+OPA_MAX_INPUT_BYTES = 16 * 1024 * 1024
+
+
+class OpaMissing(InputError):
+    reason = "opa_missing"
+
+
+def opa_risk(plan_text, *, timeout, env=None):
+    """Evaluate the bundled risk policy on one plan. Returns (exit code, stdout).
+
+    There is no parameter for a policy, a query or a flag. stderr is never returned or stored.
+    """
+    low, high = OPA_TIMEOUT
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or not low <= timeout <= high:
+        raise BoundaryError(f"refused opa timeout: it must be {low}-{high} seconds.")
+    if not isinstance(plan_text, str):
+        raise BoundaryError("refused opa input: it must be text.")
+    if len(plan_text.encode("utf-8")) > OPA_MAX_INPUT_BYTES:
+        raise QualityGateError(
+            f"the plan is over {OPA_MAX_INPUT_BYTES} bytes; stopped instead of cutting it."
+        )
+    try:
+        executable = _executable("opa")
+    except InputError:
+        raise OpaMissing("opa is not installed or not on PATH.") from None
+    argv = [
+        executable,
+        "eval",
+        "--format",
+        "json",
+        "--strict",
+        "--strict-builtin-errors",
+        "--capabilities",
+        str(OPA_CAPABILITIES),
+        "--data",
+        str(OPA_POLICY),
+        "--stdin-input",
+        OPA_QUERY,
+    ]
+    with tempfile.TemporaryDirectory(prefix="sre-harness-opa-") as cwd:
+        try:
+            result = _run(
+                argv,
+                input=plan_text,
+                env=_base_env(env),
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise QualityGateError(f"opa did not finish within {timeout} seconds.") from None
+    return result.returncode, result.stdout

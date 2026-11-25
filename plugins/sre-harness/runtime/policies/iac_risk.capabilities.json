@@ -1,0 +1,344 @@
+{
+  "builtins": [
+    {
+      "name": "eq",
+      "decl": {
+        "args": [
+          {
+            "type": "any"
+          },
+          {
+            "type": "any"
+          }
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "type": "function"
+      },
+      "infix": "="
+    },
+    {
+      "name": "equal",
+      "categories": [
+        "comparison"
+      ],
+      "decl": {
+        "args": [
+          {
+            "name": "x",
+            "type": "any"
+          },
+          {
+            "name": "y",
+            "type": "any"
+          }
+        ],
+        "result": {
+          "description": "true if `x` is equal to `y`; false otherwise",
+          "name": "result",
+          "type": "boolean"
+        },
+        "type": "function"
+      },
+      "infix": "=="
+    },
+    {
+      "name": "internal.member_2",
+      "decl": {
+        "args": [
+          {
+            "type": "any"
+          },
+          {
+            "type": "any"
+          }
+        ],
+        "result": {
+          "type": "boolean"
+        },
+        "type": "function"
+      },
+      "infix": "in"
+    },
+    {
+      "name": "is_object",
+      "description": "Returns true if the input value is an object",
+      "categories": [
+        "types"
+      ],
+      "decl": {
+        "args": [
+          {
+            "description": "input value",
+            "name": "x",
+            "type": "any"
+          }
+        ],
+        "result": {
+          "description": "`true` if `x` is an object, `false` otherwise.",
+          "name": "result",
+          "type": "boolean"
+        },
+        "type": "function"
+      }
+    },
+    {
+      "name": "is_string",
+      "description": "Returns `true` if the input value is a string.",
+      "categories": [
+        "types"
+      ],
+      "decl": {
+        "args": [
+          {
+            "description": "input value",
+            "name": "x",
+            "type": "any"
+          }
+        ],
+        "result": {
+          "description": "`true` if `x` is a string, `false` otherwise.",
+          "name": "result",
+          "type": "boolean"
+        },
+        "type": "function"
+      }
+    },
+    {
+      "name": "max",
+      "description": "Returns the maximum value in a collection.",
+      "categories": [
+        "aggregates"
+      ],
+      "decl": {
+        "args": [
+          {
+            "description": "the set or array to be searched",
+            "name": "collection",
+            "of": [
+              {
+                "dynamic": {
+                  "type": "any"
+                },
+                "type": "array"
+              },
+              {
+                "of": {
+                  "type": "any"
+                },
+                "type": "set"
+              }
+            ],
+            "type": "any"
+          }
+        ],
+        "result": {
+          "description": "the maximum of all elements",
+          "name": "n",
+          "type": "any"
+        },
+        "type": "function"
+      }
+    },
+    {
+      "name": "neq",
+      "categories": [
+        "comparison"
+      ],
+      "decl": {
+        "args": [
+          {
+            "name": "x",
+            "type": "any"
+          },
+          {
+            "name": "y",
+            "type": "any"
+          }
+        ],
+        "result": {
+          "description": "true if `x` is not equal to `y`; false otherwise",
+          "name": "result",
+          "type": "boolean"
+        },
+        "type": "function"
+      },
+      "infix": "!="
+    },
+    {
+      "name": "object.remove",
+      "description": "Removes specified keys from an object.",
+      "decl": {
+        "args": [
+          {
+            "description": "object to remove keys from",
+            "dynamic": {
+              "key": {
+                "type": "any"
+              },
+              "value": {
+                "type": "any"
+              }
+            },
+            "name": "object",
+            "type": "object"
+          },
+          {
+            "description": "keys to remove from x",
+            "name": "keys",
+            "of": [
+              {
+                "dynamic": {
+                  "type": "any"
+                },
+                "type": "array"
+              },
+              {
+                "dynamic": {
+                  "key": {
+                    "type": "any"
+                  },
+                  "value": {
+                    "type": "any"
+                  }
+                },
+                "type": "object"
+              },
+              {
+                "of": {
+                  "type": "any"
+                },
+                "type": "set"
+              }
+            ],
+            "type": "any"
+          }
+        ],
+        "result": {
+          "description": "result of removing the specified `keys` from `object`",
+          "dynamic": {
+            "key": {
+              "type": "any"
+            },
+            "value": {
+              "type": "any"
+            }
+          },
+          "name": "output",
+          "type": "object"
+        },
+        "type": "function"
+      }
+    },
+    {
+      "name": "or",
+      "description": "Returns the union of two sets.",
+      "categories": [
+        "sets"
+      ],
+      "decl": {
+        "args": [
+          {
+            "name": "x",
+            "of": {
+              "type": "any"
+            },
+            "type": "set"
+          },
+          {
+            "name": "y",
+            "of": {
+              "type": "any"
+            },
+            "type": "set"
+          }
+        ],
+        "result": {
+          "description": "the union of `x` and `y`",
+          "name": "z",
+          "of": {
+            "type": "any"
+          },
+          "type": "set"
+        },
+        "type": "function"
+      },
+      "infix": "|"
+    },
+    {
+      "name": "sort",
+      "description": "Returns a sorted array.",
+      "categories": [
+        "aggregates"
+      ],
+      "decl": {
+        "args": [
+          {
+            "description": "the array or set to be sorted",
+            "name": "collection",
+            "of": [
+              {
+                "dynamic": {
+                  "type": "any"
+                },
+                "type": "array"
+              },
+              {
+                "of": {
+                  "type": "any"
+                },
+                "type": "set"
+              }
+            ],
+            "type": "any"
+          }
+        ],
+        "result": {
+          "description": "the sorted array",
+          "dynamic": {
+            "type": "any"
+          },
+          "name": "n",
+          "type": "array"
+        },
+        "type": "function"
+      }
+    },
+    {
+      "name": "startswith",
+      "description": "Returns true if the search string begins with the base string.",
+      "categories": [
+        "strings"
+      ],
+      "decl": {
+        "args": [
+          {
+            "description": "search string",
+            "name": "search",
+            "type": "string"
+          },
+          {
+            "description": "base string",
+            "name": "base",
+            "type": "string"
+          }
+        ],
+        "result": {
+          "description": "result of the prefix check",
+          "name": "result",
+          "type": "boolean"
+        },
+        "type": "function"
+      }
+    }
+  ],
+  "features": [
+    "keywords_in_refs",
+    "rego_v1",
+    "rego_v2",
+    "rego_v2_import",
+    "template_strings"
+  ],
+  "allow_net": []
+}
