@@ -7,8 +7,14 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
+from examples.synthetic.github_responses import (
+    SPLIT_T1,
+    TIMEOUT_FINDING,
+    _after,
+    evaluation_hunk,
+    evaluation_scenario,
+)
 from examples.synthetic.github_responses import THIRTY_EVALUATION as THIRTY
-from examples.synthetic.github_responses import TIMEOUT_FINDING, evaluation_scenario
 from sre_harness import guard, llm, paths, records
 from sre_harness.review import candidates, evaluate
 from sre_harness.review import split as split_stage
@@ -27,6 +33,47 @@ REPO = Path(__file__).resolve().parents[5]
 V2_SCHEMA = (
     REPO / "plugins/toshipon-mode/skills/autonomous-improvement/schemas/evaluation.schema.json"
 )
+
+
+UNDER_THIRTY = "insufficient evaluation PRs with hunks: 3 < 30 (3 in the split)"
+
+
+def add_prs_without_hunks(fixture, count, start=200):
+    """Evaluation-side PRs with no changed file: nothing to apply a rule to."""
+    for offset in range(count):
+        created = _after(SPLIT_T1, 3000 + 5 * offset)
+        fixture.pull(start + offset, updated_at=_after(created, 1), created_at=created, body="")
+    return fixture
+
+
+def test_prs_without_hunks_do_not_count_towards_thirty(tmp_path, home, clock):
+    # One PR with two hunks and 29 empty PRs used to give every metric a value, interval 0 wide.
+    fixture = evaluation_scenario(("timeout_set",))
+    (pull,) = [pull for pull in fixture.pulls if pull.number == 41]
+    pull.file("src/unflagged.py", evaluation_hunk("unflagged") + "\n     return response")
+    add_prs_without_hunks(fixture, 29)
+    run_id, split_path = generated_run(tmp_path, home, fixture)
+    code, summary = evaluate_cli(home, run_id, split_path)
+    assert code == 0 and summary["status"] == "unevaluable"
+    result = evaluation(home, run_id)
+    assert (result["n_prs"], result["n_prs_with_units"], result["n_units"]) == (30, 1, 2)
+    assert result["unevaluable_reason"] == (
+        "insufficient evaluation PRs with hunks: 1 < 30 (30 in the split)"
+    )
+    for config in result["configs"].values():
+        assert all(metric["value"] is None for metric in config["metrics"].values())
+
+
+def test_the_bootstrap_draws_only_prs_with_hunks(tmp_path, home, clock):
+    plain, plain_split = generated_run(tmp_path, home, evaluation_scenario(THIRTY), name="plain")
+    assert evaluate_cli(home, plain, plain_split)[0] == 0
+    padded_fixture = add_prs_without_hunks(evaluation_scenario(THIRTY), 10)
+    padded, padded_split = generated_run(tmp_path, home, padded_fixture, name="padded")
+    assert evaluate_cli(home, padded, padded_split)[0] == 0
+    first, second = evaluation(home, plain), evaluation(home, padded)
+    assert (second["n_prs"], second["n_prs_with_units"]) == (40, 30)
+    for name in ("baseline", "with_candidates"):
+        assert first["configs"][name] == second["configs"][name]
 
 
 def v2_output_errors(value):
@@ -81,7 +128,8 @@ def test_normal_code_draws_no_finding_and_the_exception_stays_on_the_lesson(thre
 def test_under_thirty_prs_the_result_is_unevaluable(three, home):
     run_id, _, result = three
     assert result["status"] == "unevaluable" and result["n_prs"] == 3
-    assert result["unevaluable_reason"] == "insufficient evaluation PRs: 3 < 30"
+    assert result["unevaluable_reason"] == UNDER_THIRTY
+    assert result["n_prs_with_units"] == 3
     for config in result["configs"].values():
         assert all(metric["value"] is None for metric in config["metrics"].values())
     # The candidates stay proposed: tried, too few PRs, nothing to approve on.
@@ -92,7 +140,7 @@ def test_under_thirty_prs_the_result_is_unevaluable(three, home):
         assert record["evaluation_ref"] is None and record["criteria_hash"] is None
         last = record["history"][-1]
         assert (last["by"], last["to"]) == ("evaluate", "proposed")
-        assert last["note"] == "unevaluable: insufficient evaluation PRs: 3 < 30"
+        assert last["note"] == f"unevaluable: {UNDER_THIRTY}"
 
 
 def test_an_evaluated_candidate_goes_back_to_proposed_when_a_rerun_is_unevaluable(
@@ -115,6 +163,7 @@ def test_thirty_synthetic_prs_give_numbers(tmp_path, home, clock):
     run_id, split_path = generated_run(tmp_path, home, evaluation_scenario(THIRTY))
     code, summary = evaluate_cli(home, run_id, split_path)
     assert code == 0 and summary["status"] == "evaluated" and summary["n_prs"] == 30
+    assert summary["n_prs_with_units"] == 30
     result = evaluation(home, run_id)
     config = result["configs"]["with_candidates"]
     assert config["counts"] == {
@@ -207,7 +256,7 @@ def test_evaluator_output_fits_the_improvement_harness_when_unevaluable(three, h
     assert code == 0
     assert v2_output_errors(output) == []
     assert output["metrics"] == {}
-    assert output["unevaluable"] == "insufficient evaluation PRs: 3 < 30"
+    assert output["unevaluable"] == UNDER_THIRTY
 
 
 def test_evaluator_output_fits_the_improvement_harness_when_evaluated(tmp_path, home, clock):
