@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "autonomous-improvement/ledger.schema.json",
+  "title": "One record of an append-only, hash-chained ledger (product run or harness evolution)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "run_id", "seq", "created_at", "type", "data", "prev", "hash"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "seq": { "type": "integer", "minimum": 1 },
+    "created_at": { "type": "string", "minLength": 1 },
+    "type": {
+      "enum": [
+        "run_started", "criteria_changed", "baseline_recorded", "hypothesis_registered",
+        "experiment_started", "decision_recorded", "audit_recorded", "finding_resolved",
+        "unblocked", "run_stopped",
+        "suite_approved", "evo_hypothesis_registered", "candidate_frozen", "comparison_recorded",
+        "evo_audit_recorded", "evo_finding_resolved", "proposal_created", "proposal_approved", "evo_closed"
+      ]
+    },
+    "data": { "type": "object" },
+    "prev": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "hypothesis_registered" } } },
+      "then": {
+        "properties": {
+          "data": { "required": ["hypothesis_id", "statement", "rationale", "falsification", "family"] }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "decision_recorded" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "required": [
+              "hypothesis_id", "verdict", "reasons", "measurements", "evaluation", "guard", "diff",
+              "commands", "repro", "cost", "duration_seconds", "reverted"
+            ],
+            "properties": {
+              "verdict": { "enum": ["adopt", "reject", "needs_human", "unevaluable"] },
+              "evaluation": { "$ref": "evaluation.schema.json#/$defs/stored" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["criteria_changed", "unblocked", "suite_approved", "proposal_approved"] } } },
+      "then": {
+        "properties": {
+          "data": {
+            "required": ["approval"],
+            "properties": {
+              "approval": {
+                "type": "object",
+                "required": ["reviewer", "reason"],
+                "properties": {
+                  "reviewer": { "type": "string", "minLength": 1 },
+                  "reason": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "evo_hypothesis_registered" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "required": ["hypothesis_id", "pattern", "cause", "statement", "falsification", "evidence"],
+            "properties": {
+              "cause": { "enum": ["skill", "instruction", "tool", "evaluation", "input", "environment"] },
+              "evidence": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

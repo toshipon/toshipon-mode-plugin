@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "autonomous-improvement/spec.schema.json",
+  "title": "Run spec: objective, constraints, evaluation, acceptance and budget, fixed before the first experiment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "objective", "constraints", "evaluation", "acceptance", "budget"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,40}$" },
+    "objective": { "type": "string", "minLength": 1 },
+    "constraints": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "data_classification": { "enum": ["public", "synthetic", "internal", "confidential"] },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "metrics"],
+      "properties": {
+        "command": { "$ref": "#/$defs/argv" },
+        "timeout_seconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 86400 },
+        "repeats": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "files": {
+          "description": "Evaluator files, relative to the project. Their content is frozen into the criteria hash and an experiment may not touch them.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "noise_k": { "type": "number", "minimum": 0 },
+        "metrics": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/metric" } }
+      }
+    },
+    "guard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "command"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" },
+              "command": { "$ref": "#/$defs/argv" },
+              "timeout_seconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 86400 }
+            }
+          }
+        },
+        "protected_paths": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targets"],
+      "properties": {
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["metric", "op", "value"],
+            "properties": {
+              "metric": { "type": "string", "minLength": 1 },
+              "op": { "enum": ["<=", "<", ">=", ">", "=="] },
+              "value": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_iterations"],
+      "properties": {
+        "max_iterations": { "type": "integer", "minimum": 1 },
+        "max_seconds": { "type": "number", "exclusiveMinimum": 0 },
+        "max_cost": { "type": "number", "exclusiveMinimum": 0 },
+        "max_consecutive_unevaluable": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "plateau": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "same_failure": { "type": "integer", "minimum": 2 },
+        "no_improvement": { "type": "integer", "minimum": 1 },
+        "max_audits_without_adopt": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "on_completion": { "type": "boolean" } }
+    },
+    "duplicates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "similarity": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 } }
+    }
+  },
+  "$defs": {
+    "argv": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "role", "kind"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" },
+        "role": { "enum": ["required", "scored"] },
+        "kind": { "enum": ["deterministic", "llm"] },
+        "description": { "type": "string" },
+        "op": { "enum": ["<=", "<", ">=", ">", "=="] },
+        "threshold": { "type": "number" },
+        "direction": { "enum": ["higher", "lower"] },
+        "min_effect": {
+          "description": "Smallest relative change (0.02 = 2%) that counts as an effect. With a reference of 0 it is read as an absolute change.",
+          "type": "number",
+          "minimum": 0
+        },
+        "noise_floor": {
+          "description": "Known absolute measurement error.",
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "role": { "const": "required" } } },
+          "then": { "required": ["op", "threshold"] }
+        },
+        {
+          "if": { "properties": { "role": { "const": "scored" } } },
+          "then": { "required": ["direction"] }
+        }
+      ]
+    },
+    "hypothesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statement", "rationale", "falsification", "family"],
+      "properties": {
+        "statement": { "type": "string", "minLength": 1 },
+        "rationale": { "type": "string", "minLength": 1 },
+        "falsification": {
+          "description": "The observation that would show the hypothesis is wrong.",
+          "type": "string",
+          "minLength": 1
+        },
+        "family": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$" },
+        "evidence": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "new_evidence": { "type": "string" }
+      }
+    }
+  }
+}

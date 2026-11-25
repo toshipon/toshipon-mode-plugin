@@ -1,0 +1,7 @@
+{
+  "statement": "cache_entries を 25 に増やすと throughput が 40 を超える",
+  "rationale": "evaluate.py は throughput を cache_entries の 2 倍として測る",
+  "falsification": "cache_entries を 25 にしても throughput が 5% 以上増えない、または tests が落ちる",
+  "family": "cache-size",
+  "evidence": ["settings.json: cache_entries=10"]
+}

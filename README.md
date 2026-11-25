@@ -45,6 +45,8 @@ APM は plugin を skill・command・agent に分解して配置するので、`
 
 ### Skills
 
+- `autonomous-improvement`: 成果物を、仮説・実行・評価・採否の台帳を残しながら反復改善します。採否は決定論的な評価で決め、停滞と完了時には独立監査にかけます。使い方は [専用 README](plugins/toshipon-mode/skills/autonomous-improvement/README.md) を参照してください。
+- `harness-evolution`: 実行記録に繰り返し現れる失敗から Skill・指示・評価の改善候補を作り、現行版と同じ条件で比較して、ローカルのレビュー用提案にします。公開とマージは人の承認が要ります。
 - `nfr-design`: 議事録・Confluence・現行 AWS 構成から前提と要件を整理し、矛盾・承認・変更の影響を追跡します。承認済み要件から非機能要件定義書と AWS 方式設計書を生成、検証します。使い方は [専用 README](plugins/toshipon-mode/skills/nfr-design/README.md) を参照してください。
 - `toshipon-mode`: 非自明なタスクの標準エントリポイント。playbook を逐語コピーして todolist 化し、principles を適用し、証拠で検証してから完了を宣言します。
 - `how`: サブエージェントでコードベースを調査し、サブシステムの動作を解説します。
@@ -77,6 +79,8 @@ APM は plugin を skill・command・agent に分解して配置するので、`
 ### Agent
 
 - `nfr-auditor`: 非機能要件と AWS 方式設計の独立監査 agent です。
+- `improvement-auditor`: 改善ループと Harness 改善候補を、別のコンテキストで監査する agent です。読むだけで、合格条件も成果物も変更しません。
+- `harness-evolution`: 実行記録の失敗パターンから改善仮説を立て、隔離 worktree に候補版を作る agent です。
 - `architect`: システムアーキテクト agent です。実装前に並列で設計を探索する用途に使います。
 
 ### Scripts
@@ -99,7 +103,15 @@ APM でインストールした場合は、公開されている取得元があ�
 
 ## 注意: skill の二重ロードについて
 
-このプラグインが収録している skill と同名の skill が、すでに `~/.claude/skills/` 配下にインストールされているマシンでは、両方が二重にロードされます。該当する skill 名（`nfr-design`、`toshipon-mode`、`how`、`why`、`unslop`、`technical-writing`、`show-me-your-work`、`arena`、`interrogate`、`blast-radius`、`web-perf`、`tdd`、`commit-rules`、`verification-loop`、`create-verification-skill`、`create-formal-verification-skill`、`maintain-formal-verification-skill`、`e2e-replay`、`typescript-best-practices`、`japanese-writing`、`japanese-tech-writing`）が個人設定側にもある場合は、どちらか片方を削除してください。
+このプラグインが収録している skill と同名の skill が、すでに `~/.claude/skills/` 配下にインストールされているマシンでは、両方が二重にロードされます。該当する skill 名（`autonomous-improvement`、`harness-evolution`、`nfr-design`、`toshipon-mode`、`how`、`why`、`unslop`、`technical-writing`、`show-me-your-work`、`arena`、`interrogate`、`blast-radius`、`web-perf`、`tdd`、`commit-rules`、`verification-loop`、`create-verification-skill`、`create-formal-verification-skill`、`maintain-formal-verification-skill`、`e2e-replay`、`typescript-best-practices`、`japanese-writing`、`japanese-tech-writing`）が個人設定側にもある場合は、どちらか片方を削除してください。
+
+## 成果物と Harness の継続改善
+
+`/toshipon-mode:autonomous-improvement` は、目的・制約・ベースライン・合格条件・予算を最初に固定し、仮説の登録、実験、測定、採否を追記専用の台帳に残しながら成果物を改善します。回帰した実験は自分の変更だけを戻し、利用者の未コミット変更には触れません。同じ失敗が 3 回、または採用の無い試行が 3 回続くと独立監査を求め、未達を合格として終了できません。
+
+`/toshipon-mode:harness-evolution` は、その実行記録から繰り返す失敗を拾い、Skill や指示の候補版を隔離 worktree に作って、現行版と train / holdout のケースで比較します。事前に決めた改善条件と独立監査を通った候補だけが、差分・測定結果・リスク・ロールバック手順を含むローカルの提案になります。評価 suite の変更、提案の承認、公開は人が記録します。
+
+実行記録は repository の外（既定 `~/.local/state/ai-harness/`）に置きます。Claude Code の hook と launchd による自動起動は設定例と手順だけを同梱し、既定では何も有効になりません。Python 3.10 以上と `jsonschema` が必要です。手順、設定、停止方法、制限は [autonomous-improvement README](plugins/toshipon-mode/skills/autonomous-improvement/README.md) にあります。
 
 ## 非機能要件と AWS 方式設計
 
