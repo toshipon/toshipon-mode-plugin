@@ -1,0 +1,10 @@
+{
+  "session_id": "synthetic-session-a",
+  "project_path": "/synthetic/path/that/must/not/be/read",
+  "first_prompt": "SYNTHETIC FREE TEXT that the adapter must never read",
+  "summary": "SYNTHETIC FREE TEXT that the adapter must never read",
+  "duration_minutes": 42,
+  "user_interruptions": 2,
+  "tool_errors": 3,
+  "tool_error_categories": { "command_failed": 2, "file_not_found": 1 }
+}

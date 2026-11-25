@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "insight-discovery/insight-config.schema.json",
+  "title": "Insight Discovery settings at <state home>/insight/config.json. Every key is optional. Queue, cost budget, retention, llm_policy and the schedule stay in the foundation's config.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "sources": {
+      "description": "What a daily run ingests. Nothing is read that is not listed here.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["adapter"],
+        "properties": {
+          "adapter": { "enum": ["claude_insights", "manual", "ledger", "review"] },
+          "path": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_evidence_per_cycle": { "type": "integer", "minimum": 1, "maximum": 500 },
+        "max_llm_calls_per_run": { "type": "integer", "minimum": 0 },
+        "max_seconds_per_run": { "type": "number", "minimum": 0 },
+        "max_file_bytes": { "type": "integer", "minimum": 1 },
+        "max_files_per_source": { "type": "integer", "minimum": 1 },
+        "max_text_chars": { "type": "integer", "minimum": 1, "maximum": 4000 }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min_evidence": { "type": "integer", "minimum": 2 },
+        "min_distinct_contexts": { "type": "integer", "minimum": 2 },
+        "similarity": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "max_candidates": { "description": "Never more than 3 are presented.", "type": "integer", "minimum": 1, "maximum": 3 }
+      }
+    },
+    "agents": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "analyst": { "$ref": "../autonomous-improvement/config.schema.json#/$defs/adapter" },
+        "auditor": { "$ref": "../autonomous-improvement/config.schema.json#/$defs/adapter" }
+      }
+    },
+    "search": {
+      "description": "External search of prior art. It only happens by hand, one approval per search.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed_domains": { "description": "When not empty, a recorded source must be on one of these hosts.", "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9.-]+$" } },
+        "max_queries": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "max_query_chars": { "type": "integer", "minimum": 10, "maximum": 200 }
+      }
+    }
+  }
+}

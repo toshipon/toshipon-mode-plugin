@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:review-adjudication",
+  "title": "review-adjudication",
+  "description": "A person's verdicts on findings no reviewer raised, the input of `review evaluate --adjudication`. One entry per hunk and kind: valid (the finding is right, the hunk becomes human_missed_valid) or invalid (a false positive the person confirmed).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "split_sha256", "entries"],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "split_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+    "entries": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["hunk_sha256", "kind", "verdict", "reviewer"],
+        "properties": {
+          "hunk_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+          "kind": {
+            "description": "The rule's id: IC-<n> of this run or RG-<n> of the registry.",
+            "type": "string",
+            "pattern": "^(?:IC|RG)-[0-9]{4,}$"
+          },
+          "verdict": { "enum": ["valid", "invalid"] },
+          "reviewer": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "note": { "type": "string", "maxLength": 2000 }
+        }
+      }
+    }
+  }
+}
