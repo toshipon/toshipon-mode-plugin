@@ -25,3 +25,9 @@ def test_a_refused_location_exits_3(tmp_path, capsys):
 
 def test_version_is_not_an_error(capsys):
     assert cli.main(["--version"]) == 0
+
+
+def test_the_review_group_has_collect_and_normalize(capsys):
+    assert cli.main(["review", "collect", "--help"]) == 0
+    assert "--auth-env" in capsys.readouterr().out
+    assert cli.main(["review", "normalize", "--help"]) == 0
