@@ -58,6 +58,7 @@ __all__ = [
     "Queue",
     "Refusal",
     "SCHEMAS",
+    "SKILL_ROOT",
     "STAGE_ROLES",
     "agents",
     "append_log",

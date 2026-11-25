@@ -55,6 +55,14 @@ def scrub(text, terms):
     return text, flags
 
 
+def _clean(value, terms):
+    """The identifier, or None when it is not one or names something that must not be kept."""
+    name = identifier(value)
+    if name and (find_secrets(name) or any(term in name.lower() for term in terms)):
+        return None
+    return name
+
+
 def build(raw, adapter, terms, limits, now):
     """(evidence, flags) or (None, [reason]). Nothing is cut short or filled in to make it fit."""
     kind, flags = raw.get("kind"), []
@@ -63,9 +71,16 @@ def build(raw, adapter, terms, limits, now):
     classification = raw.get("classification", "internal")
     if classification not in agents.CLASSIFICATIONS:
         return None, ["excluded_bad_classification"]
-    task = identifier(raw.get("task_key"))
+    # Identifiers are stored and shown too: one that carries a forbidden term or a secret
+    # is replaced, exactly like one that is not a plain identifier.
+    task, label, domain = (
+        _clean(raw.get(key), terms) for key in ("task_key", "label", "domain_tag")
+    )
+    if any(raw.get(key) and not value for key, value in (("label", label), ("domain_tag", domain))):
+        flags.append("replaced_identifier")
     if not task:
-        task, flags = f"task:{sha256(str(raw.get('task_key')))[:12]}", ["hashed_task_key"]
+        task = f"task:{sha256(str(raw.get('task_key')))[:12]}"
+        flags.append("hashed_task_key")
     text = raw.get("text")
     if text is not None:
         text = str(text).strip()
@@ -76,7 +91,7 @@ def build(raw, adapter, terms, limits, now):
         text, masked = scrub(text, terms)
         flags += masked
     unit = raw.get("unit")
-    identity = canonical([kind, task, raw.get("label") or kind, text or "", unit or ""])
+    identity = canonical([kind, task, label or kind, text or "", unit or ""])
     evidence = {
         "schema_version": 1,
         "id": f"EV-{sha256(identity)[:12]}",
@@ -87,8 +102,8 @@ def build(raw, adapter, terms, limits, now):
             "retrieved_at": iso(now),
         },
         "kind": kind,
-        "label": identifier(raw.get("label")) or kind,
-        "context": {"task_key": task, "domain_tag": identifier(raw.get("domain_tag")) or task},
+        "label": label or kind,
+        "context": {"task_key": task, "domain_tag": domain or task},
         "counts": {
             "occurrences": raw.get("occurrences", 1),
             "sessions": raw.get("sessions", 1),

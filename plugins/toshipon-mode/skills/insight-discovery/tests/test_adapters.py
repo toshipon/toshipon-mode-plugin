@@ -85,6 +85,17 @@ class Secrets(InsightCase):
         self.assertEqual(stats["masked_deny_term"], 1)
         self.assertNotIn("acme", st.ledger_path(self.home).read_text(encoding="utf-8").lower())
 
+    def test_deny_terms_in_identifiers_are_replaced(self):
+        deny = self.write("deny.txt", "acme\n")
+        self.configure_foundation(privacy={"deny_terms_file": str(deny)})
+        note = "## acme-billing | acme-finance\n- [retry:acme-rerun] 再実行した\n"
+        stats = self.ingest("manual", self.write("n.md", note))
+        self.assertEqual((stats["hashed_task_key"], stats["replaced_identifier"]), (1, 1))
+        (item,) = self.state()["evidence"].values()
+        self.assertEqual(item["label"], "retry")
+        self.assertEqual(item["context"]["domain_tag"], item["context"]["task_key"])
+        self.assertNotIn("acme", st.ledger_path(self.home).read_text(encoding="utf-8").lower())
+
     def test_configured_but_unreadable_deny_file_is_refused(self):
         self.configure_foundation(privacy={"deny_terms_file": str(self.tmp / "absent.txt")})
         with self.assertRaises(Refusal):

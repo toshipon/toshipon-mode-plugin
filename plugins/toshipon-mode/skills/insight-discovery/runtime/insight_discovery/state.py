@@ -12,7 +12,6 @@ from .foundation import SCHEMAS, append_log, read_json, read_log, validate
 LOG_ID = "insight"
 STAGES = ("observe", "structure", "hypothesize", "audit", "assess")
 INDEPENDENT = ("separate_process", "subagent")
-MAX_PRESENTED = 3
 DEFAULT_CONFIG = {
     "schema_version": 1,
     "sources": [{"adapter": "ledger"}, {"adapter": "claude_insights"}],
@@ -28,7 +27,7 @@ DEFAULT_CONFIG = {
         "min_evidence": 2,
         "min_distinct_contexts": 2,
         "similarity": 0.85,
-        "max_candidates": MAX_PRESENTED,
+        "max_candidates": 3,
     },
     "agents": {},
     "search": {"allowed_domains": [], "max_queries": 5, "max_query_chars": 120},

@@ -12,6 +12,7 @@
       "kind": "friction",
       "task_key": "editor-setup",
       "domain_tag": "tooling",
+      "label": "slow-completion",
       "text": "エディタの補完候補が出るまで数秒かかる",
       "occurrences": 4
     }

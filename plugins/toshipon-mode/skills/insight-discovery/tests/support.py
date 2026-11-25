@@ -11,13 +11,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runtime"))
 
-from insight_discovery import evidence, foundation, signals  # noqa: E402, I001
-from ai_harness import record as hook_record  # noqa: E402  (importable once foundation is loaded)
+sys.path.insert(0, str(ROOT / "examples" / "synthetic"))
+sys.path.insert(0, str(ROOT.parent / "autonomous-improvement" / "runtime"))
+
+import stub_agent  # noqa: E402
+
+from ai_harness import record as hook_record  # noqa: E402
 from ai_harness import store  # noqa: E402
+from insight_discovery import (  # noqa: E402
+    checks,
+    cli,
+    decisions,
+    evidence,
+    foundation,
+    pipeline,
+    ranking,
+    report,
+    routing,
+    signals,
+)
 from insight_discovery import state as st  # noqa: E402
 from insight_discovery.foundation import GateFailed, HarnessError, Refusal  # noqa: E402
 
 __all__ = [
+    "Backend",
     "EXAMPLES",
     "GateFailed",
     "HarnessError",
@@ -25,11 +42,19 @@ __all__ = [
     "ROOT",
     "Refusal",
     "evidence",
+    "decisions",
+    "checks",
+    "cli",
     "foundation",
     "hook_record",
+    "pipeline",
+    "ranking",
+    "report",
+    "routing",
     "signals",
     "st",
     "store",
+    "stub_agent",
 ]
 
 EXAMPLES = ROOT / "examples" / "synthetic"
@@ -76,3 +101,38 @@ class InsightCase(unittest.TestCase):
 
     def state(self):
         return st.load(self.home)
+
+
+class Backend:
+    """Stands in for the model: the stub's answers, optionally altered by a test, with every call kept."""
+
+    def __init__(self, **alter):
+        self.calls, self.alter = [], alter
+
+    def __call__(self, stage, body, classification):
+        self.calls.append((stage, body, classification))
+        output = stub_agent.answer(body)
+        if stage in self.alter:
+            output = self.alter[stage](output, body) or output
+        return output
+
+    def stages(self):
+        return [stage for stage, _, _ in self.calls]
+
+
+class LoopCase(InsightCase):
+    """Synthetic records as the only source, and a scripted backend instead of a model."""
+
+    def setUp(self):
+        super().setUp()
+        self.configure(sources=[{"adapter": "manual", "path": str(EXAMPLES / "records")}])
+
+    def run_daily(self, backend=None, **options):
+        backend = backend or Backend()
+        summary = pipeline.run_daily(
+            self.home, self.config, self.settings, self.tick(), invoke=backend, **options
+        )
+        return summary, backend
+
+    def candidates(self):
+        return self.state()["candidates"]
