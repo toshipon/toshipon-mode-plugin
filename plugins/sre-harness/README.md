@@ -173,7 +173,7 @@ python -m coverage run -m pytest && python -m coverage report
 
 ## Specification Consistency: 取り込みと抽出
 
-仕様に関わる文書を共通の形（schema `spec-document`）に正規化し（`spec ingest`）、そこから Decision Registry と Requirement Registry を作ります（`spec extract`）。台帳（`decisions.json`、`requirements.json`）が正本で、文書はその view です。トレースと open PR の分析は後続の段で足します。段ごとの入力・出力・失敗は [spec-consistency の SKILL.md](skills/spec-consistency/SKILL.md) にあります。
+仕様に関わる文書を共通の形（schema `spec-document`）に正規化し（`spec ingest`）、そこから Decision Registry と Requirement Registry を作ります（`spec extract`）。台帳（`decisions.json`、`requirements.json`）が正本で、文書はその view です。トレースと open PR の分析（`spec analyze`）と報告（`spec report`）は下の「Specification Consistency: トレースと open PR の分析」にあります。段ごとの入力・出力・失敗は [spec-consistency の SKILL.md](skills/spec-consistency/SKILL.md) にあります。
 
 ```bash
 # 取り込み: ファイルだけなら認証は要りません
@@ -260,3 +260,92 @@ GitHub は `gh api --method GET` で `repos/{owner}/{repo}/pulls/{number}` と `
 - 実際の Slack と Confluence の export の全形式。読むのは上に書いた形だけで、Slack の channel ディレクトリ全体や Confluence の HTML export には対応していません。
 - 実際の Claude CLI に対する `spec extract`。テストは `guard._run` を差し替えた経路と stub だけを通ります。推定の精度は何も確かめていません。
 - 曖昧さの語彙の網羅性。表にある語の検出をテストしているだけで、誤検知率と見落とし率は測っていません。
+- 実際の GitHub に対する `spec analyze`。テストは合成リポジトリ（ローカルの path から fetch）と fixture の PR 一覧だけを通ります。`https://<host>/<owner>/<repo>.git` からトークン付きで `refs/pull/<n>/head` を fetch できるか、fork が削除された PR の ref がどう見えるかは実機で確かめていません。
+- 指摘の精度。合成の 25 件で期待した件数が出ることを確かめただけで、実際のリポジトリでの誤検知率と見落とし率は測っていません。構造化記述（下の形）を書いていない文書の変更は `impact` にしかなりません。
+- `--backend claude` の推定リンクと説明文の質。テストは stub と `guard._run` を差し替えた経路だけを通ります。
+
+## Specification Consistency: トレースと open PR の分析
+
+`spec analyze` は、run の台帳、default branch、全 open PR を読み、`trace.json`（trace-link）と `findings.json` を作ります。`spec report` はそれを `impact-report.json` と `impact-report.md` にまとめます。どちらも合否や状態を LLM に決めさせません。
+
+```bash
+# 台帳を作った run に対して（ingest と extract の後）
+"${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" spec analyze --run run-... --prs open \
+  --repo example-org/demo --auth-env SPEC_READ_TOKEN
+# => {"status": "complete" | "partial" | "stale", "findings": {...}, "git_calls": N, "diffs": {...}}
+"${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" spec report --run run-...
+# v2 の evaluator adapter として使うとき（標準出力に evaluation.schema.json の $defs/output）
+"${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" spec report --run run-... --format evaluator-output
+```
+
+合成データで試すときは `runtime/` で `python -m examples.synthetic.spec_repo <dir>` を実行すると、25 件の open PR を持つ合成リポジトリ（`--git-source` に渡す）と PR 一覧の fixture（`--fixture` に渡す）ができます。`--fixture` と `--git-source <絶対 path>` は組で使い、通信しません。`--auth-env` のときは `https://<host>/<owner>/<repo>.git` から fetch し、トークンは guard が環境変数経由の設定で渡します。`--auth-env` の変数が空なら何も起動せずに exit 2 です。open PR が無いときは `--default-branch` が要ります（PR 一覧の `base.repo.default_branch` から読むため）。
+
+### bare リポジトリの場所と消し方
+
+PR の内容は harness 専用の bare リポジトリから読みます。利用者の checkout には触らず、worktree も作らず、PR の内容をディスクに展開しません（blob は `git cat-file blob <sha>:<path>` でメモリに読みます）。
+
+| 項目 | 場所 |
+|---|---|
+| bare リポジトリ | `<ルート>/cache/git/<owner>--<repo>--<hash>.git/`（`<hash>` はリポジトリ名と fetch 元から作る 12 桁） |
+| fetch する ref | default branch を `refs/sre-harness/heads/<branch>` に、open PR の `refs/pull/<n>/head` を `refs/sre-harness/pull/<n>` に。それ以外は fetch しません。partial clone は使いません |
+| diff | run の `diff-cache/<sha256>.diff`。`(merge base, head SHA)` ごとに 1 回だけ計算します |
+
+キャッシュは run をまたいで使います。消すときは `<ルート>/cache/git/` を削除してください（次の実行で作り直します）。git の実行回数は PR 1 件につき固定の数（`rev-parse`、`merge-base`、`diff`）と、読める変更ファイル 1 件につき 2 回（merge base 側と head 側の blob）で、PR の組の総当たりはしません。`analyze.json` の `git_calls` と `diffs` に実測が残ります。1 つの diff が 2 MiB、1 ファイルが 2 MiB、run の diff の合計が 64 MiB を超えたら、切り詰めずに exit 1 で止まります。
+
+### 読むファイルと構造化記述の形
+
+path で種類を決め、それ以外のファイルは読みません。
+
+| 種類 | path | 読むもの |
+|---|---|---|
+| Markdown | `*.md` | 見出しで section に分けます。見出しが ID（`REQ-0001`、`ADR-0006`、`DEC-0001`）で始まる section とその下位の section はその entity を定義し、front-matter に `id: ADR-0006` がある文書は全体がその決定です。それ以外の section は文書自体（`design`）です。section 中の ID は参照です |
+| IaC | `*.tf` | トップレベルの `resource "type" "name" {`、`data "type" "name" {`、`module "name" {` の block を 1 単位にし、resource アドレス（`aws_s3_bucket.logs`）を node にします。直前のコメント行と block 内のコメントの ID は参照です |
+| テスト | `tests/`、`test/`、`spec/` の下、`test_*.py`、`*_test.py`、`*_test.go`、`*.test.[jt]s` など | `def test_...`、`func Test...`、`it("...")`、`test("...")` を 1 単位にします。テスト名の中の ID（`test_req_0001_...`、`req-0001`）は「そのテストが要求を検証する」参照です |
+
+PR が要求の値を変えたことは、次の構造化記述だけから読みます。
+
+- Markdown の `- key: value` の箇条書き（`key` は小文字・数字・`_`）。見出しを辿って最も近い「ID を 1 つだけ含む見出し」の entity の値です（例: `## REQ-0001: ログの保持期間` や `## アーカイブの保持（REQ-0001）` の下の `- retention_days: 400`）。ID を含む見出しが無ければ front-matter の `id` の entity、それも無ければ値として読みません。`given` / `when` / `then` / `and` は値にしません。
+- front-matter の `id` 以外のキー（`title`、`status`、`date`、`supersedes`、`approvers`、`systems`、`components`、`environments`、`attendees`、`tags` を除く）。
+- IaC の block のトップレベルの属性で、行末のコメントに ID があるもの（`retention_days = 400 # REQ-0001`）。block の上の `# REQ-0001` は参照（トレース）だけで、値にはなりません。
+
+同じ entity の同じキーは、Markdown と IaC で同じ名前にしたときだけ同じものとして扱います。読めない変更（文の書き換え、表の値、入れ子の属性）は `impact` に留め、推測で `semantic_conflict` にしません。
+
+### トレース（explicit と inferred）
+
+trace-link は Decision → Requirement → Design → IaC → Test のつながりで、下の層から上の層へ向きます（`refines`、`implements`、`verifies`、`depends_on`、`conflicts_with`）。
+
+- **explicit** は規則で取れたものだけです。台帳の `decision_refs`、ファイル中の ID 参照（front-matter の `supersedes` は `conflicts_with`）、Markdown の section 中に書かれた resource アドレスやリポジトリの path（`infra/logs.tf`）、テスト名の中の ID です。
+- **inferred** は `--backend` を付けたときだけ作ります。ID を 1 つも書いていない default branch の Markdown を backend に渡し、提案のうち、引用が文書の部分文字列で、宛先が台帳にあるものだけを `confidence: low` で残します（除いたものは `analyze.json` の `rejected_links`）。stub は「決定か要求のタイトル（7 文字以上）を含み、その ID を含まない文書」をつなぐだけで、LLM の品質を何も示しません。
+- 報告では explicit と inferred を別の列に出します。inferred の根拠だけで成り立つ指摘は `basis: inferred` になり、重大度は `medium` を上限にします。`critical` と `high` の唯一の根拠にはなりません（builder、`findings.check`、impact-report の schema の 3 か所で検査しています）。
+
+### 指摘の種類
+
+重大度は種類で固定です（`runtime/sre_harness/spec/findings.py`）。
+
+| kind | 重大度 | 規則 |
+|---|---|---|
+| `semantic_conflict` | critical | 2 つ以上の open PR が、同じ entity の同じ構造化キーを互いに違う値にする。候補は (entity, key) の索引から決定論的に出します（PR の組の総当たりはしません）。同じ merge base の上で diff の hunk が重なるか隣り合う組は git が merge で衝突として示すので数えず、`limitations` に書きます。同じ値にする PR 同士は競合しません。backend は説明文だけを書きます |
+| `contradiction` | high | default branch のファイルの値が台帳の値（台帳の元の section の構造化記述）と違う。台帳に値が無いときはファイル同士で値が違う |
+| `superseded_dependency` | high | superseded な決定に依存する要求・文書・IaC・テスト（決定から決定への参照は除く）。PR では、PR が新しく足した参照だけを数えます |
+| `missing_test` | high | PR が要求の構造化記述を変えたのに、その要求の ID を名前に持つテストを PR が変えていない（explicit なトレースだけで判定） |
+| `stale_sha` | high | PR 一覧の head SHA と fetch した `refs/pull/<n>/head` が違う（一覧と fetch の間に head が動いた）。その PR は分析せず、run は `stale` で exit 1。他の PR の分析は出します |
+| `not_reflected` | medium | approved で有効な決定か explicit な要求の ID を default branch のどのファイルも書いていない、または台帳の構造化記述のキーがどのファイルにも無い |
+| `ambiguous_requirement` | medium | 台帳の要求に `ambiguity` がある（規則の検出は explicit、LLM の検出は inferred） |
+| `input_missing` | medium | 台帳に無い ID への参照、extract の `input_missing`、head を fetch できなかった PR（fork の削除など。run は `partial` で exit 1） |
+| `impact` | info | PR が変えた単位からトレースを辿って届く決定と要求 |
+
+### 報告
+
+`impact-report.json`（schema `impact-report`）は `run_id`、`generated_at`、`criteria_hash`（規則の版、重大度の表、inferred の上限、台帳の hash）、`default_branch{name, sha, moved_since_analysis}`、`prs[{number, head_sha, merge_base, analyzed_head_sha, stale}]`、`findings[]`、`limitations[]` を持ちます。`patches` と `audit` は後続の段が埋めます。`moved_since_analysis` は `spec report` が fetch しないので常に false です。
+
+`impact-report.md` に載せる外部入力（PR タイトル、文書の引用、ファイルの値、説明文）は、表のセルではリンク・画像・HTML・`|`・バッククォートの記法をエスケープし、`://` を文字参照にします。引用と説明文は、本文中のバッククォートより長い fence のコードブロックに入れます。findings.json の `status` が `stale` か `partial` なら `spec report` も exit 1 です。
+
+`--format evaluator-output` は toshipon-mode の Autonomous Improvement Harness v2 の `evaluation.schema.json` の `$defs/output` の形で、種類ごとの件数（`findings_<kind>`）、`findings_total`、`findings_inferred`、`prs_total`、`prs_stale`、`prs_unanalyzed` と、指摘ごとの evidence（`impact-report.json#FD-0001`）を出します。分析できた PR が 0 件なら `unevaluable` を付けます。
+
+### Claude に送るデータ（spec analyze）
+
+| 送信先 | 段 | 送るもの |
+|---|---|---|
+| Anthropic（Claude CLI 経由） | `analyze --backend claude` | ID を書いていない default branch の Markdown の全文と path、台帳の決定と要求の ID とタイトル。意味的競合の候補があるときは、entity、キー、PR 番号、PR タイトル、値 |
+
+`--backend` を付けなければ何も送らず、説明文は harness の定型文です。送る前の検査、予算、`llm-calls.jsonl` の記録は extract と同じです（`stage` は `analyze`）。
