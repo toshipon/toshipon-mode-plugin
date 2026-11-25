@@ -131,3 +131,4 @@ python -m coverage run -m pytest && python -m coverage report
 - APM での配置。launcher は自分の位置から `runtime/` を解決します。APM が plugin を分解して置く構成では動かない可能性があります。Claude Code の `/plugin` での導入を対象にしています。
 - git に環境変数経由でトークンを渡して private リポジトリを fetch できるか。合成データのテストはローカルの fetch だけを通ります。
 - 実際の GitHub に対する `review collect`。テストは合成応答と、`gh` の起動を差し替えた経路だけを通ります。`gh api graphql -i` の出力形式、secondary limit の応答（403 / 429 と `retry-after`）、fine-grained PAT で `isResolved` を読めるかは実機で確かめていません。
+- `--host` に GitHub Enterprise Server を指定したときの認証。harness は `gh` に `GH_TOKEN` だけを渡します。`gh` は GHES の host では `GH_ENTERPRISE_TOKEN` を読むため、そのままでは認証されない可能性があります。GHES では実機で確かめていません。
