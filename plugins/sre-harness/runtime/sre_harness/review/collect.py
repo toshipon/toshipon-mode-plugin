@@ -12,9 +12,12 @@ from typing import Optional
 from .. import paths, records
 from ..errors import BoundaryError, QualityGateError
 from ..github import graphql
-from ..github.rest import failure_reason, fetch, link_pages
+from ..github.rest import ResponseTooLarge, failure_reason, fetch, link_pages
 
 PER_PAGE = 100
+# Tried in order when a page is larger than the response cap. Each size divides the one before
+# it, so the offset of the first unread item maps to a whole page number at the smaller size.
+PAGE_SIZES = (100, 50, 25, 5, 1)
 MAX_PAGES = 10000  # per listing; a next link beyond it is treated as unusable
 MAX_RUN_BYTES = 256 * 1024 * 1024
 PULL_ENDPOINTS = (
@@ -29,6 +32,14 @@ LISTING_QUERY = {"state": "all", "sort": "updated", "direction": "desc"}
 
 class _RunTooLarge(QualityGateError):
     reason = "run_too_large"
+
+
+def _smaller_page_size(size):
+    """The next size in PAGE_SIZES that divides `size`, or None when `size` is already 1."""
+    for candidate in PAGE_SIZES:
+        if candidate < size and size % candidate == 0:
+            return candidate
+    return None
 
 
 class Collector:
@@ -98,16 +109,27 @@ class Collector:
     def rest_pages(self, endpoint, number=None, base_query=None):
         """Yield each page's items. A failed page is recorded; later pages are still read when
         an earlier `rel="last"` says they exist."""
-        page, last = 1, None
+        page, last, size = 1, None, PER_PAGE
         while True:
-            query = {**(base_query or {}), "per_page": PER_PAGE, "page": page}
+            query = {**(base_query or {}), "per_page": size, "page": page}
             request = {"kind": "rest", "endpoint": endpoint, "page": page}
+            if size != PER_PAGE:
+                request["per_page"] = size
             if number is not None:
                 request["number"] = number
             values = self._values(number)
-            response = fetch(
-                self.limiter, request, lambda: self.transport.rest(endpoint, values, query)
-            )
+            try:
+                response = fetch(
+                    self.limiter, request, lambda: self.transport.rest(endpoint, values, query)
+                )
+            except ResponseTooLarge:
+                smaller = _smaller_page_size(size)
+                if smaller is None:
+                    raise
+                page = (page - 1) * size // smaller + 1
+                last = None if last is None else last * size // smaller
+                size = smaller
+                continue
             links = link_pages(response.headers.get("link"))
             items = self._items(request, response)
             if items is None:

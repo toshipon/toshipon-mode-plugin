@@ -164,6 +164,45 @@ def test_an_oversized_response_stops_the_run_as_partial(tmp_path, home, clock, m
     assert code == 1 and summary["stopped"] == "response_too_large"
 
 
+def test_an_oversized_listing_page_is_read_again_in_smaller_pages(
+    tmp_path, home, clock, monkeypatch
+):
+    fixture = GitHubFixture()
+    for number in range(1, 151):
+        # Newest first: PR 1 is updated last. PR 120 sits in the second page of 100.
+        moment = f"2026-01-20T{(150 - number) // 60:02d}:{(150 - number) % 60:02d}:00Z"
+        body = "x" * 40_000 if number == 120 else "Synthetic."
+        fixture.pull(number, updated_at=moment, body=body)
+    directory = fixture.write(tmp_path / "fx")
+    monkeypatch.setattr("sre_harness.github.fixture.MAX_RESPONSE_BYTES", 60_000)
+    code, summary = collect_fixture(directory, home)
+    assert code == 0 and summary["status"] == "complete"
+    _, record = collected(home, summary)
+    assert records.violations("collect", record) == []
+    assert record["pulls"] == list(range(1, 151))  # nothing skipped, nothing read twice
+    listing = [
+        (page["request"]["page"], page["request"].get("per_page", collect.PER_PAGE))
+        for page in record["pages"]
+        if page["request"].get("endpoint") == "pulls"
+    ]
+    assert listing[0] == (1, 100)
+    assert all(size < 100 for _, size in listing[1:])
+
+
+def test_a_single_item_over_the_cap_still_stops_the_run(tmp_path, home, clock, monkeypatch):
+    fixture = GitHubFixture()
+    fixture.pull(1, body="x" * 40_000)
+    directory = fixture.write(tmp_path / "fx")
+    monkeypatch.setattr("sre_harness.github.fixture.MAX_RESPONSE_BYTES", 20_000)
+    code, summary = collect_fixture(directory, home)
+    assert code == 1 and summary["stopped"] == "response_too_large" and summary["pulls"] == 0
+
+
+@pytest.mark.parametrize(("size", "smaller"), [(100, 50), (50, 25), (25, 5), (5, 1), (1, None)])
+def test_page_sizes_shrink_to_divisors(size, smaller):
+    assert collect._smaller_page_size(size) == smaller
+
+
 def test_an_empty_token_variable_starts_nothing(home, monkeypatch, tmp_path):
     started = []
     monkeypatch.setattr(guard, "_run", lambda *a, **k: started.append(a))
@@ -232,9 +271,16 @@ def test_bad_input_is_exit_2(home, extra):
 
 
 def rewrite(directory, prefix, text):
-    """Replace the first stored answer whose request key starts with `prefix`."""
+    """Replace the first stored answer whose request key starts with `prefix`. A REST key must
+    be the one at PER_PAGE: the fixture also answers the smaller sizes collect falls back to."""
     index = json.loads((directory / "index.json").read_text())
-    key = next(key for key in index["responses"] if key.startswith(prefix))
+
+    def at_per_page(key):
+        pairs = key.partition("?")[2].split("&")
+        sizes = [pair for pair in pairs if pair.startswith("per_page=")]
+        return not sizes or sizes == [f"per_page={collect.PER_PAGE}"]
+
+    key = next(key for key in index["responses"] if key.startswith(prefix) and at_per_page(key))
     (directory / index["responses"][key][0]).write_text(text)
 
 

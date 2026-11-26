@@ -12,7 +12,7 @@ argument-hint: "--repo OWNER/NAME --since <UTC> --until <UTC> --auth-env <変数
 
 | 段 | コマンド | 入力 | 出力 | 失敗時 | 権限 |
 |---|---|---|---|---|---|
-| 収集 | `review collect --repo o/r --since <UTC> --until <UTC> --auth-env NAME [--host H] [--max-wait 秒]` | GitHub REST（GET）と同梱の GraphQL query | 新しい run の `raw/`（ページ単位、名前は harness が決める）、`collect.json` | 欠落ページ・待機上限の超過・応答が 2 MiB 超は `partial` と記録して exit 1。`NAME` の変数が空なら通信せず exit 2。guard が拒否した値は exit 3 | GitHub 読み取り |
+| 収集 | `review collect --repo o/r --since <UTC> --until <UTC> --auth-env NAME [--host H] [--max-wait 秒]` | GitHub REST（GET）と同梱の GraphQL query | 新しい run の `raw/`（ページ単位、名前は harness が決める）、`collect.json` | 欠落ページ・待機上限の超過は `partial` と記録して exit 1。応答が 2 MiB を超えたら `per_page` を下げて読み直し、1 件で 2 MiB を超えるときは `partial` で exit 1。`NAME` の変数が空なら通信せず exit 2。guard が拒否した値は exit 3 | GitHub 読み取り |
 | 収集（合成） | `review collect ... --fixture <dir>` | 合成応答のディレクトリ | 同上 | 同上。`--auth-env` とは同時に使えない | ローカル読み取り |
 | 正規化 | `review normalize --run <run_id>` | `collect.json` と `raw/` | `threads.jsonl`（schema `review-thread`）、`rejected.jsonl` | schema 違反は理由付きで `rejected.jsonl` へ。raw が collect 後に変わっていたら exit 2 | ローカル |
 | 修正の対応付け（analyze の前処理） | `review analyze` の最初に自動で実行 | `threads.jsonl`、`raw/` の commit 一覧と変更ファイル | `threads-with-fix.jsonl`（inline thread に `fix` を付けたもの） | 候補が複数なら `ambiguous`、到達できない commit は `not_found` と `missing` の `fix.before`。通信しない | ローカル |
