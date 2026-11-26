@@ -1,6 +1,6 @@
 ---
 name: harness-evolution
-description: 実行記録に繰り返し現れる失敗から、Skill・指示・ツール・評価の改善仮説を立て、現行版を固定して隔離 worktree の候補版と同じ条件で比較する。事前に決めた改善条件と独立監査を通った候補だけを、ローカルのレビュー用提案にする。公開とマージは人の承認が要る。Use when asked to improve a skill, prompt or harness from recorded failures, to compare a candidate harness against the current one, or to review an evolution proposal.
+description: 繰り返す失敗の記録から Skill・指示・ツール・評価の候補版を作り、現行版と同じ条件で比べてローカルの提案にする。Use when asked to improve a skill or harness from recorded failures, or to review an evolution proposal.
 argument-hint: "[EH-NNNN | P-NNNN]"
 ---
 

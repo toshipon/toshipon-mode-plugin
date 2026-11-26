@@ -1,6 +1,6 @@
 ---
 name: autonomous-improvement
-description: 成果物（コード・設計書・IaC・運用手順）を、仮説・実行・評価・採否の台帳を残しながら反復改善する。目的・制約・ベースライン・合格条件・予算を最初に固定し、採否は決定論的な評価で決め、停滞と完了時には独立監査にかける。Use when asked to keep improving an artifact against a measurable goal, to run an improvement loop with a hypothesis ledger, or to resume one.
+description: 成果物を、仮説・実行・評価・採否の台帳を残しながら測定できる目標まで反復改善する。Use when asked to keep improving an artifact against a measurable goal, or to resume an improvement run.
 argument-hint: "[run id | 対象プロジェクトのパス]"
 ---
 

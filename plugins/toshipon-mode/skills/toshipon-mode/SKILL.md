@@ -25,6 +25,9 @@ description: 非自明なタスクの標準エントリポイント。playbook �
 - ユーザーへの返信を含むあらゆる prose surface → **unslop** skill。返信は **Writing the reply** に従って書く。
 - ドキュメント・RFC・readme・PR 説明・commit メッセージ → 構成と文の規律には **unslop** に加えて **technical-writing** skill を使う。commit の形は `${CLAUDE_PLUGIN_ROOT}/skills/commit-rules/SKILL.md` に従う。
 - 議事録・Confluence・現行構成の文脈から非機能要件と設計のブレを検出する、または非機能要件定義書・AWS 方式設計書の生成と検証 → **nfr-design** skill。既存の Doc workspace を使い、要件の snapshot と設計 JSON を Schema・Python 評価器・独立監査で検証する。通常の Doc playbooks は維持し、文書の反復で `loop-engineering` のマージ・デプロイは起動しない。
+- 測定できる目標に向けて成果物（コード・設計書・IaC・運用手順）を反復改善する、またはその改善を再開する → **autonomous-improvement** skill。仮説・実験・採否を同梱の台帳に残し、採否は決定論的な評価で決める。マージからデプロイと計測まで閉じるループは `loop-engineering` を使う。
+- 同じ失敗やレビュー指摘が実行記録に繰り返し出ていて、成果物ではなく skill・指示・ツール・評価の側を直したい → **harness-evolution** skill。候補版を隔離 worktree で現行版と同じ条件で比べ、ローカルの提案までにとどめる。1 回の訂正を構造に落とすだけなら `/toshipon-mode:correct` を使う。
+- 繰り返す摩擦・やり直し・失敗から「何を直すか」ではなく「何を問うか」を探す、または研究課題の候補を見直す → **insight-discovery** skill。既存の手法で足りる候補は autonomous-improvement か harness-evolution に渡す。
 - 要求定義・設計書・仕様書などの成果物ドキュメントを、Confluence の記事、Slack の議論、規制文書（FISC、US-SOX、SOC1 など）、既存システムから起こす → Doc playbooks（Doc discovery、Doc question loop、Doc author）。ドキュメント作業の証拠は出典である。台帳と札の規約は [`references/doc-workspace.md`](references/doc-workspace.md) に従い、出典のない事実は書かずに質問票に起こす。規制の条項番号や統制 ID を記憶から書かない。
 - commit 前 → diff の prose とコメントに **unslop** をかけ、次に `/verification-loop`。
 - 変更の影響範囲の評価 → **blast-radius** skill。
