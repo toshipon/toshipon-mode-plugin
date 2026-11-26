@@ -554,3 +554,24 @@ def inline_comments(directory, number):
         if thread["kind"] == "inline_thread" and thread["pr"]["number"] == number
     ]
     return thread["comments"]
+
+
+def _bare_thread(number, body):
+    return {
+        "id": f"T-{number}",
+        "pr": {"number": number},
+        "kind": "inline_thread",
+        "thread": {"path": "a.md"},
+        "comments": [{"id": number, "body": body}],
+    }
+
+
+def test_a_pr_over_the_batch_cap_is_left_out_whole_and_recorded(monkeypatch):
+    monkeypatch.setattr(analyze, "MAX_BATCH_BYTES", 2000)
+    threads = [_bare_thread(1, "short"), _bare_thread(2, "x" * 5000), _bare_thread(3, "short")]
+    oversized = []
+    out = analyze.batches(threads, {}, "o/r", oversized)
+    assert [pull["number"] for batch in out for pull in batch["pull_requests"]] == [1, 3]
+    assert [item["id"] for batch in out for item in batch["threads"]] == ["T-1", "T-3"]
+    assert [(row["pr"], row["threads"]) for row in oversized] == [(2, 1)]
+    assert oversized[0]["bytes"] > 2000

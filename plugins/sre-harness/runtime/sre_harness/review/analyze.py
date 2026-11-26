@@ -195,8 +195,12 @@ def _pull_data(number, pull, threads):
     return {"number": number, "body": pull["body"], "files": files}
 
 
-def batches(threads, contexts, repo):
-    """Whole PRs per batch, in PR order, each under MAX_BATCH_BYTES. Nothing is cut."""
+def batches(threads, contexts, repo, oversized=None):
+    """Whole PRs per batch, in PR order, each under MAX_BATCH_BYTES. Nothing is cut.
+
+    A PR that alone is over the cap is left out whole, never truncated, and appended to
+    `oversized` as {"pr", "threads", "bytes"} so the run records what it did not read.
+    """
     by_pull = {}
     for thread in threads:
         by_pull.setdefault(thread["pr"]["number"], []).append(thread)
@@ -206,10 +210,9 @@ def batches(threads, contexts, repo):
         items = [_thread_data(thread) for thread in by_pull[number]]
         cost = len(records.canonical({"p": pull, "t": items}).encode("utf-8"))
         if cost > MAX_BATCH_BYTES:
-            raise QualityGateError(
-                f"PR {number}'s threads and patches are {cost} bytes, over the {MAX_BATCH_BYTES}-"
-                "byte batch cap; stopped instead of truncating them."
-            )
+            if oversized is not None:
+                oversized.append({"pr": number, "threads": len(items), "bytes": cost})
+            continue
         if current is None or size + cost > MAX_BATCH_BYTES:
             current, size = {"repository": repo, "pull_requests": [], "threads": []}, 0
             out.append(current)
@@ -452,7 +455,8 @@ def analyze(run_dir, session, split=None):
 
     repo = threads[0]["repo"] if threads else None
     lessons, rejected, kept, ignored, call_ids, drafts = [], [], [], [], [], 0
-    for data in batches(linked, contexts, repo):
+    oversized = []
+    for data in batches(linked, contexts, repo, oversized):
         output = session.ask(STAGE, INSTRUCTIONS, data, OUTPUT_SCHEMA, stub_analysis)
         call_ids.append(session.last_call_id)
         by_id = {thread["id"]: thread for thread in linked}
@@ -493,6 +497,7 @@ def analyze(run_dir, session, split=None):
         "drafts": drafts,
         "lessons": len(lessons),
         "rejected": len(rejected),
+        "oversized_prs": len(oversized),
     }
     detail = {
         **summary,
@@ -503,6 +508,7 @@ def analyze(run_dir, session, split=None):
         "ignored_oppositions": ignored,
         "split_sha256": None if split is None else split["sha256"],
         "split_left_out": left_out,
+        "oversized": oversized,
     }
     records.write_json(paths.child(run_dir, "analyze.json"), detail)
     if drafts and not lessons:
