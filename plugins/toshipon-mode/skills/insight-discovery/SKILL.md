@@ -1,6 +1,6 @@
 ---
 name: insight-discovery
-description: 日々の作業に残った摩擦・やり直し・失敗・気づきから、業務をまたぐ共通構造を探し、反証可能な仮説と最小実験を付けた研究課題の候補を最大 3 件出す。観測と解釈を分け、証拠 ID を付け、独立監査を通し、新規性は調べた範囲でしか述べない。該当なしも正常な結果とする。Use when asked to find research questions or new problem framings from recurring friction, to review this week's insight candidates, or to pick one experiment to run.
+description: 作業に残った摩擦・やり直し・失敗から、業務をまたぐ共通構造と、反証可能な研究課題の候補を最大 3 件出す。Use when asked to find research questions from recurring friction, or to review insight candidates.
 argument-hint: "[next | 候補 ID]"
 ---
 
