@@ -34,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sre_harness.github import fixture as transport
-from sre_harness.review.collect import LISTING_QUERY, PER_PAGE
+from sre_harness.review.collect import LISTING_QUERY, PAGE_SIZES, PER_PAGE
 
 NOW = 1767225600  # 2026-01-01T00:00:00Z, the clock tests start from
 MISSING = object()
@@ -397,8 +397,8 @@ class GitHubFixture:
             links.append(f'<https://{self.link_host}/{target}?{text}>; rel="{rel}"')
         return ", ".join(links)
 
-    def _pages(self, items):
-        size = max(1, self.page_size)
+    def _pages(self, items, size):
+        size = max(1, size)
         pages = [items[start : start + size] for start in range(0, len(items), size)] or [[]]
         for index in range(1, len(pages)):
             pages[index] = (
@@ -411,14 +411,23 @@ class GitHubFixture:
         if number is not None:
             values["number"] = number
         path = transport.rest_key(endpoint, values, {})
-        pages = self._pages([_drop_missing(item) for item in items])
+        items = [_drop_missing(item) for item in items]
+        for per_page in PAGE_SIZES:
+            self._rest_pages(files, endpoint, number, items, query, values, path, per_page)
+
+    def _rest_pages(self, files, endpoint, number, items, query, values, path, per_page):
+        """One listing at one `per_page`. `fail()` and `limit()` apply at PER_PAGE only."""
+        pages = self._pages(items, min(self.page_size, per_page))
         for page, chunk in enumerate(pages, start=1):
-            request = {**(query or {}), "per_page": PER_PAGE, "page": page}
+            request = {**(query or {}), "per_page": per_page, "page": page}
             key = transport.rest_key(endpoint, values, request)
             extra = {}
-            link = self._link(path, {**(query or {}), "per_page": PER_PAGE}, page, len(pages))
+            link = self._link(path, {**(query or {}), "per_page": per_page}, page, len(pages))
             if link:
                 extra["Link"] = link
+            if per_page != PER_PAGE:
+                files[key] = [(200, self._headers(extra=extra), chunk)]
+                continue
             answers = []
             limit = self._limits.get((endpoint, number, page))
             if limit is not None:

@@ -116,7 +116,7 @@ $H iac validate --plan "$D/iac/approver_is_implementer/plan.json" \
 
 | group / stage | 入力 | 出力（run の中） | LLM | 失敗時の主な exit code | 権限 |
 |---|---|---|---|---|---|
-| `review collect` | GitHub REST（GET）と同梱の GraphQL、または `--fixture` | `raw/`、`collect.json` | なし | 欠落ページ・待機上限・応答の上限超えは `partial` で 1。認証の変数が空なら通信せず 2 | GitHub 読み取り |
+| `review collect` | GitHub REST（GET）と同梱の GraphQL、または `--fixture` | `raw/`、`collect.json` | なし | 欠落ページ・待機上限・1 件で上限を超える応答は `partial` で 1。認証の変数が空なら通信せず 2 | GitHub 読み取り |
 | `review normalize` | `collect.json`、`raw/` | `threads.jsonl`、`rejected.jsonl` | なし | raw が collect 後に変わっていたら 2 | ローカル |
 | `review split` | `collect.json`、`threads.jsonl`、`raw/` | `split.json` | なし | 引数の誤りは 2 | ローカル |
 | `review analyze` | `threads.jsonl`、`raw/`、`--split` | `threads-with-fix.jsonl`、`lessons.jsonl`、`analyze.json` | 必須 | 全 lesson が検査で除かれたら 1。禁止語・秘密情報の形で 3 | `claude` は Anthropic へ送信 |
@@ -331,7 +331,7 @@ export REVIEW_READ_TOKEN="$(gh auth token)"   # gh auth login 済みのトーク
 - `collect` は PR を更新日時の新しい順に読み（`pulls?state=all&sort=updated&direction=desc`）、`--since` より古い PR が現れたページで止めます。Search API は使いません。`--until` より新しい PR は読み飛ばします。
 - ページ送りは 1 ページずつです。`Link` header からは `rel="next"` と `rel="last"` の page 番号だけを取り出し、次のリクエストは許可リストの雛形から組み立てます。サーバーが返した URL を `gh` に渡しません。
 - rate limit: `X-RateLimit-Remaining: 0` なら `X-RateLimit-Reset` まで、403 / 429 の secondary limit は `retry-after`（無ければ 60 秒）だけ待ちます。待機の合計が `--max-wait`（既定 900 秒）を超えると、待たずに止めて `partial` にします。
-- 途中のページが 404 などで読めないときは `collect.json` の `missing` に記録して続け（先に `rel="last"` が分かっていれば後続のページも読みます）、最後に `partial`、exit 1 で終わります。1 応答が 2 MiB を超えたら切り詰めずに止めます。
+- 途中のページが 404 などで読めないときは `collect.json` の `missing` に記録して続け（先に `rel="last"` が分かっていれば後続のページも読みます）、最後に `partial`、exit 1 で終わります。1 応答が 2 MiB を超えたら、`per_page` を 100、50、25、5、1 の順に下げて同じ位置から読み直します。1 件でも 2 MiB を超えるときは、切り詰めずに止めます。
 - `--fixture <dir>` は合成応答を読み、ネットワークも `gh` も使いません。`--auth-env` とは同時に指定できません。合成応答は `runtime/examples/synthetic/github_responses.py` が作ります（`cd runtime && python -m examples.synthetic.github_responses <出力先> [--scenario default|evaluation]`。`default` は PR 3 件、`evaluation` は評価まで通る PR 16 件で、`t1` も出力します）。
 - `normalize` は `raw/` から `threads.jsonl`（`runtime/schemas/review-thread.schema.json`）と `rejected.jsonl` を作ります。kind は `inline_thread`、`review_summary`、`issue_comment` です。REST と GraphQL の両方から来た同じコメントや、ページ境界で重複したコメントは `node_id` で 1 件にします。削除済みユーザーは `author_type: ghost` です。取得元が返さなかったフィールド（`isResolved`、fork 削除で null になった `head.repo` など）は既定値で埋めず、`missing` に名前を並べます。
 
