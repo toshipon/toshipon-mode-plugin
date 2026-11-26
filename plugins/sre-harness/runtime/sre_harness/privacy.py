@@ -20,14 +20,27 @@ _SECRET_SHAPES = {
     "google_key": r"AIza[0-9A-Za-z_-]{35}",
     "slack_token": r"xox[abprs]-[A-Za-z0-9-]{10,}",
     "jwt": r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
-    "url_credentials": r"(?i)\b[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s/@]+@",
+    "url_credentials": r"(?i)\b[a-z][a-z0-9+.-]*://[^\s/:@]+:(?P<password>[^\s/@]+)@",
 }
 _SECRETS = {name: re.compile(pattern) for name, pattern in _SECRET_SHAPES.items()}
+
+# A URL password that is only a template slot is not a credential: `${DB_PASSWORD}`, `$TOKEN`,
+# `<PAT>`, `{{ token }}`, a printf verb such as `%s`, or a run of `*`. IaC and docs write
+# connection strings this way, and refusing them would stop every run over such a repository.
+_PLACEHOLDER = re.compile(
+    r"\$\{[^{}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|<[^<>]+>|\{\{[^{}]*\}\}|%[A-Za-z]|\*+"
+)
+
+
+def _has_secret(name, pattern, text):
+    if name != "url_credentials":
+        return pattern.search(text) is not None
+    return any(not _PLACEHOLDER.fullmatch(match["password"]) for match in pattern.finditer(text))
 
 
 def find_secrets(text):
     """Names of the secret shapes present in text, in a stable order."""
-    return [name for name, pattern in _SECRETS.items() if pattern.search(text)]
+    return [name for name, pattern in _SECRETS.items() if _has_secret(name, pattern, text)]
 
 
 def load_deny_terms(path):

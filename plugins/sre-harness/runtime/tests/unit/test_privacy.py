@@ -33,6 +33,27 @@ def test_secret_shapes_are_named():
     assert privacy.find_secrets("max_tokens = 4000") == []
 
 
+@pytest.mark.parametrize(
+    "password",
+    ["${DB_PASSWORD}", "$TOKEN", "<PAT>", "{{token}}", "%s", "***"],
+)
+def test_a_url_password_that_is_only_a_template_slot_is_not_a_secret(password):
+    assert privacy.find_secrets(f"mysql://app:{password}@db.example:3306/x") == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https://user:hunter2@example.com/x",
+        "https://user:${A}x@example.com/x",
+        "https://user:pre$TOKEN@example.com/x",
+        "https://u:<PAT>@a.example https://u:hunter2@b.example",
+    ],
+)
+def test_a_url_password_with_literal_text_is_still_a_secret(text):
+    assert privacy.find_secrets(text) == ["url_credentials"]
+
+
 def test_an_indented_comment_is_still_a_comment(tmp_path):
     path = tmp_path / "deny-terms.txt"
     path.write_text("  # customers\n\t# more\nExampleCorp\n")
