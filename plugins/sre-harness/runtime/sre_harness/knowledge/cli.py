@@ -5,6 +5,7 @@ for the task its task file names."""
 
 import argparse
 import json
+import platform
 import re
 import sys
 
@@ -43,8 +44,10 @@ def _status(args, env, out):
         "index": "absent",
         "generation": 0,
         "schema_version": store.SCHEMA_VERSION,
+        "python_version": platform.python_version(),
         "sqlite_version": store.sqlite_version(),
         "fts5": store.fts5_available(),
+        "extension_loading": store.extension_loading(),
         "updated_at": None,
         "sources": [],
         "records": {},
@@ -472,7 +475,9 @@ def register(groups):
     )
     stages = knowledge.add_subparsers(dest="stage", required=True)
 
-    status = stages.add_parser("status", help="generation, SQLite and FTS5, sources, counts")
+    status = stages.add_parser(
+        "status", help="generation, Python, SQLite, FTS5 and extension loading, sources, counts"
+    )
     status.set_defaults(handler=_status)
 
     update = stages.add_parser("update", help="read a source into the index (one transaction)")

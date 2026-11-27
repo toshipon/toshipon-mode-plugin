@@ -162,6 +162,28 @@ def fts5_available():
         connection.close()
 
 
+def _probe_connection():
+    return sqlite3.connect(":memory:")
+
+
+def extension_loading():
+    """Whether this Python's sqlite3 can load SQLite extensions: the connection has
+    `enable_load_extension` and it can be switched on (and off again). Nothing is loaded. The
+    index does not load any extension; `knowledge status` reports this for whoever wants one."""
+    connection = _probe_connection()
+    try:
+        enable = getattr(connection, "enable_load_extension", None)
+        if enable is None:
+            return False
+        enable(True)
+        enable(False)
+        return True
+    except sqlite3.Error:
+        return False
+    finally:
+        connection.close()
+
+
 def require_fts5():
     """There is no other ranking to fall back to: without FTS5 the index is not built."""
     if not fts5_available():
