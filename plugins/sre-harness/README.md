@@ -132,10 +132,12 @@ $H iac validate --plan "$D/iac/approver_is_implementer/plan.json" \
 | `spec check-patch` | `patches/<PT-id>.*`、今の PR 一覧と head | 標準出力だけ | なし | head が動いた、patch の書き換えは 3。`git apply --cached --check` が通らなければ 1 | GitHub 読み取り、一時 index |
 | `iac validate` | plan、証跡ディレクトリ、delivery の記録 | `transition-check.json`、`risk.json` | なし | 契約違反は 1。入力が読めないなら run を作らず 2 | ローカルの読み取り。opa は同梱 policy だけ |
 | `runs list` | 保存先 | 標準出力だけ | なし | 保存先が git の作業ツリーの中なら 3 | ローカル |
-| `knowledge update` | `--source file --input <JSON>`、`knowledge/config.json` | `<ルート>/knowledge/index.sqlite3`（run は作りません。`--dry-run` は何も書きません） | なし | 設定が無い、置換の循環、FTS5 が無いは 2。別の writer が動いていれば何も書かずに 1 | ローカル |
+| `knowledge update` | `--source file --input <JSON>` か `--source review-registry`（`<ルート>/registry/` を読むだけ）、`knowledge/config.json` | `<ルート>/knowledge/index.sqlite3`（run は作りません。`--dry-run` は索引を書きません） | なし | 設定が無い、置換の循環、FTS5 が無い、`review-registry` に `--input` を付けたは 2。別の writer が動いていれば何も書かずに 1 | ローカル。registry は読むだけ |
 | `knowledge status` | 索引 | 標準出力だけ（generation、SQLite と FTS5、ソースの cursor、status 別の件数） | なし | 索引の schema version が違えば 2 | ローカル |
 | `knowledge search` | 索引、`knowledge/config.json`、`--principal`（必須）と scope・facet・query・予算 | 標準出力（`knowledge-search-result` の JSON）。`--task` を付けたときだけ `<ルート>/knowledge/tasks/<hash>.jsonl` に追記します | なし | 必須が予算に入らない（`mandatory_overflow`）、索引が今の設定に追随していない（`stale_index`）、タスク累計を超える（`task_budget_exhausted`）は 1。principal が不明か設定が無いと 3。索引が無い、引数の誤りは 2 | ローカル（読み取りだけ） |
 | `knowledge fetch` | 索引、`knowledge/config.json`、`--principal` と `--id`（必須）、レコードの出典（registry の artifact、run の `documents.jsonl`、bare リポジトリ） | 標準出力（`knowledge-fetch-result` の JSON）。`--task` を付けたときだけタスク累計に追記します | なし | 取得できない出典がある（`incomplete`）、取り下げ済み（`withdrawn`）、1 行も入らない（`max_tokens_too_small`）、`stale_index`、`task_budget_exhausted` は 1。principal が不明か設定が無いと 3。ID の形の誤り、`--offset` が末尾より後ろ、索引が無いは 2 | ローカル（読み取りだけ。git は bare リポジトリの object を読むだけで fetch しません） |
+| `knowledge migrate` | `<ルート>/registry/`、今の索引、`knowledge/config.json` | `index.sqlite3` を入れ替え、入れ替える前の索引を `knowledge/backups/` に写します。標準出力に計画、バックアップの名前、検査の結果、generation の前後。`--dry-run` は何も書きません | なし | 一致の検査が通らない、WAL を読んでいる reader が残っている、別の writer が動いているは何も変えずに 1。設定が無い、registry の版が欠けているは 2 | ローカル。registry は読むだけ |
+| `knowledge rollback` | `--to <バックアップの名前>` か `--list` | `--to` は今の索引を `knowledge/backups/` に写してから、指定のバックアップを索引に戻します | なし | harness が作った形でない名前、無いバックアップ、索引でないファイルは 2。別の writer が動いていれば何も変えずに 1 | ローカル |
 
 exit code の意味はすべての段で同じです。
 
@@ -175,14 +177,14 @@ exit code の意味はすべての段で同じです。
 | run | `<ルート>/runs/<run_id>/`。毎回新しいディレクトリで、既存の run は上書きしません |
 | 承認の記録 | `<ルート>/registry/<RG-id>/`。版は追記だけです |
 | bare リポジトリ | `<ルート>/cache/git/`。run をまたいで使います |
-| knowledge index | `<ルート>/knowledge/`。`config.json`（人が書く設定）、`index.sqlite3`（索引）、`writer.lock`、`tasks/<hash>.jsonl`（タスク累計の記録） |
+| knowledge index | `<ルート>/knowledge/`。`config.json`（人が書く設定）、`index.sqlite3`（索引）、`writer.lock`、`tasks/<hash>.jsonl`（タスク累計の記録）、`backups/`（`migrate` と `rollback` が入れ替える前の索引） |
 | 権限 | ディレクトリ 0700、ファイル 0600 |
 
 run にはレビュー本文、diff、文書の section が入ります。消すときは `runs/<run_id>/` を、bare リポジトリは `cache/git/` を削除してください（次の実行で作り直します）。ホームディレクトリを git で管理している場合、既定の場所は拒否されます。`AI_HARNESS_HOME` にリポジトリの外のディレクトリを指定してください。
 
 ### knowledge index
 
-`knowledge update` は、ソース（この版では `--source file` が読む合成データの JSON）を検査して `<ルート>/knowledge/index.sqlite3` に取り込みます。LLM もネットワークも使いません。
+`knowledge update` は、ソース（`--source file` が読む合成データの JSON か、`--source review-registry` が読む承認の記録）を検査して `<ルート>/knowledge/index.sqlite3` に取り込みます。LLM もネットワークも使いません。
 
 - SQLite は作り直せる索引で、正本ではありません。正本はソースと `knowledge/config.json` です。`index.sqlite3` を消しても、`knowledge update` で作り直せます。
 - 書き込むのは一度に 1 つの writer だけです。1 回の取り込みは 1 つのトランザクションで、何か変わったときだけ generation が 1 進みます。同じ入力をもう一度取り込んでも generation は進みません。`config.json` を変えると、次の取り込みで generation が進みます。
@@ -365,6 +367,46 @@ $H knowledge search --principal workspace-a --project project-beta --component a
 - 見積もりは UTF-8 の 3 byte を 1 token とする高めの値です。実際の tokenizer の数とは違います。入力 token や利用枠が減るかは測っていません。
 - 延長は理由を記録するだけで、誰が延長してよいかは決めません。principal は本人確認ではありません。
 
+#### 移行（review registry から）
+
+`review approve` / `reject` / `retire` が残した `<ルート>/registry/` の記録を、索引に取り込みます。registry のファイルは読むだけで、書き換えません。`review evaluate` は今までどおり registry を直接読み、`--existing-rules` もそのままです。移行しても既存のコマンドの挙動は変わりません。
+
+合成データで試す手順です（「最初に試す手順」の準備を済ませた端末で実行します）。
+
+```bash
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.review_registry   # registry と config.json を書く
+$H knowledge migrate --dry-run          # 1. 計画を見る。何も書きません
+$H knowledge migrate                    # 2-4. 取り込み、検査、バックアップ、入れ替え
+$H knowledge search --principal workspace-a --project project-alpha
+$H knowledge migrate                    # 変わるものは無く generation は 1 のまま。generation 1 を写す
+$H knowledge rollback --list            # バックアップの名前
+$H knowledge rollback --to index-<時刻>-g0001.sqlite3   # --list に出た名前で戻す
+```
+
+索引が無い状態からの最初の移行には、写すものがありません（`backup` は `{"name": null, "reason": "no_index"}`）。合成データの search は `RG-9001`（rule）と `RG-9002`（policy_check）を返し、`--path infra/queue/main.tf` を付けると `RG-9002` が `path_match` で先に来ます。
+
+手順は次のとおりです。
+
+1. **dry-run**: `knowledge migrate --dry-run` は registry と今の索引を読むだけで、計画を出します。`plan.records` に entry ごとのレコード ID、scope、アクセス、enforcement が並び、`plan.unmapped` に設定に対応する project が無い entry、`plan.invalid` に artifact が読めない・hash が合わない・記録と artifact の内容が違う entry が並びます。`changes` は取り込んだときに増える・変わる・消えるレコードです。索引のファイルも、`-wal` と `-shm` も、バックアップも書きません（writer の lock を取り、WAL に frame が残っていなければ索引を immutable で開くからです）。合成データでは、5 件が並び、`RG-9006` が `unmapped`、`RG-9007` が `invalid`（`hash_mismatch`）です。
+2. **実行**: `knowledge migrate` は writer の lock の下で、今の索引の写し（索引が無ければ空の索引）を一時ファイルに作り、そこに `knowledge update --source review-registry` と同じ取り込みを行います。ほかの source（`file:` など）のレコードは消さずに残します。migrate は「registry から索引を作り直す」のではなく、「バックアップを取ってから registry の取り込みを行い、一致を確かめてから切り替える」操作です。
+3. **検査**: `config.json` にある repo ごとに、`registry.active_rules` が返す entry の集合と、一時の索引にある、その repo の `review-registry` 由来の approved のレコードの集合が同じであることを確かめます。違えば、入れ替えもバックアップもせずに exit 1 で、`check.repos` に repo ごとの `missing`（registry にあって索引に無い）と `unexpected`（その逆）を出します。承認済みの artifact が記録の後に変わっていると `active_rules` 自体が拒否するので、その repo は `error` 付きの違いになり、移行は止まります（`review evaluate` も同じ repo で exit 3 になります）。
+4. **切り替え**: 検査が通ると、WAL を空にしてから（下の「WAL と入れ替え」）、今の索引を `knowledge/backups/index-<UTC の時刻>-g<generation>.sqlite3`（0600）に写し、一時ファイルを `os.replace` で `index.sqlite3` に入れ替えます。途中で止まっても、古い索引か新しい索引のどちらかが残ります。索引が無かったときは `backup` に `{"name": null, "reason": "no_index"}` と書きます。
+
+移行したレコードは、すべて `advisory` です。`mandatory` にはなりません。`knowledge` block（scope、アクセス、enforcement）を持たない registry の記録は、`repo` を `config.json` の `repos` に持つ project の単位で、その project の `default_access` を使います。summary は artifact の題名、path の条件は宣言的検査の `path_globs` です。`applies_when` と `exceptions` は空です。evidence は `registry:RG-<n>/v<n>.md` なので、`knowledge fetch` で artifact の原文を hash の照合付きで取れます。retire や reject した entry は既定の search に出ず、fetch には `withdrawn` と答えます。版が増えたら `knowledge update --source review-registry` で取り込めます。変更が無ければ generation は進みません。
+
+WAL と入れ替え:
+
+- 入れ替える前に、今の索引の WAL を TRUNCATE で checkpoint し、`-wal` に frame が残っていないことを確かめます。`-wal` と `-shm` は同じ path に残り、新しい索引はそれを使って開くからです。古い frame が残っていると、新しいファイルに当てはめられてしまいます。
+- WAL の frame を読んでいる reader（search や fetch の途中）が残っていると checkpoint が終わらず、busy の待ち時間（5 秒）の後に、入れ替えもバックアップもせずに exit 1 です。もう一度実行してください。
+- 入れ替えの時点で古いファイルを開いている reader は、そのまま古いファイルを最後まで読みます。1 回の呼び出しは 1 つの generation を見ます。
+
+戻し方:
+
+- `knowledge rollback --list` でバックアップの一覧（名前、generation、時刻、大きさ）を見て、`knowledge rollback --to <名前>` で戻します。戻す前の索引も `backups/` に写します。名前は harness が作った形（`index-<時刻>-g<generation>[-<n>].sqlite3`）だけを受け付け、`../` などを含むものと、無いバックアップは exit 2 です。
+- 戻した索引のレコードと source の状態はバックアップのとおりですが、generation はバックアップの番号に戻さず、今の generation の次にします。1 つの generation が 2 つの中身を指さないようにするためです。search の出力は、`snapshot`（generation と更新時刻）だけが移行の前と違います。
+- 索引は作り直せるので、`knowledge/index.sqlite3`（と `-wal`、`-shm`）を消しても正本は失われません。`knowledge update` で作り直せます。skill の手順を `knowledge search` に切り替えた後で戻すときは、skill の文面も戻してください。
+- バックアップの数に上限は無く、自動では消しません。要らないものは `knowledge/backups/` から `rm` で消してください（`rollback --list` に出る名前のファイルだけです）。
+
 ### 認証
 
 GitHub を読む段は `--auth-env <環境変数名>` が必須で、既定値はありません（合成データでは代わりに `--fixture` を使います）。その変数が空なら、通信せずに exit 2 で止まります。PAT は作らず、`gh auth token` の出力をその変数に入れます。harness は gh の設定ディレクトリを読まないので、トークンは利用者が明示して渡します。
@@ -504,6 +546,7 @@ toshipon-mode plugin の Autonomous Improvement Harness v2（`plugins/toshipon-m
 - patch の header 解析と git の `git apply` の解釈の一致。許可する形を狭く決めてそれ以外を拒否する作りで、確かめたのは git 2.54 と CI の git だけです。
 - bare リポジトリの fetch は `fetch.fsckObjects=true` で行います。古い履歴に fsck の警告（壊れた日付、tree の並び順など）がある実際のリポジトリで fetch が失敗するかは確かめていません。失敗したら default branch の fetch で exit 1 になります。
 - `knowledge fetch` の `git:` の locator を、`spec analyze` が実際に作った bare リポジトリで読むこと。テストはローカルで作った合成の bare リポジトリだけを通ります。`pr:` と `doc:` の出典は読みません。タスク累計の既定値（6000）と fetch の既定の上限（3000）が実際の作業で妥当かも測っていません。
+- `knowledge migrate` と `rollback` の入れ替え。確かめたのは、手元の macOS（SQLite 3.54.1）で、別プロセスの reader が古いファイルを開いたまま入れ替えても読み続けられること、WAL の frame を読んでいる reader がいると exit 1 で止まることだけです。CI の OS と SQLite、ネットワークファイルシステムでは確かめていません。実際の registry（`review approve` が実際の端末で書いたもの）での移行もしていません。
 - `knowledge search` の検索の質。合成データで確かめたのは、必須の集合がラベルと一致すること、予算と止まる条件、置換、漏れないことだけです。任意のレコードの recall と precision、既定の予算（1500 token）と鮮度の閾値（168 時間）が実際の作業で妥当かは測っていません。
 - `impact-report.md` の自動リンク対策（`www.`、`@`、`://` の文字参照化）が GitHub の Markdown 表示で実際にリンクにならないこと。テストは文字列に元の形が残らないことだけを確かめています。
 
