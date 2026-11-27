@@ -1,6 +1,7 @@
 """`sre-harness knowledge <stage>`: the knowledge index (`status`, `update`, `search`,
-`fetch`, `migrate`, `rollback`). With `--task`, search and fetch also add what they return to
-the task total (`budget`), checked before anything is printed."""
+`fetch`, `context`, `migrate`, `rollback`). With `--task`, search and fetch also add what they
+return to the task total (`budget`), checked before anything is printed; `context` always does,
+for the task its task file names."""
 
 import argparse
 import json
@@ -8,7 +9,7 @@ import re
 
 from .. import paths, privacy, records
 from ..errors import EXIT_OK, InputError
-from . import adapters, budget, fetch, ingest, migrate, model, search, store, untrusted
+from . import adapters, budget, context, fetch, ingest, migrate, model, search, store, untrusted
 
 DECISION_ID_LENGTH = 64
 REASON_LENGTH = 200
@@ -114,6 +115,14 @@ def _search(args, env, out):
         stale_after_hours=args.stale_after_hours,
     )
     return _searched(env, args.principal, request, task, out)
+
+
+def _context(args, env, out):
+    """One search, as the task file describes it (the contract `task-context`)."""
+    found = context.load(args.task_file)
+    task = _task(args, found["task_id"])
+    request = context.request(found, query=args.query or "", max_tokens=args.max_tokens)
+    return _searched(env, found["principal"], request, task, out)
 
 
 def _searched(env, principal, request, task, out):
@@ -236,6 +245,17 @@ def _task_budget_arguments(parser):
     parser.add_argument("--reason", help="why the task total is extended (one line, recorded)")
 
 
+def _register_context(stages):
+    found = stages.add_parser(
+        "context", help="the search a task file (task-context) describes, counted to its task"
+    )
+    found.add_argument("--task-file", required=True, help="a task-context JSON file (only read)")
+    found.add_argument("--query", help="words to rank the advisory records by (never mandatory)")
+    found.add_argument("--max-tokens", type=_count(1), default=search.DEFAULT_MAX_TOKENS)
+    _task_budget_arguments(found)
+    found.set_defaults(handler=_context)
+
+
 def _register_fetch(stages):
     fetched = stages.add_parser(
         "fetch", help="the source text behind one record's evidence, a page at a time"
@@ -259,7 +279,7 @@ def register(groups):
     knowledge = groups.add_parser(
         "knowledge",
         help="knowledge index: approved norms by scope and access (status, update, search, fetch, "
-        "migrate, rollback)",
+        "context, migrate, rollback)",
     )
     stages = knowledge.add_subparsers(dest="stage", required=True)
 
@@ -280,6 +300,7 @@ def register(groups):
 
     _register_search(stages)
     _register_fetch(stages)
+    _register_context(stages)
 
     migrating = stages.add_parser(
         "migrate",
