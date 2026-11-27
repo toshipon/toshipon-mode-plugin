@@ -1,0 +1,21 @@
+{
+  "note": "合成データに対する手作業のラベル。各問いについて、答えるのに読む必要がある entity を、探索の結果を見る前に決めた。",
+  "questions": [
+    {
+      "question": "orders queue の保持期間はなぜその値なのか",
+      "relevant": ["PROP-retention", "DEC-0001", "DEC-0002", "REQ-0001", "Q-retention"]
+    },
+    {
+      "question": "visibility timeout を短くすると何が起きるか",
+      "relevant": ["PROP-visibility-timeout", "RISK-duplicate-charge", "CMP-worker", "CHG-pr-42"]
+    },
+    {
+      "question": "dead letter queue に移す受信回数はどう決まったか",
+      "relevant": ["PROP-max-receive", "REQ-0002", "NOTE-2026-03-02"]
+    },
+    {
+      "question": "worker は何に依存しているか",
+      "relevant": ["CMP-worker", "RES-orders-queue"]
+    }
+  ]
+}

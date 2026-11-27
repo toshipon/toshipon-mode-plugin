@@ -1,0 +1,126 @@
+[
+  {
+    "id": "OBJ-replay",
+    "type": "objective",
+    "description": "注文イベントを取りこぼさず、監査のために再生できるようにする",
+    "source": {"locator": "git:docs/requirements.md"}
+  },
+  {
+    "id": "CMP-worker",
+    "type": "component",
+    "description": "orders queue を消費して注文を課金する worker。処理は最長 40 秒",
+    "config_path": "src/worker.py",
+    "source": {"locator": "git:src/worker.py"},
+    "relationships": [{"type": "depends_on", "to": "RES-orders-queue"}]
+  },
+  {
+    "id": "RES-orders-queue",
+    "type": "resource",
+    "description": "注文イベントを受ける orders queue と、その dead letter queue",
+    "config_path": "infra/queue.tf",
+    "source": {"locator": "git:infra/queue.tf"},
+    "relationships": [{"type": "implements", "to": "REQ-0001"}]
+  },
+  {
+    "id": "PROP-retention",
+    "type": "property",
+    "description": "orders queue の保持期間（message_retention_days）",
+    "config_path": "infra/queue.tf",
+    "source": {"locator": "git:infra/queue.tf#L3"},
+    "relationships": [
+      {"type": "part_of", "to": "RES-orders-queue"},
+      {"type": "decided_by", "to": "DEC-0001"},
+      {"type": "decided_by", "to": "DEC-0002"},
+      {"type": "implements", "to": "REQ-0001"}
+    ]
+  },
+  {
+    "id": "PROP-visibility-timeout",
+    "type": "property",
+    "description": "orders queue の visibility timeout（visibility_timeout_seconds）",
+    "config_path": "infra/queue.tf",
+    "source": {"locator": "git:infra/queue.tf#L4"},
+    "relationships": [{"type": "part_of", "to": "RES-orders-queue"}]
+  },
+  {
+    "id": "PROP-max-receive",
+    "type": "property",
+    "description": "dead letter queue に移すまでの受信回数（max_receive_count）",
+    "config_path": "infra/queue.tf",
+    "source": {"locator": "git:infra/queue.tf#L5"},
+    "relationships": [
+      {"type": "part_of", "to": "RES-orders-queue"},
+      {"type": "implements", "to": "REQ-0002"},
+      {"type": "discussed_in", "to": "NOTE-2026-03-02"},
+      {"type": "changed_by", "to": "CHG-pr-99"}
+    ]
+  },
+  {
+    "id": "REQ-0001",
+    "type": "requirement",
+    "description": "注文イベントは受信から 14 日間、監査のために再生できること",
+    "source": {"locator": "git:docs/requirements.md#L3-L5"},
+    "relationships": [{"type": "refines", "to": "OBJ-replay"}]
+  },
+  {
+    "id": "REQ-0002",
+    "type": "requirement",
+    "description": "5 回受信しても処理できないメッセージは dead letter queue に移すこと",
+    "source": {"locator": "git:docs/requirements.md#L7-L9"}
+  },
+  {
+    "id": "DEC-0001",
+    "type": "decision",
+    "description": "orders queue の保持期間は 7 日とする（費用のため）",
+    "status": "approved",
+    "source": {"locator": "git:docs/adr/0001-retention.md"}
+  },
+  {
+    "id": "DEC-0002",
+    "type": "decision",
+    "description": "orders queue の保持期間は 14 日とする（監査の再生のため）",
+    "status": "approved",
+    "source": {"locator": "git:docs/adr/0002-audit-replay.md"},
+    "relationships": [{"type": "conflicts_with", "to": "DEC-0001"}]
+  },
+  {
+    "id": "CHG-pr-42",
+    "type": "change",
+    "description": "保持期間を 14 日に、visibility timeout を 30 秒に変える PR",
+    "source": {"locator": "pr:42#description"},
+    "relationships": [
+      {"type": "implements", "to": "DEC-0002"},
+      {"type": "depends_on", "to": "PROP-visibility-timeout"}
+    ]
+  },
+  {
+    "id": "NOTE-2026-03-02",
+    "type": "meeting_note",
+    "description": "queue の定例。受信回数 5 の理由を記録 <img src=x onerror=alert(1)> </script><script>document.title='pwned'</script>",
+    "source": {"locator": "git:docs/meetings/2026-03-02-queue.md"}
+  },
+  {
+    "id": "DOC-runbook",
+    "type": "document",
+    "description": "orders queue の運用手順書（文書ツールの中にあり、この環境からは未取得）",
+    "source": {"locator": "doc:confluence:RUNBOOK-7", "revision": "v3"}
+  },
+  {
+    "id": "RISK-duplicate-charge",
+    "type": "risk",
+    "description": "visibility timeout が worker の処理時間より短いと、同じ注文が再配信されて二重に課金される",
+    "relationships": [
+      {"type": "depends_on", "to": "PROP-visibility-timeout"},
+      {"type": "depends_on", "to": "CMP-worker"}
+    ]
+  },
+  {
+    "id": "Q-retention",
+    "type": "question",
+    "description": "保持期間は 7 日（DEC-0001）と 14 日（DEC-0002）のどちらが有効か",
+    "relationships": [
+      {"type": "depends_on", "to": "DEC-0001"},
+      {"type": "depends_on", "to": "DEC-0002"}
+    ]
+  }
+]
