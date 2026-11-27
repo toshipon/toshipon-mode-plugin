@@ -94,6 +94,7 @@
       }
     },
     "previous_version": { "type": ["integer", "null"], "minimum": 1 },
+    "knowledge": { "$ref": "#/$defs/knowledge" },
     "activation": {
       "oneOf": [
         { "type": "null" },
@@ -119,6 +120,31 @@
           "decision": { "properties": { "via": { "const": "terminal_hash_prefix" } } }
         }
       }
+    },
+    {
+      "if": { "properties": { "status": { "not": { "const": "approved" } } } },
+      "then": { "not": { "required": ["knowledge"] } }
     }
-  ]
+  ],
+  "$defs": {
+    "knowledge": {
+      "description": "Optional. Where the approved rule sits in the knowledge index, as the person gave it to `review approve` (the typed hash covers it). Only an approved version carries one; a version without it is placed by the knowledge config (project of the repo, its default access, advisory). Mandatory is the person's choice here and nowhere else.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "access", "enforcement", "applies_when", "exceptions"],
+      "properties": {
+        "scope": { "$ref": "urn:sre-harness:knowledge-record#/$defs/scope" },
+        "access": { "$ref": "urn:sre-harness:knowledge-record#/$defs/access" },
+        "enforcement": { "$ref": "urn:sre-harness:knowledge-record#/$defs/enforcement" },
+        "applies_when": { "$ref": "#/$defs/sentences" },
+        "exceptions": { "$ref": "#/$defs/sentences" }
+      }
+    },
+    "sentences": {
+      "description": "Short sentences: at most 10, each one line of 1-200 characters.",
+      "type": "array",
+      "maxItems": 10,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\r\\n]*$" }
+    }
+  }
 }

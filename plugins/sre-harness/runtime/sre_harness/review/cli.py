@@ -10,6 +10,8 @@ from .. import guard, llm, paths, privacy, records
 from ..errors import EXIT_OK, EXIT_QUALITY, BoundaryError, InputError
 from ..github.fixture import FixtureTransport
 from ..github.rest import GhTransport, Limiter
+from ..knowledge import block as knowledge_block
+from ..knowledge import config as knowledge_config
 from . import analyze as analyze_stage
 from . import approve as approve_stage
 from . import classify as classify_stage
@@ -212,8 +214,26 @@ def _approve(args, env, out):
     def show(text):
         print(text, file=out)
 
+    knowledge = knowledge_block.Options(
+        scope=args.knowledge_scope,
+        project=args.knowledge_project,
+        component=args.knowledge_component,
+        classification=args.knowledge_classification,
+        readers=tuple(args.knowledge_reader or ()),
+        enforcement=args.knowledge_enforcement,
+        applies_when=tuple(args.knowledge_applies_when or ()),
+        exceptions=tuple(args.knowledge_exception or ()),
+    )
     summary = approve_stage.approve(
-        run_dir, root, args.candidate, args.reviewer, args.reason, input, show, args.activate_as
+        run_dir,
+        root,
+        args.candidate,
+        args.reviewer,
+        args.reason,
+        input,
+        show,
+        args.activate_as,
+        knowledge,
     )
     print(json.dumps(summary, indent=2), file=out)
     return EXIT_OK
@@ -377,6 +397,7 @@ def register(groups):
         "--activate-as",
         help="also write a Unified Diff adding the artifact at this path of your repository",
     )
+    _knowledge_options(approve)
     approve.set_defaults(handler=_approve)
 
     reject = stages.add_parser("reject", help="record that a candidate is rejected")
@@ -394,6 +415,35 @@ def _split_option(parser):
     parser.add_argument(
         "--split", help="split.json from review split: use only events before its t1"
     )
+
+
+def _knowledge_options(parser):
+    """Where the approved rule sits in the knowledge index (the `knowledge` block). Without any
+    of them the registry version is written as before; with one, the rest comes from
+    knowledge/config.json and the typed hash covers the block."""
+    placed = parser.add_argument_group(
+        "knowledge index", "the knowledge block (needs knowledge/config.json; shown and confirmed)"
+    )
+    placed.add_argument("--knowledge-scope", choices=knowledge_block.LEVELS)
+    placed.add_argument("--knowledge-project", help="the project (project or component scope)")
+    placed.add_argument("--knowledge-component", help="the component (component scope)")
+    placed.add_argument(
+        "--knowledge-classification",
+        choices=knowledge_config.CLASSIFICATIONS,
+        help="default: the project's default_access",
+    )
+    placed.add_argument(
+        "--knowledge-reader", action="append", help="repeat for more; default: the project's"
+    )
+    placed.add_argument(
+        "--knowledge-enforcement",
+        choices=knowledge_block.ENFORCEMENTS,
+        help="mandatory: every search in the scope returns it (default advisory)",
+    )
+    placed.add_argument(
+        "--knowledge-applies-when", action="append", help="one short sentence; repeat for more"
+    )
+    placed.add_argument("--knowledge-exception", action="append", help="repeat for more")
 
 
 def _decision_options(parser):
