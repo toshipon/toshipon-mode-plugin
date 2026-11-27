@@ -28,6 +28,8 @@ description: 非自明なタスクの標準エントリポイント。playbook �
 - 測定できる目標に向けて成果物（コード・設計書・IaC・運用手順）を反復改善する、またはその改善を再開する → **autonomous-improvement** skill。仮説・実験・採否を同梱の台帳に残し、採否は決定論的な評価で決める。マージからデプロイと計測まで閉じるループは `loop-engineering` を使う。
 - 同じ失敗やレビュー指摘が実行記録に繰り返し出ていて、成果物ではなく skill・指示・ツール・評価の側を直したい → **harness-evolution** skill。候補版を隔離 worktree で現行版と同じ条件で比べ、ローカルの提案までにとどめる。1 回の訂正を構造に落とすだけなら `/toshipon-mode:correct` を使う。
 - 繰り返す摩擦・やり直し・失敗から「何を直すか」ではなく「何を問うか」を探す、または研究課題の候補を見直す → **insight-discovery** skill。既存の手法で足りる候補は autonomous-improvement か harness-evolution に渡す。
+- 文脈を切り替えて PR に戻り、レビューコメントを直す前に理解し直したい → **review-context-recovery** skill。1 件ずつ、出典と revision 付きの説明と理解確認の 1 問で進める。読み取り専用で、修正は `/toshipon-mode:pr-feedback` に渡す。
+- 大きなプロジェクトに戻り、概要・特定の resource や設定値の経緯・新しいセッションに渡す context が要る → **project-context-explorer** skill。metadata の索引から必要な原資料だけを取りに行く。1 つのコードの「なぜ」は **why**、仕組みの解説は **how** を使う。
 - 要求定義・設計書・仕様書などの成果物ドキュメントを、Confluence の記事、Slack の議論、規制文書（FISC、US-SOX、SOC1 など）、既存システムから起こす → Doc playbooks（Doc discovery、Doc question loop、Doc author）。ドキュメント作業の証拠は出典である。台帳と札の規約は [`references/doc-workspace.md`](references/doc-workspace.md) に従い、出典のない事実は書かずに質問票に起こす。規制の条項番号や統制 ID を記憶から書かない。
 - commit 前 → diff の prose とコメントに **unslop** をかけ、次に `/verification-loop`。
 - 変更の影響範囲の評価 → **blast-radius** skill。
