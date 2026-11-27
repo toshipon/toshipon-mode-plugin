@@ -4,12 +4,16 @@ on:
   pull_request:
     paths:
       - plugins/sre-harness/**
+      # tests/invariants/test_knowledge_explorer_contract.py reads the explorer's files
+      - plugins/toshipon-mode/skills/project-context-explorer/**
       - .claude-plugin/marketplace.json
       - .github/workflows/sre-harness.yml
   push:
     branches: [main]
     paths:
       - plugins/sre-harness/**
+      # tests/invariants/test_knowledge_explorer_contract.py reads the explorer's files
+      - plugins/toshipon-mode/skills/project-context-explorer/**
       - .claude-plugin/marketplace.json
       - .github/workflows/sre-harness.yml
 
