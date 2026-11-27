@@ -7,6 +7,7 @@ import sys
 from . import __version__, paths
 from .errors import EXIT_INPUT, EXIT_OK, HarnessError
 from .iac import cli as iac_cli
+from .knowledge import cli as knowledge_cli
 from .review import cli as review_cli
 from .spec import cli as spec_cli
 
@@ -24,7 +25,13 @@ def _register_runs(groups):
     listing.set_defaults(handler=_runs_list)
 
 
-REGISTRARS = [_register_runs, review_cli.register, spec_cli.register, iac_cli.register]
+REGISTRARS = [
+    _register_runs,
+    review_cli.register,
+    spec_cli.register,
+    iac_cli.register,
+    knowledge_cli.register,
+]
 
 
 class _Parser(argparse.ArgumentParser):
