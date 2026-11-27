@@ -160,8 +160,19 @@ def _cited(text, start, end):
     return "\n".join(lines[first - 1 : last])
 
 
+def _readable_git(match, revision):
+    return bool(_SHA.fullmatch(revision)) and ".." not in match["path"].split("/")
+
+
+def reads_git(locator, revision):
+    """True for a `git:` locator and revision that `read` would look up (whether the bare
+    repository has the commit is another matter)."""
+    match = _GIT.fullmatch(locator)
+    return match is not None and _readable_git(match, revision)
+
+
 def _git(root, match, record, revision):
-    if not _SHA.fullmatch(revision) or ".." in match["path"].split("/"):
+    if not _readable_git(match, revision):
         return UNAVAILABLE
     target = f"{revision}:{match['path']}"
     for git_dir in _repositories(root, record["facets"]["repo"]):

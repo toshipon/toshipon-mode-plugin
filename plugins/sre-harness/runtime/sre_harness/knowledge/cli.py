@@ -1,5 +1,5 @@
 """`sre-harness knowledge <stage>`: the knowledge index (`status`, `update`, `search`,
-`fetch`, `context`, `check`, `decision`, `migrate`, `rollback`). With `--task`, search and fetch also add what they
+`fetch`, `context`, `check`, `decision`, `export`, `migrate`, `rollback`). With `--task`, search and fetch also add what they
 return to the task total (`budget`), checked before anything is printed; `context` always does,
 for the task its task file names."""
 
@@ -16,6 +16,7 @@ from . import (
     check,
     context,
     decisions,
+    export,
     fetch,
     ingest,
     migrate,
@@ -259,6 +260,12 @@ def _fetch(args, env, out):
     return fetch.exit_code(result)
 
 
+def _export(args, env, out):
+    """The readable approved records as project context explorer entities (stdout only)."""
+    _print(export.run(paths.state_root(env), args.principal, args.project), out)
+    return EXIT_OK
+
+
 def _migrate(args, env, out):
     root, now = paths.state_root(env), clock()
     result = migrate.plan(root, now) if args.dry_run else migrate.run(root, now)
@@ -442,7 +449,7 @@ def register(groups):
     knowledge = groups.add_parser(
         "knowledge",
         help="knowledge index: approved norms by scope and access (status, update, search, fetch, "
-        "context, check, decision, migrate, rollback)",
+        "context, check, decision, export, migrate, rollback)",
     )
     stages = knowledge.add_subparsers(dest="stage", required=True)
 
@@ -466,6 +473,19 @@ def register(groups):
     _register_context(stages)
     _register_check(stages)
     _register_decision(stages)
+
+    exporting = stages.add_parser(
+        "export", help="the approved records a principal reads, for another tool (stdout only)"
+    )
+    exporting.add_argument("--principal", required=True, help="who reads (knowledge/config.json)")
+    exporting.add_argument(
+        "--format",
+        required=True,
+        choices=(export.FORMAT,),
+        help="context-entities: the entities project-context-explorer's `index add` reads",
+    )
+    exporting.add_argument("--project", type=_name, help="the organization and this project only")
+    exporting.set_defaults(handler=_export)
 
     migrating = stages.add_parser(
         "migrate",
