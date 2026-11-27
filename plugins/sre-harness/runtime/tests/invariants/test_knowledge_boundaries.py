@@ -228,3 +228,57 @@ def test_the_tool_name_check_catches_each_name(text):
 @pytest.mark.parametrize("text", ["a task runner", "a decision queue", "screenshot", "linear"])
 def test_the_tool_name_check_leaves_general_words_alone(text):
     assert not TOOL_NAMES.search(text)
+
+
+# An answer never becomes a rule -----------------------------------------------------------------
+
+DECISIONS = KNOWLEDGE / "decisions.py"
+# What the decision queue may ask of the store: open a reader and find the knowledge directory.
+STORE_READS = {"reader", "directory"}
+# Modules that write the index or the registry, or turn input into either.
+WRITERS = {"ingest", "migrate", "registry", "approve", "adapters", "block", "candidates"}
+WRITING_NAMES = {"Writer", "writer", "staged", "Stage", "write_version"}
+
+
+def _queue_offenders(source):
+    offenders = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            names = {alias.name for alias in node.names} | {(node.module or "").split(".")[-1]}
+            offenders += sorted(f"imports {name}" for name in names & (WRITERS | WRITING_NAMES))
+        elif isinstance(node, ast.Import):
+            offenders += [
+                f"imports {alias.name}"
+                for alias in node.names
+                if alias.name.split(".")[-1] in WRITERS
+            ]
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            if node.value.id == "store" and node.attr not in STORE_READS:
+                offenders.append(f"store.{node.attr}")
+        elif isinstance(node, ast.Name) and node.id in WRITING_NAMES:
+            offenders.append(node.id)
+    return offenders
+
+
+def test_the_decision_queue_cannot_write_the_index_or_the_registry():
+    assert _queue_offenders(DECISIONS.read_text(encoding="utf-8")) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from . import store\nstore.writer(root)",
+        "from . import store\nstore.staged(root)",
+        "from .store import writer",
+        "from ..review import registry",
+        "from . import ingest",
+        "import sre_harness.knowledge.migrate",
+        "from ..review.registry import write_version",
+    ],
+)
+def test_the_queue_check_catches_each_way_to_write(source):
+    assert _queue_offenders(source) != []
+
+
+def test_the_queue_check_leaves_reading_alone():
+    assert _queue_offenders("from . import store\nwith store.reader(root) as r:\n    pass") == []
