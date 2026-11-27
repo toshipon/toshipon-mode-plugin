@@ -47,6 +47,12 @@
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/record_id" }
     },
+    "relations": {
+      "description": "Trace relations from this record to others (spec-run). Absent when there are none. Stored as edges of the index; conflicts_with is reported by search.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/relation" }
+    },
     "content_hash": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
     "updated_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
     "indexed_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
@@ -173,6 +179,16 @@
         "size": { "type": "integer", "minimum": 0 }
       }
     },
+    "relation": {
+      "description": "One trace relation; the names are the spec trace's (trace-link `relation`). Supersession is `supersedes`, not a relation.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relation", "target"],
+      "properties": {
+        "relation": { "enum": ["refines", "implements", "verifies", "depends_on", "conflicts_with"] },
+        "target": { "$ref": "#/$defs/record_id" }
+      }
+    },
     "approval": {
       "description": "A copy of the source's approval record.",
       "type": "object",
@@ -213,6 +229,19 @@
         "confidence": { "anyOf": [{ "$ref": "#/$defs/confidence" }, { "type": "null" }] },
         "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
         "supersedes": { "type": "array", "items": { "$ref": "#/$defs/origin_ref" } },
+        "relations": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["relation", "target"],
+            "properties": {
+              "relation": { "$ref": "#/$defs/relation/properties/relation" },
+              "target": { "$ref": "#/$defs/origin_ref" }
+            }
+          }
+        },
         "updated_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
         "approval": { "anyOf": [{ "$ref": "#/$defs/approval" }, { "type": "null" }] }
       }

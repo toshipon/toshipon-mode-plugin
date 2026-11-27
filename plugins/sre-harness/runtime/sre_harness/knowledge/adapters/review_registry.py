@@ -167,6 +167,9 @@ class ReviewRegistryAdapter:
 
     @classmethod
     def from_options(cls, options):
+        from . import refuse_run_options
+
+        refuse_run_options(cls.name, options)
         if options.get("input"):
             raise InputError(
                 "--source review-registry reads registry/ under the state root; it takes no "
