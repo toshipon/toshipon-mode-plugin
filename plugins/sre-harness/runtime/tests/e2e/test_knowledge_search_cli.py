@@ -154,7 +154,15 @@ def gamma(scenario):
     ]
 
 
-@pytest.mark.parametrize("extra", [[], ["--include-proposed"], ["--max-tokens", "300"]])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        [],
+        ["--include-proposed"],
+        ["--max-tokens", "300"],
+        ["--expand", "保持期間", "--expand", "billing", "--expand", "team-gamma"],
+    ],
+)
 def test_the_limited_principal_sees_nothing_of_the_third_project(corpus, capsys, extra):
     env, scenario = corpus
     hidden_ids, hidden_summaries = gamma(scenario)
@@ -478,3 +486,139 @@ def test_the_search_module_is_what_the_cli_runs(corpus):
     assert printed["budget"]["task"]["used_after"] == printed["budget"]["used_tokens"]
     printed["budget"]["task"] = None
     assert direct == printed
+
+
+# Expansion words ---------------------------------------------------------------------------
+
+
+def mandatory_views(result):
+    return [view for view in result["records"] if "mandatory" in view["why_selected"]]
+
+
+def test_expansion_words_never_change_the_mandatory_set(corpus):
+    env, scenario = corpus
+    words = ["--expand", "保持期間", "--expand", "backup", "--expand", "レート制限"]
+    for task in scenario.tasks:
+        code, plain = run(env, *task_args(task))
+        again, widened = run(env, *task_args(task, *words))
+        assert code == again, task["task_id"]
+        assert widened["mandatory"] == plain["mandatory"], task["task_id"]
+        assert mandatory_views(widened) == mandatory_views(plain), task["task_id"]
+
+
+def test_expansion_alone_searches_as_the_same_words_given_as_the_query(corpus):
+    env, scenario = corpus
+    task = next(t for t in scenario.tasks if t["paraphrase"])
+    base = [
+        "--principal",
+        task["principal"],
+        "--project",
+        task["project_id"],
+        "--component",
+        task["component_id"],
+    ]
+    _, as_query = run(env, *base, "--query", task["literal_query"])
+    code, as_expansion = run(env, *base, "--expand", task["literal_query"])
+    assert code == 0
+    for part in ("records", "truncated", "mandatory", "budget", "conflicts"):
+        assert as_expansion[part] == as_query[part], part
+    count = len(terms.terms(task["literal_query"]))
+    assert as_query["retrieval"] == {"method": "fts5", "query_terms": count, "expansion": None}
+    assert as_expansion["retrieval"] == {
+        "method": "fts5",
+        "query_terms": 0,
+        "expansion": {"source": "caller", "terms": count},
+    }
+
+
+def test_the_literal_words_as_expansion_find_what_the_paraphrase_missed(corpus):
+    env, scenario = corpus
+    items = by_id(scenario)
+    gained = 0
+    for task in [t for t in scenario.tasks if t["paraphrase"]]:
+        topic = next(k for k, v in kc.TOPICS.items() if v[0] == task["literal_query"])
+
+        def on_topic(result):
+            return {
+                v["id"]
+                for v in result["records"]
+                if "mandatory" not in v["why_selected"]
+                and topic in items[v["id"]]["facets"]["topic"]
+            }
+
+        argv = [part for part in task_args(task) if part != task["task_id"]]
+        argv.remove("--task")
+        _, plain = run(env, *argv, "--max-tokens", "100000")
+        _, widened = run(env, *argv, "--max-tokens", "100000", "--expand", task["literal_query"])
+        assert on_topic(plain) <= on_topic(widened), task["task_id"]
+        gained += len(on_topic(widened) - on_topic(plain))
+    assert gained > 0
+
+
+def test_the_order_and_repetition_of_expansion_words_do_not_matter(corpus):
+    env, scenario = corpus
+    task = scenario.tasks[4]
+    argv = [part for part in task_args(task) if part != task["task_id"]]
+    argv.remove("--task")
+    first = raw(env, *argv, "--expand", "保持期間", "--expand", "timeout", "--expand", "暗号化")
+    second = raw(env, *argv, "--expand", "暗号化", "--expand", "保持期間", "--expand", "timeout")
+    third = raw(env, *argv, "--expand", "timeout", "--expand", "暗号化", "--expand", "保持期間")
+    repeated = raw(env, *argv, "--expand", "timeout", "--expand", "暗号化", "--expand", "timeout")
+    assert first == second == third and first[0] == 0
+    assert (
+        raw(env, *argv, "--expand", "保持期間", "--expand", "timeout", "--expand", "暗号化")
+        == first
+    )
+    assert json.loads(repeated[1])["retrieval"]["expansion"]["terms"] == 3  # timeout, 暗号, 号化
+
+
+def test_fts5_syntax_in_an_expansion_word_is_only_words(corpus):
+    env, _ = corpus
+    base = ["--principal", kc.PRINCIPAL_ALL, "--project", "project-alpha", "--component", "queue"]
+    for hostile in ['"保持期間" OR NEAR(a b)', 'summary:x * ^ "', "') -- AND NOT 保持期間", '"""']:
+        code, result = run(env, *base, "--expand", hostile)
+        assert code == 0, hostile
+        plain = " ".join(terms.terms(hostile))
+        _, again = run(env, *base, "--expand", plain)
+        assert again["records"] == result["records"], hostile
+        assert again["truncated"] == result["truncated"], hostile
+
+
+def test_control_characters_are_dropped_from_expansion_words(corpus):
+    env, _ = corpus
+    base = ["--principal", kc.PRINCIPAL_ALL, "--project", "project-alpha", "--component", "queue"]
+    hostile = raw(env, *base, "--expand", "保持\x07期\u202e間")
+    assert hostile == raw(env, *base, "--expand", "保持期間")
+    assert hostile[0] == 0
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        ["x"] * (search.MAX_EXPAND_WORDS + 1),
+        ["x" * (search.MAX_EXPAND_LENGTH + 1)],
+    ],
+)
+def test_too_many_or_too_long_expansion_words_exit_2(corpus, capsys, words):
+    env, _ = corpus
+    argv = ["--principal", kc.PRINCIPAL_ALL, "--project", "project-alpha"]
+    for word in words:
+        argv += ["--expand", word]
+    code, text = raw(env, *argv)
+    assert code == 2 and text == ""
+    assert "--expand" in capsys.readouterr().err
+
+
+def test_a_search_without_expansion_says_so(corpus):
+    env, scenario = corpus
+    task = scenario.tasks[1]
+    _, result = run(env, *task_args(task))
+    assert result["retrieval"] == {
+        "method": "fts5",
+        "query_terms": len(terms.terms(task["query"])),
+        "expansion": None,
+    }
+    overflow = next(t for t in scenario.tasks if t["task_id"] == scenario.traps["overflow_task"])
+    code, stopped = run(env, *task_args(overflow, "--expand", "保持期間"))
+    assert code == 1 and stopped["status"] == "mandatory_overflow"
+    assert stopped["retrieval"]["expansion"] == {"source": "caller", "terms": 3}

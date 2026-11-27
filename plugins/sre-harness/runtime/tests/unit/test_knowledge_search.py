@@ -470,3 +470,65 @@ def test_the_same_input_gives_the_same_result():
     first = select(rows, search.Request(project="project-alpha", max_tokens=700))
     second = select(list(reversed(rows)), search.Request(project="project-alpha", max_tokens=700))
     assert records.canonical(first) == records.canonical(second)
+
+
+# Expansion words ---------------------------------------------------------------------------
+
+
+def test_expansion_words_are_a_sorted_set_without_control_characters():
+    assert search.expansion(["保持期間", "retention", "保持期間", "  ", "\x07"]) == (
+        "retention",
+        "保持期間",
+    )
+    assert search.expansion(["保持\x1b期‮間"]) == ("保持期間",)
+    assert search.expansion(["b", "a"]) == search.expansion(["a", "b"])
+    assert search.expansion([]) == ()
+
+
+def test_expansion_words_have_a_count_and_a_length_limit():
+    from sre_harness.errors import InputError
+
+    search.expansion(["x" * search.MAX_EXPAND_LENGTH] * search.MAX_EXPAND_WORDS)
+    with pytest.raises(InputError):
+        search.expansion(["x"] * (search.MAX_EXPAND_WORDS + 1))
+    with pytest.raises(InputError):
+        search.expansion(["x" * (search.MAX_EXPAND_LENGTH + 1)])
+
+
+def test_the_search_terms_are_those_of_the_query_and_of_the_expansion():
+    request = search.Request(query="queue の保持期間", expand=("retention period", "残す"))
+    expected = set(terms.terms("queue の保持期間")) | {"retention", "period", "残す"}
+    assert search.search_terms(request) == sorted(expected)
+    assert search.search_terms(search.Request(query="保持")) == ["保持"]
+
+
+def test_retrieval_names_the_method_and_counts_the_terms():
+    assert search.retrieval(search.Request(query="queue の保持期間")) == {
+        "method": "fts5",
+        "query_terms": len(terms.terms("queue の保持期間")),
+        "expansion": None,
+    }
+    widened = search.Request(query="", expand=("retention period", "保持"))
+    assert search.retrieval(widened) == {
+        "method": "fts5",
+        "query_terms": 0,
+        "expansion": {"source": "caller", "terms": 3},
+    }
+    assert search.retrieval(search.Request(expand=()))["expansion"] == {
+        "source": "caller",
+        "terms": 0,
+    }
+
+
+def test_expansion_words_rank_advisory_records_and_leave_the_mandatory_ones():
+    rows = [rec("must", enforcement="mandatory"), rec("hit"), rec("miss")]
+    plain = select(rows, search.Request(project="project-alpha", query="保持"), matches={})
+    widened = select(
+        rows,
+        search.Request(project="project-alpha", query="保持", expand=("retention",)),
+        matches={rid("hit"): -1.0},
+    )
+    assert plain["mandatory"] == widened["mandatory"]
+    assert ids(plain["records"]) == [rid("must")]
+    assert ids(widened["records"]) == [rid("must"), rid("hit")]
+    assert "term_match" in widened["records"][1]["why_selected"]
