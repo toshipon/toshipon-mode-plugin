@@ -61,19 +61,19 @@
     }
   },
   "$defs": {
-    "request_id": { "type": "string", "pattern": "^DR-[0-9a-f]{12}$" },
+    "request_id": { "type": "string", "pattern": "^DR-[0-9a-f]{12}(?![\\s\\S])" },
     "status": { "enum": ["open", "answered", "cancelled", "expired", "superseded"] },
     "question": {
       "type": "string",
       "minLength": 1,
       "maxLength": 500,
-      "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+      "pattern": "^[^\\u0000-\\u001f\\u007f]*(?![\\s\\S])"
     },
     "option": {
       "type": "string",
       "minLength": 1,
       "maxLength": 100,
-      "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+      "pattern": "^[^\\u0000-\\u001f\\u007f]*(?![\\s\\S])"
     },
     "revision": {
       "type": "object",
@@ -88,7 +88,7 @@
           "additionalProperties": { "$ref": "urn:sre-harness:common#/$defs/sha256" }
         },
         "head_sha": {
-          "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$" }, { "type": "null" }]
+          "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?(?![\\s\\S])" }, { "type": "null" }]
         }
       }
     },

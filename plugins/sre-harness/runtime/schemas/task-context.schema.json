@@ -31,13 +31,13 @@
     },
     "repo": {
       "anyOf": [
-        { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$" },
+        { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}(?![\\s\\S])" },
         { "type": "null" }
       ]
     },
     "base_sha": {
       "description": "The commit the work starts from (SHA-1 or SHA-256), when there is one.",
-      "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$" }, { "type": "null" }]
+      "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?(?![\\s\\S])" }, { "type": "null" }]
     },
     "changed_paths": {
       "type": "array",
@@ -51,7 +51,7 @@
     "path": {
       "description": "A path relative to the repository root: no leading '/', no '.' or '..' segment, no backslash, no control character.",
       "type": "string",
-      "pattern": "^(?!/)(?!(?:.*/)?\\.{1,2}(?:/|$))[^\\u0000-\\u001f\\u007f\\\\]{1,400}$"
+      "pattern": "^(?!/)(?!(?:.*/)?\\.{1,2}(?:/|$))[^\\u0000-\\u001f\\u007f\\\\]{1,400}(?![\\s\\S])"
     }
   }
 }

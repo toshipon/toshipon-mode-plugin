@@ -59,11 +59,11 @@
     "approval": { "anyOf": [{ "$ref": "#/$defs/approval" }, { "type": "null" }] }
   },
   "$defs": {
-    "record_id": { "type": "string", "pattern": "^KN-[0-9a-f]{12}$" },
+    "record_id": { "type": "string", "pattern": "^KN-[0-9a-f]{12}(?![\\s\\S])" },
     "name": {
       "description": "A project, component, task, reader, principal or source name.",
       "type": "string",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?![\\s\\S])"
     },
     "kind": { "enum": ["rule", "decision", "requirement", "policy_check"] },
     "status": {
@@ -71,11 +71,11 @@
     },
     "enforcement": { "enum": ["mandatory", "advisory"] },
     "classification": { "enum": ["public", "synthetic", "internal", "confidential"] },
-    "summary": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[^\\r\\n]*$" },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[^\\r\\n]*(?![\\s\\S])" },
     "sentences": {
       "type": "array",
       "maxItems": 20,
-      "items": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[^\\r\\n]*$" }
+      "items": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[^\\r\\n]*(?![\\s\\S])" }
     },
     "origin_ref": {
       "description": "What a source calls the record: the id is sha256 of [kind, key].",
@@ -83,8 +83,8 @@
       "additionalProperties": false,
       "required": ["kind", "key"],
       "properties": {
-        "kind": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
-        "key": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\r\\n]*$" }
+        "kind": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}(?![\\s\\S])" },
+        "key": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\r\\n]*(?![\\s\\S])" }
       }
     },
     "origin": {
@@ -128,7 +128,7 @@
     "labels": {
       "type": "array",
       "maxItems": 20,
-      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" }
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}(?![\\s\\S])" }
     },
     "access": {
       "description": "Apart from scope. A principal reads the record when it holds the classification and shares a reader. This is not authentication.",
@@ -173,7 +173,7 @@
       "additionalProperties": false,
       "required": ["locator", "revision", "content_sha256", "size"],
       "properties": {
-        "locator": { "type": "string", "minLength": 1, "maxLength": 400, "pattern": "^[^\\s]+$" },
+        "locator": { "type": "string", "minLength": 1, "maxLength": 400, "pattern": "^[^\\s]+(?![\\s\\S])" },
         "revision": { "type": "string", "minLength": 1, "maxLength": 100 },
         "content_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
         "size": { "type": "integer", "minimum": 0 }
