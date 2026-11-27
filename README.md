@@ -142,7 +142,7 @@ AI のセッションを切り替えたとき、PR のレビューに戻った�
 
 ## レビューの学習と仕様の整合性（sre-harness plugin）
 
-`sre-harness` は、GitHub のレビュー履歴から改善候補を作る Review Learning、決定と要求を open PR にまたがって追跡する Specification Consistency、IaC の変更記録を状態遷移と証跡の契約で検査する IaC Delivery を、読み取り専用で提供します。push、merge、クラウドの変更は行わず、実行データは repository の外（既定 `~/.local/state/ai-harness/sre-harness/`）に置きます。認証なしに合成データで試す手順、制約、認証、保存場所、未検証の事項は [sre-harness README](plugins/sre-harness/README.md) にあります。
+`sre-harness` は、GitHub のレビュー履歴から改善候補を作る Review Learning、決定と要求を open PR にまたがって追跡する Specification Consistency、IaC の変更記録を状態遷移と証跡の契約で検査する IaC Delivery、承認済みの規範のうち 1 つの作業に当てはまるものだけをアクセス区分と token の予算の中で返す Knowledge Retrieval を、読み取り専用で提供します。push、merge、クラウドの変更は行わず、実行データは repository の外（既定 `~/.local/state/ai-harness/sre-harness/`）に置きます。認証なしに合成データで試す手順、制約、認証、保存場所、未検証の事項は [sre-harness README](plugins/sre-harness/README.md) にあります。
 
 ## 非機能要件と AWS 方式設計
 

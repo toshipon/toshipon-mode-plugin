@@ -1,10 +1,11 @@
 # sre-harness
 
-GitHub のレビュー履歴、仕様文書、IaC の変更記録を読み、改善候補、影響範囲の報告、契約違反の一覧を作る、読み取り専用の harness です。次の 3 つを同じ runtime で動かします。
+GitHub のレビュー履歴、仕様文書、IaC の変更記録を読み、改善候補、影響範囲の報告、契約違反の一覧を作る、読み取り専用の harness です。承認済みの規範を作業ごとに取り出す索引も持ちます。次の 4 つを同じ runtime で動かします。
 
 - Review Learning: 指定期間の PR、レビュー、返信、解決状態、修正前後の差分から指摘を構造化し、Rule や Skill の候補を作り、時系列で分けた評価用 PR に当てて評価します。候補を採用するかは人が端末で承認します。
 - Specification Consistency: ADR、要求、議事録、export から決定と要求の台帳を作り、default branch と全 open PR にまたがる意味的な競合、矛盾、未反映、古い決定への依存、テストの欠落を報告します。文書の修正候補を Unified Diff で出し、分析とは別の呼び出しで 8 観点の監査をします。
 - IaC Delivery: 「要求承認 → 設計 → 実装 → ステージング検証 → PR → 特権者承認 → デプロイ」の状態遷移と証跡の契約を定義し、利用者が保存した記録を検査します。Terraform の plan のリスクを同梱の Rego サンプルで分類します。
+- Knowledge Retrieval: 承認済みの規範（承認したレビューのルールと宣言的検査、spec の決定と要求）を作り直せる索引（SQLite）に入れ、1 つの作業に当てはまるものだけを、アクセス区分と token の予算の中で返します。原文の取得、宣言的検査による自己レビュー、人への判断の依頼（decision request）も行います。どの段も LLM とネットワークを使いません。使い方の手順は [knowledge-retrieval](skills/knowledge-retrieval/SKILL.md) にあります。
 
 行わないこと:
 
@@ -47,7 +48,7 @@ export SRE_HARNESS_PYTHON=~/.venvs/sre-harness/bin/python
 
 **stub は LLM の品質を何も示しません。** stub は固定の規則で答えを作ります。ここで確かめられるのは、段がつながり、決定論的な検査と規則が合成データに対して動くことだけです。
 
-最初に、保存先と合成データの置き場を一時ディレクトリにします（保存先はリポジトリの外でなければなりません）。3 つの harness のどれから試しても構いませんが、この準備は先に実行します。
+最初に、保存先と合成データの置き場を一時ディレクトリにします（保存先はリポジトリの外でなければなりません）。4 つの harness のどれから試しても構いませんが、この準備は先に実行します。
 
 ```bash
 H="${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness"
@@ -108,6 +109,43 @@ $H iac validate --plan "$D/iac/approver_is_implementer/plan.json" \
 
 1 つ目は `status: valid` で exit 0、2 つ目は `violations: {"approver_is_implementer": 1}` で exit 1 です。opa が PATH に無ければ `risk` は `unevaluable`、opa v1.22.2 があれば合成の plan は `high` です。
 
+### Knowledge Retrieval
+
+300 件の合成の規範（3 project、principal 2 つ）と合成の review registry を索引に入れ、1 つの task で検索、原文の取得、宣言的検査、判断の依頼まで通します。ID は合成データで決まる値です。
+
+```bash
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.knowledge_corpus "$D/knowledge" --size 300 --write-sources
+install -d -m 700 "$AI_HARNESS_HOME/sre-harness/knowledge"
+install -m 600 "$D/knowledge/config.json" "$AI_HARNESS_HOME/sre-harness/knowledge/config.json"
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.review_registry   # config.json は上のものを使う
+$H knowledge update --source file --input "$D/knowledge/corpus.json"
+$H knowledge update --source review-registry
+cat > "$D/task.json" <<'JSON'
+{"schema_version": 1, "task_id": "TASK-0101", "workspace_id": "ws-a", "principal": "workspace-a",
+ "project_id": "project-alpha", "component_id": "queue", "repo": "example-org/alpha", "base_sha": null,
+ "changed_paths": ["services/queue/main.tf", "infra/queue/main.tf"], "resource_types": ["queue"]}
+JSON
+cat > "$D/change.diff" <<'DIFF'
+diff --git a/infra/queue/main.tf b/infra/queue/main.tf
+--- a/infra/queue/main.tf
++++ b/infra/queue/main.tf
+@@ -1,3 +1,4 @@
+ resource "example_queue" "q" {
++  message_retention_seconds = 86400
+   name = "q"
+ }
+DIFF
+$H knowledge context --task-file "$D/task.json" --query "queue の保持期間"          # 1. 検索
+$H knowledge fetch --principal workspace-a --id KN-904a3334f940 --task TASK-0101   # 2. 原文
+$H knowledge check --task-file "$D/task.json" --patch "$D/change.diff"            # 3. 自己レビュー
+$H knowledge decision put --task-file "$D/task.json" --question "保持期間を 1 日にする変更を例外として認めるか" \
+  --option 認める --option 認めない --evidence KN-7e348b3581d2 --risk high \
+  --head-sha 1111111111111111111111111111111111111111                              # 4. 判断の依頼
+$H knowledge decision poll --workspace ws-a --head-sha 1111111111111111111111111111111111111111   # 5. 回答
+```
+
+update は 2 回とも exit 0 で、registry の 5 件が入ります（`RG-9006` は設定に無い repo で `unmapped`、`RG-9007` は artifact が変わっていて `invalid`）。context は `status: ok` で exit 0、必須 3 件（685 token）と任意 3 件の 1351 token を返し、24 件を `truncated` に数えて、タスク累計を 1351 にします。fetch は `registry:RG-0149/v0001.md` の原文を untrusted の枠に入れて返し（65 token、累計 1416）、exit 0 です。check は `RG-9002`（キューの保持期間の宣言的検査）の違反を `infra/queue/main.tf` の 2 行目に出して exit 1 です。合成の規範の `policy_check` には registry の版の記録が無いので、当てずに `unfetched`（`source_unavailable`）に並びます。当てられない検査を合格にはしません。put は `accepted`（`DR-fa9e9270fe32`）で exit 0、poll は回答がまだ無いので request を `open` で返し、exit 0 です。回答（`knowledge decision answer`）は人が端末で行う段なので、この手順には入れていません（下の「decision request の参照実装」）。
+
 試し終えたら `$AI_HARNESS_HOME` と `$D` を削除してください。
 
 ## 段の一覧
@@ -139,6 +177,7 @@ $H iac validate --plan "$D/iac/approver_is_implementer/plan.json" \
 | `knowledge context` | `--task-file`（schema `task-context`）、索引、`knowledge/config.json` | 標準出力（`knowledge-search-result` の JSON）。task file の `task_id` のタスク累計に追記します | なし | search と同じ（`mandatory_overflow`、`stale_index`、`task_budget_exhausted` は 1、principal が不明か設定が無いと 3）。task file が schema に通らない、JSON でない、256 KiB を超える、無いは 2 | ローカル（task file は読むだけ） |
 | `knowledge check` | `--task-file`、`--patch`（unified diff）、索引、`knowledge/config.json`、registry の版の記録と artifact | 標準出力（`knowledge-check-result` の JSON）。何も書きません | なし | 違反がある（`violations`）、当てられない検査がある（`incomplete`）、`stale_index` は 1。patch が 2 MiB を超える・UTF-8 でない・制御文字を含む・形が壊れている、task file の誤りは 2。repository の外を指す path（`../`、絶対 path）と、principal が不明なのは 3 | ローカル（読むだけ。宣言的検査はローカルの別プロセス） |
 | `knowledge decision put` / `answer` / `poll` / `list` / `cancel` | `--task-file`（put）、索引（put と poll）、`<ルート>/knowledge/decisions/`、人の入力（answer） | `<ルート>/knowledge/decisions/` に 1 回だけ書くファイル。標準出力（`decision-request` の `put_result` / `poll_result` / `list_result`、answer は `decision-response`） | なし | poll の `stale_response`、対象が open でない answer（2 回目の回答、期限切れ、取り下げ済み）と cancel は 1。選択肢に無い回答、読めない根拠 ID、質問や選択肢の上限超え・秘密情報の形、引数の誤りは 2。answer の TTY が無い、確認の hash の不一致、AI や自動化の名前、自動実行、queue の symlink は 3 | ローカル |
+| `knowledge export` | `--principal`（必須）、`--format context-entities`（必須）、`--project`、索引、`knowledge/config.json` | 標準出力だけ（project-context-explorer の `index add --file` が読む entity の JSON の list）。何も書きません | なし | 索引が今の設定に追随していない（`stale_index`）は何も出さずに 1。principal が不明か設定が無いと 3。索引が無い、引数の誤りは 2 | ローカル（読み取りだけ） |
 | `knowledge migrate` | `<ルート>/registry/`、今の索引、`knowledge/config.json` | `index.sqlite3` を入れ替え、入れ替える前の索引を `knowledge/backups/` に写します。標準出力に計画、バックアップの名前、検査の結果、generation の前後。`--dry-run` は何も書きません | なし | 一致の検査が通らない、WAL を読んでいる reader が残っている、別の writer が動いているは何も変えずに 1。設定が無い、registry の版が欠けているは 2 | ローカル。registry は読むだけ |
 | `knowledge rollback` | `--to <バックアップの名前>` か `--list` | `--to` は今の索引を `knowledge/backups/` に写してから、指定のバックアップを索引に戻します | なし | harness が作った形でない名前、無いバックアップ、索引でないファイルは 2。別の writer が動いていれば何も変えずに 1 | ローカル |
 
@@ -316,7 +355,7 @@ search は出典を読みに行かないので、`fresh` は「出典の取り�
 
 限界:
 
-- 語の一致なので、言い換えた query は拾いません（合成データの `paraphrase` の task がその例です）。必須のレコードは query に依存しないので、言い換えで必須が漏れることはありません。任意のレコードは漏れます。
+- 語の一致なので、言い換えた query は拾いません（合成データの `paraphrase` の task がその例で、下の「評価」に言い換えのある task と無い task の recall を分けて載せています）。必須のレコードは query に依存しないので、言い換えで必須が漏れることはありません。任意のレコードは漏れます。
 - token の数は見積もりで、実際の tokenizer の数とは違います。
 
 #### knowledge fetch
@@ -350,7 +389,7 @@ $H knowledge fetch --principal workspace-b --id KN-07abfa76823a --generation 0
 |---|---|
 | `registry:RG-<n>/v<n>.md` | `<ルート>/registry/<RG-id>/v<n>.md` |
 | `run:<run_id>/documents.jsonl#DOC-<n>#S<n>` | その run の `documents.jsonl` の、その文書の section の本文。run が消されていれば `source_unavailable` |
-| `git:<path>`、`git:<path>#L<a>`、`git:<path>#L<a>-L<b>` | レコードの `facets.repo` の bare リポジトリ（`<ルート>/cache/git/`、`spec analyze` が作るもの）から、`revision`（40 桁の commit sha）の時点のファイルを `git cat-file` で読みます。行の指定があればその行だけです。fetch はしないので、bare リポジトリにその commit が無ければ `source_unavailable` です |
+| `git:<path>`、`git:<path>#L<a>`、`git:<path>#L<a>-L<b>` | レコードの `facets.repo` の bare リポジトリ（`<ルート>/cache/git/`、`spec analyze` が作るもの）から、`revision`（40 桁の commit sha）の時点のファイルを `git cat-file` で読みます。行の指定があればその行だけです。fetch はしないので、bare リポジトリにその commit が無ければ `source_unavailable` です。path は英数字と `_ . @ + = , -` の要素だけで、先頭が `-` のものは読みません（project-context-explorer が拒む形。下の「project-context-explorer との役割の対応表」） |
 | `pr:`、`doc:` | この版では読みません（`source_unavailable`） |
 
 取得できなかった理由（`unfetched[].reason`）は次のとおりです。どれも本文を作って埋めず、exit 1 です。
@@ -639,6 +678,23 @@ Claude CLI を使う段は `--auth-mode api-key|subscription` の指定が必須
 
 個々の規則の細かい検査（各段の境界値、guard の許可リスト、schema）は `tests/unit/` と、ほかの `tests/e2e/` のファイルにあります。
 
+### Knowledge Retrieval（V2）の完了条件
+
+指示書の V2 の完了条件と、それを確かめるテストの対応です。データはすべて合成で、確かめているのは仕組みです。検索の質は下の「評価」と「未検証」を読んでください。
+
+| 完了条件 | テスト | 合成データで確かめていること |
+|---|---|---|
+| 予算超過 | `tests/e2e/test_knowledge_search_cli.py::test_the_overflowing_task_stops_and_goes_on_with_a_larger_budget`、`::test_what_does_not_fit_is_counted`、`tests/e2e/test_knowledge_fetch_cli.py::test_search_and_fetch_add_to_one_total_and_stop_at_the_limit` | 必須が予算に入らない task は `mandatory_overflow` で exit 1、`records` は空で、上限を上げた呼び直しで通る。入らなかった任意のレコードは `truncated` に数える。タスク累計を超える呼び出しは `task_budget_exhausted` で止まり、延長は理由と一緒に記録に残る |
+| 別プロジェクト漏洩 | `tests/e2e/test_knowledge_search_cli.py::test_the_limited_principal_sees_nothing_of_the_third_project`、`::test_a_successor_the_principal_cannot_read_does_not_leak`、`tests/e2e/test_knowledge_fetch_cli.py::test_an_unreadable_record_answers_exactly_like_a_missing_one`、`tests/e2e/test_knowledge_export_cli.py::test_only_approved_records_the_principal_reads_are_exported`、`tests/invariants/test_knowledge_boundaries.py::test_every_reader_method_that_reads_records_passes_the_access_filter` | 読めない project のレコードが search の結果、`truncated` の件数と ID、`conflicts`、置換の後継、fetch の答え、export、エラー文のどこにも出ない。principal が不明なら exit 3。`access` の無いレコードは索引に入らない |
+| 古い判断 | `tests/e2e/test_knowledge_search_cli.py::test_the_supersession_chain_returns_its_end_only`、`::test_a_superseded_decision_id_answers_with_its_successor`、`tests/e2e/test_knowledge_spec_cli.py::test_a_chain_returns_its_end_and_an_old_id_names_its_successor`、`tests/unit/test_knowledge_decisions.py::test_an_answer_whose_evidence_changed_is_stale_and_not_applied`、`::test_an_answer_for_another_head_is_stale` | 置換済みは既定で返らず、連鎖は末端だけが返る。置換済みの ID を聞くと後継を返す。根拠の hash か head が変わった後の回答は `stale_response` で適用しない |
+| 取得失敗 | `tests/e2e/test_knowledge_fetch_cli.py::test_the_traps_answer_with_their_reasons`、`::test_a_secret_shaped_source_is_named_but_never_printed` | 出典が無い、hash が違う、大きすぎる、秘密情報の形、のそれぞれで `unfetched` に理由が入り exit 1。本文を作らない |
+| 悪意ある原文 | `tests/e2e/test_knowledge_fetch_cli.py::test_the_injected_instruction_stays_inside_and_changes_nothing`、`tests/e2e/test_knowledge_search_cli.py::test_fts5_syntax_in_the_query_is_only_words`、`::test_control_and_bidi_characters_do_not_reach_the_output`、`tests/e2e/test_knowledge_fetch_cli.py::test_ids_that_are_not_record_ids_exit_2_with_nothing_on_stdout` | 断片の中の指示文は枠の中に留まり `instruction_like` が付き、status と enforcement は変わらない。query の FTS5 の構文や引用符は語として扱う。`../` を含む ID は拒否。制御文字と双方向制御文字は出力に出ない |
+| 移行の dry-run | `tests/unit/test_knowledge_migrate.py::test_a_dry_run_lists_the_plan_and_writes_nothing`、`::test_a_dry_run_after_a_search_left_its_wal_writes_nothing`、`tests/e2e/test_knowledge_migrate_cli.py::test_a_dry_run_through_the_command_line_writes_nothing`、`::test_a_mismatch_exits_1_and_leaves_the_index_as_it_was`、`::test_migrate_and_rollback_leave_the_registry_and_its_readers_alone` | dry-run は計画（レコード ID、scope、アクセス、enforcement、`unmapped`、`invalid`）を出して何も書かない。一致の検査が通らなければ入れ替えない。registry と既存の段の挙動は変わらない |
+| 並行実行時の整合性 | `tests/unit/test_knowledge_store.py::test_readers_never_see_a_mix_of_two_generations`、`::test_a_second_writer_from_another_thread_is_refused_too`、`::test_an_error_inside_the_transaction_changes_nothing`、`tests/e2e/test_knowledge_migrate_cli.py::test_a_reader_open_during_the_swap_keeps_reading_its_own_snapshot`、`tests/unit/test_knowledge_budget.py::test_two_processes_appending_at_once_lose_no_line_and_keep_the_limit`、`tests/unit/test_knowledge_decisions.py::test_concurrent_puts_in_separate_processes_make_one_request` | reader 複数と writer 1 つで各 reader の出力が 1 つの generation に対応する。writer 2 つでは片方が exit 1。writer が途中で止まっても generation は進まない。タスク累計と decision request は同時の追記でも数え漏れず、request は 1 つ |
+| 複数プロジェクト・複数 workspace | `tests/e2e/test_knowledge_loop_cli.py::test_the_loop_across_workspaces_projects_and_principals` | 2 つの project、2 つの workspace、2 つの principal で context、check、decision put / answer / poll を通し、重複は 1 件にまとまり、ほかの workspace の request は見えない |
+| 評価の script | `tests/e2e/test_knowledge_eval.py` | 50 件で script が通り、必須の見逃しが 0、同じ引数で同じ bytes、各指標に主張できる範囲が付く。3 規模で全量ロードは件数とともに増え、search は予算で頭打ちになる |
+| project-context-explorer との契約 | `tests/invariants/test_knowledge_explorer_contract.py`、`tests/e2e/test_knowledge_export_cli.py::test_every_entity_follows_the_explorers_contract` | 下の「project-context-explorer との役割の対応表」の 5 つの契約と、export の entity が explorer の検査の規則を通ること |
+
 ## autonomous-improvement との接続
 
 toshipon-mode plugin の Autonomous Improvement Harness v2（`plugins/toshipon-mode/skills/autonomous-improvement/`）の評価器として使えます。
@@ -663,6 +719,136 @@ toshipon-mode plugin の Autonomous Improvement Harness v2（`plugins/toshipon-m
 - `review evaluate` の指標のうち、接頭辞のないものは既存ルール + 候補、`baseline_` は既存ルールだけです。分母が 0 の指標は出さず、`notes` に名前を書きます。`--backend claude` で文章の候補を評価する場合は、指標が LLM の判定を含むので v2 側では `kind: "llm"` にします（各指標に `rationale` を付けています）。
 - 形を揃えているもの: evaluator の出力の evidence（`{id, ref, note}`）、`spec audit` の `findings[]` と `limitations[]` の外枠（finding の `id` は `F1`、`F2`…、`severity`、`category`、`claim`、`evidence[]`、`next_experiment`。違うのは `category` の enum だけで、テストが v2 の schema ファイルを読んでこの差分だけであることを検査します）、`--deny-terms-file` の形式（v2 の `privacy.deny_terms_file` と同じ）、評価のホールドアウトの規則（生成に使った PR で評価しない）。
 - コードは共有していません。v2 の schema はテストが読んで形を照合するだけで、実行時には import も参照もしません。
+
+## project-context-explorer との役割の対応表
+
+toshipon-mode plugin の project-context-explorer（`plugins/toshipon-mode/skills/project-context-explorer/`）も、本文を持たない索引を作ります。2 つは答える問いが違うので、統合せずに契約だけを合わせています。
+
+| 観点 | project-context-explorer の索引 | knowledge index |
+|---|---|---|
+| 目的 | 「理解する」ための地図。これは何で、どこにあり、何とつながるか | 「従う」ための索引。この作業に、どの承認済みの規範が適用されるか |
+| 範囲 | 1 つの checkout（`--root`）と scope ごと | organization / project / component / task。project と workspace をまたぐ |
+| 中身を書く者 | agent が書く記述。承認は無い | 承認済みの台帳から決定論的に作る。未承認は既定で返さない |
+| アクセス区分 | 無い | 必須。読めない principal には存在も出さない |
+| 取得 | 取得の手順を返し、agent が読む | CLI が断片を返し、hash を照合する |
+| 止まる条件 | 無い（広げるかは agent が決める） | 必須が予算に入らない、索引が古い、などで止まる |
+
+依存の向きは project-context-explorer → sre-harness のファイルだけです。explorer の `index import-registry` は spec の台帳（`decisions.json` など）を読み、`knowledge export --format context-entities` は索引の承認済みのレコードを explorer の `index add --file` が読む形で出します。harness は explorer の索引を読みません。agent が書いた未承認の記述を、規範の正本にしないためです。
+
+```bash
+$H knowledge export --principal workspace-a --format context-entities [--project project-alpha] > "$D/entities.json"
+python3 "<toshipon-mode の plugin>/skills/project-context-explorer/scripts/context-explorer.py" --root <checkout> \
+  index add --file "$D/entities.json"
+```
+
+- 出すのは、principal が読める承認済みのレコードのうち、承認済みの後継に置換されていないものです。アクセスの絞り込みは search と同じ store の 1 つの関数を通ります。`--project` を付けると organization とその project のレコードだけです。順は ID で、同じ索引なら同じ bytes です。
+- entity の `id` はレコード ID（`KN-…`）、`type` は決定なら `decision`、ルール・要件・宣言的検査は `requirement`、`description` は要約（1 行 240 文字まで）、`status` は `approved` です。`source` は harness 自身が読む `git:` の根拠だけで、`revision`（40 桁）、`sha256`、`size` を付けます。`registry:`、`run:`、`pr:`、`doc:` の根拠は `source` にしないので、explorer の `check` では `no_source` になります。関係は、出したレコードどうしの trace の関係だけです（置換済みは出さないので `supersedes` は出しません）。
+- 出力は標準出力だけで、harness はファイルに書きません。保存先は利用者が redirect で決めます。要約を含むので、リポジトリの中に置かないでください（explorer の索引も repository の外に置かれます）。
+- 合成データ（300 件、`workspace-b`）の export を explorer の `index add` に渡すと 151 件がすべて受け付けられることを、手元で確かめました。
+
+合わせている 5 つの契約です。`runtime/tests/invariants/test_knowledge_explorer_contract.py` が explorer のファイルを読んで（import はしません。定数は構文木から読み、純粋な `untrusted.py` と `cited_text` だけを import を確かめたうえで構文木から実行して答えを比べます）一致を確かめます。explorer が無い環境（sre-harness だけを入れた場合）では skip し、このリポジトリ（marketplace に toshipon-mode plugin がある）と `SRE_HARNESS_REQUIRE_EXPLORER=1` では失敗にします。CI は explorer のファイルが変わったときも走ります。
+
+| 契約 | 正とする側 | 一致させているもの | harness だけが持つもの・既知の差 |
+|---|---|---|---|
+| locator と revision | explorer の `references/contract.md` | `git:<path>#L<a>-L<b>`、`pr:<n>#comment-<id>`、`doc:<source>:<id>` の例が `knowledge-record` の evidence に通る。`git:` の行の範囲と hash（引いた行の sha256）が同じ | `registry:` と `run:` は harness だけの locator です。harness が `git:` を読むのは 40 桁の sha だけで（explorer は 7〜40 桁）、path は英数字と `_ . @ + = , -` だけ、行番号は先頭に 0 を付けない形だけです。どれも harness では `source_unavailable` になり、別の行を読むことはありません |
+| 関係名 | sre-harness の trace（`RELATION_NAMES`） | `refines` `implements` `verifies` `depends_on` `conflicts_with` と `supersedes` | `part_of` `decided_by` `discussed_in` `changed_by` は explorer だけの関係です |
+| 決定の状態 | `schemas/decision.schema.json` | `proposed` `approved` `rejected` `superseded` `unresolved` | `retired` は knowledge のレコードだけの値です |
+| token の見積もり | explorer の `base.py` | UTF-8 の 3 byte を 1 token（切り上げ） | なし |
+| untrusted の枠 | explorer の `untrusted.py` | 開始と終了の行、本文から計算する 16 桁の境界、`instruction_like=yes`、指示文の形の一覧、`clean` が取り除く文字、同じ入力に対する枠の文字列 | なし |
+
+照合で見つけた食い違いが 1 つあり、harness の側を直しました。explorer は先頭が `-` の path を拒みますが、`knowledge fetch` はそれを読んでいました。今は読みません。
+
+## 評価
+
+`runtime/examples/synthetic/knowledge_eval.py` が、合成データで全量ロードと search + fetch を比べます。LLM もネットワークも使わず、seed と時計を固定しているので、同じ引数なら同じ bytes を出します。時間は測りません。
+
+**次の表は合成データでの値です。** ラベルは生成の規則から決まります。これは仕組みが動くことの検証で、実際の検索の質の検証ではありません。1 つの比率を成果としません（全量は件数に比例し、検索は予算で頭打ちになるので、差は規模で決まります。50 件では search + fetch の方が全量ロードより多くなります）。見積もりは token の数え方の近似で、Claude Code の利用枠が減るとは主張しません。
+
+```bash
+cd "${CLAUDE_PLUGIN_ROOT}/runtime"
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.knowledge_eval --size 50 --size 300 --size 2000 --format markdown
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.knowledge_eval --size 50 > eval.json   # JSON
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.knowledge_eval --size 50 --format evaluator-output
+```
+
+3 規模で数秒です。CI（`tests/e2e/test_knowledge_eval.py`）も 3 規模を実行します。`--format evaluator-output` は autonomous-improvement の evaluator の出力（`evaluation.schema.json#/$defs/output`）で、指標ごとの `rationale` に主張できる範囲を入れます。
+
+定義です。
+
+- 全量ロード: task の principal が読める、organization と task の project の承認済みレコードをすべて、その根拠の原文（ルールの artifact、決定と要件の section）のまま context に入れた量です。component や task で絞りません。消えた原文は 0 と数えます。
+- search + fetch: skill の手順を、agent の代わりに次の決まった規則で近似した量です。数えるのは harness が数える `budget.used_tokens`（search はレコードの JSON、fetch は枠を含む断片）で、出力の JSON のほかの項目は数えません。
+  1. task から `knowledge context` と同じ search を 1 回（`--max-tokens 1500`、タスク累計に数える）。
+  2. `mandatory_overflow` なら、必須の token 数 + 1500 を上限にして 1 回だけ呼び直す（止まったときに利用者が上限を上げた、とみなす）。
+  3. 返ったレコードを順に見て、`applies_when` の文のどれかが task の query と検索の語を共有するものだけを fetch する（`--max-tokens 3000`、1 ページ、タスク累計に数える）。「`applies_when` を読み、今の作業に当たるときだけ原文を取る」の近似です。
+  4. `task_budget_exhausted` が出たら fetch をやめる。延長はしない。
+- 関係するレコード（precision と recall の分母）: task の必須のラベルと、task の topic（task の元の語の topic）の適用されるラベルです。precision と recall は task をまとめて数えた値です。「適用されるレコード全体に対して」の precision が 1 なのは、範囲の外や読めないレコードを返していないことを示します。recall が規模とともに下がるのは予算で頭打ちになるためです。
+- 言い換え: 30 task のうち 5 件（`TASK-0005`、`0011`、`0017`、`0023`、`0029`）は、レコードの言い回しと語を 1 つも共有しない query です。同じ 5 件を元の語で検索し直した値（タスク累計には数えません）を並べて、語の一致の弱さを見ます。必須のレコードは query に依存しないので、言い換えでも返ります。
+- 反復指摘率の代理: review の合成データ（`github_responses.py` の評価用 PR の 30 hunk）を、合成の registry（`review_registry.py`）の `example-org/gamma` の task にします。人が指摘した hunk（`reproduced` と `missed` の 15 件）について、その repo の timeout の規則（`RG-9005`）が task の検索結果に入っていたかを数えます。宣言的検査の pattern は `requests.(get|post)` なので、`knowledge check` が違反にするのは `requests.post` の hunk（3 件）だけです。実際の反復指摘率は、使い始めてからでないと測れません。
+- 判断待ち: 30 task がそれぞれ 1 件ずつ尋ね、5 件に 1 件は別の workspace からも同じことを尋ねます。
+- 並行時の整合性: reader 3 つと writer（6 回の更新）を同時に動かし、各 reader の出力が、その generation の出力と byte 単位で同じかを確かめます。writer の lock を持ったまま 2 つ目の writer を動かし、取り込みの途中（2 件を書いた後）で例外を起こします。
+
+検索方式（`--method`）は、`METHODS` の `(root, principal の名前, search.Request, now) -> 結果` の関数です。今は `fts5`（`knowledge search` そのもの）だけで、ほかの方式を足すとすべての指標が同じ規則で出ます。
+
+<!-- 次の表は `--size 50 --size 300 --size 2000 --format markdown` の出力の、検索方式の行より後です -->
+
+入力 token（平均 / 中央値 / p95 / 最小 / 最大）:
+
+| 指標 | 50 件 | 300 件 | 2000 件 | 範囲 |
+|---|---|---|---|---|
+| 全量ロード | 394.5 / 403.0 / 633 / 122 / 633 | 2227.5 / 2542.0 / 2624 / 631 / 2624 | 14954.2 / 16966.0 / 17103 / 4719 / 17103 | 入力 token |
+| search + fetch | 1195.0 / 1136.5 / 1603 / 463 / 5112 | 1645.8 / 1659.0 / 1854 / 665 / 5931 | 1703.9 / 1686.0 / 1953 / 665 / 5975 | 入力 token |
+| うち search | 1038.1 / 985.0 / 1336 / 391 / 4073 | 1367.8 / 1336.0 / 1377 / 665 / 5259 | 1375.7 / 1325.0 / 1499 / 665 / 5254 | 入力 token |
+| うち fetch | 156.9 / 88.0 / 313 / 0 / 1039 | 278.0 / 318.5 / 477 / 0 / 672 | 328.2 / 367.0 / 517 / 0 / 721 | 入力 token |
+
+主張できる範囲:
+
+- 入力 token: 合成データでの見積もり（UTF-8 の 3 byte を 1 token）の分布。全量は件数に比例し、検索は予算で頭打ちになるので、差は規模で決まる。1 つの比率を成果にしない。実際の tokenizer の数と、セッション全体の消費（呼び出しの回数、追加のターン、prompt cache）は含まない
+
+取得の precision / recall（task をまとめて数えた値）:
+
+| 指標 | 50 件 | 300 件 | 2000 件 | 範囲 |
+|---|---|---|---|---|
+| 言い換えなし（25 task） | 0.7724 / 0.9694 | 0.8284 / 0.5303 | 1.0000 / 0.1188 | 取得 |
+| 言い換え（5 task） | 1.0000 / 0.7619 | 1.0000 / 0.2712 | 1.0000 / 0.0478 | 取得 |
+| 言い換えの task を元の語で（5 task） | 1.0000 / 0.9524 | 1.0000 / 0.5424 | 1.0000 / 0.0896 | 取得 |
+| 適用されるレコード全体に対して | 1.0000 / 0.6150 | 1.0000 / 0.1275 | 1.0000 / 0.0185 | 取得 |
+
+主張できる範囲:
+
+- 取得: 合成データでの値。ラベルは生成の規則から決まる。言い換えの query は語の一致の弱さを見るためのもので、人が書く query の分布は再現しない
+
+必須ルール、根拠、判断待ち:
+
+| 指標 | 50 件 | 300 件 | 2000 件 | 範囲 |
+|---|---|---|---|---|
+| 必須の見逃し（最初の search が ok の task） | 0 | 0 | 0 | 必須 |
+| 最初の search が止まった task（割合） | 1（0.03） | 1（0.03） | 1（0.03） | 必須 |
+| 止まった回数（理由ごと） | mandatory_overflow 1 | mandatory_overflow 1、task_budget_exhausted 1 | mandatory_overflow 1、task_budget_exhausted 1 | 必須 |
+| fetch した断片の hash が記録と合う | 60 / 60 | 105 / 105 | 126 / 126 | 根拠 |
+| 仕込んだ不一致の検出 | 2 / 2 | 2 / 2 | 2 / 2 | 根拠 |
+| 判断待ち（open）/ 重複で落とした | 30 / 6 | 30 / 6 | 30 / 6 | 判断待ち |
+
+主張できる範囲:
+
+- 必須: 止まってばかりで見逃し 0 でも意味が無いので、見逃した task の数と止まった task の割合を並べる。合成データでの値
+- 根拠: 合成データでの値。仕込んだ不一致（記録の後に変えた原文、消した原文）の検出の数
+- 判断待ち: 仕組みの検証。合成のシナリオで数えた件数で、実際の判断待ちの件数は測っていない
+
+規模によらない指標:
+
+| 指標 | 値 | 範囲 |
+|---|---|---|
+| 反復指摘率の代理（違反のある hunk のうち、規則が検索結果に入っていた） | 15 / 15 | 反復指摘の代理 |
+| 並行時の整合性（reader 3 つと writer、writer 2 つ、途中で止めた writer） | すべて成り立つ | 並行 |
+| 見積もりと実 token の差 | 測っていない | 見積もりの差 |
+
+主張できる範囲:
+
+- 反復指摘の代理: 代理の指標。合成の評価用 PR の違反のある hunk について、その規則が task の検索結果に入っていたかだけを見る。実際の反復指摘率は、使い始めてからでないと測れない
+- 並行: この OS とこの SQLite での確認。ネットワークファイルシステムと別の host は含まない。より細かい検査は tests/unit/ の test_knowledge_store.py、test_knowledge_budget.py、test_knowledge_decisions.py
+- 見積もりの差: CI では測らない。手順は README の「評価」にあり、測った文字列の範囲のことしか言えない
+
+見積もりと実際の tokenizer の差は CI では測りません。測るときは、合成データの task のうち数件について、`knowledge context` と `knowledge fetch` の標準出力を Anthropic の token counting API（`messages/count_tokens`）か利用中の tokenizer に渡し、`budget.used_tokens` と並べます。言えるのは、測った文字列の範囲のことだけです。この README には実測値を書いていません。
 
 ## 未検証
 
@@ -690,13 +876,22 @@ toshipon-mode plugin の Autonomous Improvement Harness v2（`plugins/toshipon-m
 - 実際の Slack と Confluence の export の全形式。読むのは下に書いた形だけで、Slack の channel ディレクトリ全体や Confluence の HTML export には対応していません。
 - patch の header 解析と git の `git apply` の解釈の一致。許可する形を狭く決めてそれ以外を拒否する作りで、確かめたのは git 2.54 と CI の git だけです。
 - bare リポジトリの fetch は `fetch.fsckObjects=true` で行います。古い履歴に fsck の警告（壊れた日付、tree の並び順など）がある実際のリポジトリで fetch が失敗するかは確かめていません。失敗したら default branch の fetch で exit 1 になります。
-- `knowledge fetch` の `git:` の locator を、`spec analyze` が実際に作った bare リポジトリで読むこと。テストはローカルで作った合成の bare リポジトリだけを通ります。`pr:` と `doc:` の出典は読みません。タスク累計の既定値（6000）と fetch の既定の上限（3000）が実際の作業で妥当かも測っていません。
-- `knowledge migrate` と `rollback` の入れ替え。確かめたのは、手元の macOS（SQLite 3.54.1）で、別プロセスの reader が古いファイルを開いたまま入れ替えても読み続けられること、WAL の frame を読んでいる reader がいると exit 1 で止まることだけです。CI の OS と SQLite、ネットワークファイルシステムでは確かめていません。実際の registry（`review approve` が実際の端末で書いたもの）での移行もしていません。
-- `knowledge update --source spec-run` を、実際の文書から `spec extract --backend claude` と `spec analyze` が作った run で取り込むこと。テストは合成の文書を stub で抽出した run と、手で書いた合成の `trace.json` だけを通ります。実際の端末で `--knowledge-*` を付けた `review approve` も行っていません。
-- `knowledge decision` の参照実装を、ネットワークファイルシステムや複数の host で共有した保存先で使うこと。排他は 1 台の OS の flock と、link による 1 回だけの作成に頼っていて、確かめたのは手元の macOS で thread と別プロセスが同時に put した場合だけです。実際の端末での `knowledge decision answer` は、手元で pty を開いて起動し確認の hash を打ち込む経路だけを通しました（`review approve` と同じく、pty を開くプログラムは通ります）。
-- `knowledge check` が読む unified diff の形。読むのは `git diff` の形（`diff --git`、`---` / `+++`、hunk の見出しの行数）と、`---` / `+++` だけの形です。引用符で囲んだ path は exit 2 で、combined diff（`@@@`）と binary の差分は hunk として読まないので検査されません。実際の作業で出る diff での誤検知と見落としは測っていません。
-- `knowledge search` の検索の質。合成データで確かめたのは、必須の集合がラベルと一致すること、予算と止まる条件、置換、漏れないことだけです。任意のレコードの recall と precision、既定の予算（1500 token）と鮮度の閾値（168 時間）が実際の作業で妥当かは測っていません。
 - `impact-report.md` の自動リンク対策（`www.`、`@`、`://` の文字参照化）が GitHub の Markdown 表示で実際にリンクにならないこと。テストは文字列に元の形が残らないことだけを確かめています。
+
+### Knowledge Retrieval（V2）の未検証
+
+確かめたのは、合成データで仕組みが動くことだけです（上の「Knowledge Retrieval（V2）の完了条件」と「評価」）。次のことは確かめていません。
+
+- 実際の Claude での消費。入力 token は合成データで見積もった分布だけで、実際の tokenizer の数とも、セッション全体の消費（search と fetch の呼び出し、追加のターン、prompt cache の効き方）とも比べていません。Claude Code の利用枠が減ることは保証しません。知識の入力 token が減っても、全体の消費は増えることも減ることもあります。測るなら、同じ task を 2 つの方式で実際に実行し、呼び出しごとの usage を回数とばらつきを付けて比べる必要があります。
+- 検索の質。合成データの precision と recall はラベルが生成の規則から決まる値で、人が書く query と実際の規範の分布は再現しません。語の一致なので言い換えた query は拾いません（「評価」の言い換えの行）。言い換え語に広げる方式、ベクトルとのハイブリッドは、この版では比べていません（次の版で同じ評価の script で比べます）。
+- 予算と閾値の既定値。search の 1500 token、fetch の 3000 token、タスク累計の 6000 token、鮮度の 168 時間が実際の作業で妥当かは測っていません。
+- アクセス区分は本人確認ではありません。principal の名前、`access` の区分と reader は、別 project の知識がうっかり混ざるのを防ぐだけで、同じ OS の利用者は索引、queue、タスク累計のファイルを直接読み書きできます。
+- ネットワークファイルシステムと複数の host。索引の WAL、writer の flock、タスク累計と decision request の flock と link は、ローカルディスクの 1 台の OS を前提にしています。確かめたのは手元の macOS（SQLite 3.54.1）での thread と別プロセスの同時実行と、`knowledge migrate` と `rollback` の入れ替え（reader が古いファイルを開いたまま読み続けること、WAL の frame を読んでいる reader がいると exit 1 で止まること）だけです。CI の OS と SQLite での結果は、この README を書いた時点では確かめていません。
+- 実際の端末での承認と回答。`--knowledge-*` を付けた `review approve` は実際の端末で行っていません。`knowledge decision answer` は、手元で pty を開いて起動し確認の hash を打ち込む経路だけを通しました（`review approve` と同じく、pty を開くプログラムは通ります）。
+- 実際の run と registry からの取り込み。`knowledge update --source spec-run` は、合成の文書を stub で抽出した run と手で書いた合成の `trace.json` だけで、実際の文書から `spec extract --backend claude` と `spec analyze` が作った run では取り込んでいません。`knowledge migrate` も、実際の端末で `review approve` が書いた registry では行っていません。
+- `knowledge fetch` の出典。`git:` は、ローカルで作った合成の bare リポジトリだけで読み、`spec analyze` が実際に作った bare リポジトリでは読んでいません。`pr:` と `doc:` の出典は読みません。
+- `knowledge check` が読む unified diff の形。読むのは `git diff` の形（`diff --git`、`---` / `+++`、hunk の見出しの行数）と、`---` / `+++` だけの形です。引用符で囲んだ path は exit 2 で、combined diff（`@@@`）と binary の差分は hunk として読まないので検査されません。実際の作業で出る diff での誤検知と見落としは測っていません。
+- `knowledge export` の出力を project-context-explorer に渡すのは、合成データで 1 回 `index add` と `check` を通しただけです。explorer の側の entity の検査は、テストでは explorer の定数から読んだ規則で行っていて、explorer のコードそのものは実行していません。
 
 ## Review Learning: 収集と正規化
 
@@ -1270,9 +1465,11 @@ python -m coverage run -m pytest && python -m coverage report
 SRE_HARNESS_REQUIRE_OPA=1 python -m pytest
 # 完了条件の E2E だけ
 python -m pytest tests/e2e/test_completion_scenarios.py
+# 評価の script（合成データの 3 規模。「評価」の表を出す）
+python -m examples.synthetic.knowledge_eval --size 50 --size 300 --size 2000 --format markdown
 ```
 
 - テストはネットワークも認証も、本物の `claude` も使いません。例と fixture は合成データだけです。GitHub は fixture transport、git はテストが一時ディレクトリに作る合成リポジトリ、Claude CLI は `guard._run` の差し替えか stub です。
 - opa が PATH に無いと、opa を使うテストは理由付きで SKIP と表示されます。`SRE_HARNESS_REQUIRE_OPA=1` を付けると、SKIP ではなく失敗になります。
-- CI（`.github/workflows/sre-harness.yml`）は Python 3.10 と 3.13 で、compileall、ruff、pyright、opa を入れた上での `SRE_HARNESS_REQUIRE_OPA=1` の pytest と coverage を実行します。macOS（Python 3.13）でも pytest を実行します（knowledge index の flock、WAL、FTS5 を確かめるためです。opa は入れないので、opa のテストは SKIP になります）。opa は v1.22.2 の Linux amd64 static バイナリを版固定の URL から取得し、公式の `.sha256` の値で検査してから PATH に置きます。
-- `tests/invariants/` は、子プロセスを起動できるのが `guard.py` だけであること（AST の検査）、plugin のファイルに秘密情報の形が無いこと、plugin のファイルに出る URL の host が許可リスト（`example.com`、`example.org`、`github.com`、`api.github.com`、schema の host、`*.invalid`、`*.example`）の中だけであることなどを検査します。
+- CI（`.github/workflows/sre-harness.yml`）は、この plugin のほかに project-context-explorer のファイルが変わったときも走ります（契約の照合テストが読むため）。Python 3.10 と 3.13 で、compileall、ruff、pyright、opa を入れた上での `SRE_HARNESS_REQUIRE_OPA=1` の pytest と coverage を実行します。macOS（Python 3.13）でも pytest を実行します（knowledge index の flock、WAL、FTS5 を確かめるためです。opa は入れないので、opa のテストは SKIP になります）。opa は v1.22.2 の Linux amd64 static バイナリを版固定の URL から取得し、公式の `.sha256` の値で検査してから PATH に置きます。
+- `tests/invariants/` は、子プロセスを起動できるのが `guard.py` だけであること（AST の検査）、plugin のファイルに秘密情報の形が無いこと、plugin のファイルに出る URL の host が許可リスト（`example.com`、`example.org`、`github.com`、`api.github.com`、schema の host、`*.invalid`、`*.example`）の中だけであること、project-context-explorer との 5 つの契約が一致すること（`SRE_HARNESS_REQUIRE_EXPLORER=1` で explorer が無いときに SKIP でなく失敗にします）などを検査します。
