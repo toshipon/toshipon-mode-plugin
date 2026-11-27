@@ -302,22 +302,39 @@ def _superseded(applicable, replaced, request):
     return [{"asked": clean(request.decision_id), "by": by}] if by else []
 
 
-def select(rows, *, request, matches, provenance, sources, conflict_edges, now):
-    """Steps 2-8 over the records the principal may read. Pure: the store's answers come in as
-    plain values (`matches` {id: bm25}, `provenance` {id: source}, `sources` {name: row},
-    `conflict_edges` [(id, id)])."""
-    words = terms.terms(request.query)
+@dataclass(frozen=True)
+class Narrowed:
+    """Step 2. `applicable`: every record in scope whose facets fit, by id; `replaced`: see
+    `replacements`; `live`: the approved records of `applicable` that nothing replaces."""
+
+    applicable: list
+    replaced: dict
+    live: list
+
+
+def narrow(rows, request):
+    """Step 2 over the records the principal may read. Pure; the query plays no part."""
     replaced = replacements(rows)
-
-    def fresh(row):
-        return freshness(row, provenance.get(row["id"]), sources, now, request.stale_after_hours)
-
     applicable = [
         row
         for row in sorted(rows, key=lambda row: row["id"])
         if in_scope(row, request) and facet_match(row, request)[0]
     ]
     live = [row for row in applicable if row["status"] == "approved" and row["id"] not in replaced]
+    return Narrowed(applicable, replaced, live)
+
+
+def select(rows, *, request, matches, provenance, sources, conflict_edges, now):
+    """Steps 2-8 over the records the principal may read. Pure: the store's answers come in as
+    plain values (`matches` {id: bm25}, `provenance` {id: source}, `sources` {name: row},
+    `conflict_edges` [(id, id)])."""
+    words = terms.terms(request.query)
+    narrowed = narrow(rows, request)
+    applicable, replaced, live = narrowed.applicable, narrowed.replaced, narrowed.live
+
+    def fresh(row):
+        return freshness(row, provenance.get(row["id"]), sources, now, request.stale_after_hours)
+
     must = sorted(
         (row for row in live if row["enforcement"] == "mandatory"),
         key=lambda row: _rank(row, request),

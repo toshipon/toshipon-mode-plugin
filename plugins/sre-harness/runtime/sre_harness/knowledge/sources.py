@@ -87,6 +87,20 @@ def _registry(root, match):
     return _regular_file(root, ("registry", match[1], match[2]), MAX_SOURCE_BYTES)
 
 
+def registry_artifact(locator):
+    """(entry id, version name) of a `registry:RG-<n>/v<n>.md` locator, or None."""
+    match = _REGISTRY.fullmatch(locator)
+    return None if match is None else (match[1], match[2].removesuffix(".md"))
+
+
+def registry_version(root, entry, version):
+    """The text of the version record `registry/<entry>/<version>.json` (as `registry_artifact`
+    names it), read as safely as an evidence text."""
+    if _REGISTRY.fullmatch(f"registry:{entry}/{version}.md") is None:
+        return UNAVAILABLE
+    return _regular_file(root, ("registry", entry, f"{version}.json"), MAX_SOURCE_BYTES)
+
+
 def _section(rows, document, section):
     for row in rows:
         if not isinstance(row, dict) or row.get("id") != document:

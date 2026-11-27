@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:decision-request",
+  "title": "decision-request",
+  "description": "A question a task puts to a person through a decision queue. A queue adapter offers two operations: put(request) answers accepted or duplicate (with the id of the request already there), and poll(workspace_id) answers the responses for that workspace. The reference queue is files: <state root>/knowledge/decisions/outbox/<id>.json, written once with status open; the status a reader sees (answered, cancelled, expired, superseded) is derived from the files beside it. `revision` is the state the question was asked in; a response is not applied once the evidence or the head has moved from it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "task_id",
+    "workspace_id",
+    "principal",
+    "question",
+    "options",
+    "evidence_ids",
+    "risk",
+    "status",
+    "revision",
+    "dedupe_key",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "id": { "$ref": "#/$defs/request_id" },
+    "task_id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+    "workspace_id": {
+      "description": "The workspace that put the request first.",
+      "$ref": "urn:sre-harness:knowledge-record#/$defs/name"
+    },
+    "principal": {
+      "description": "Whose access the evidence was read with, then and when it is checked again.",
+      "$ref": "urn:sre-harness:knowledge-record#/$defs/name"
+    },
+    "question": { "$ref": "#/$defs/question" },
+    "options": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/option" }
+    },
+    "evidence_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:sre-harness:knowledge-record#/$defs/record_id" }
+    },
+    "risk": { "enum": ["low", "medium", "high"] },
+    "status": { "$ref": "#/$defs/status" },
+    "revision": { "$ref": "#/$defs/revision" },
+    "dedupe_key": {
+      "description": "sha256 of the task, the normalized question, the evidence ids and the revision: two puts with the same key are one request.",
+      "$ref": "urn:sre-harness:common#/$defs/sha256"
+    },
+    "created_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "expires_at": {
+      "description": "Optional. From then on an unanswered request is expired and takes no answer.",
+      "$ref": "urn:sre-harness:common#/$defs/timestamp"
+    }
+  },
+  "$defs": {
+    "request_id": { "type": "string", "pattern": "^DR-[0-9a-f]{12}$" },
+    "status": { "enum": ["open", "answered", "cancelled", "expired", "superseded"] },
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+    },
+    "option": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+    },
+    "revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation", "content_hashes", "head_sha"],
+      "properties": {
+        "generation": { "type": "integer", "minimum": 0 },
+        "content_hashes": {
+          "description": "{evidence record id: its content_hash} when the request was put.",
+          "type": "object",
+          "propertyNames": { "$ref": "urn:sre-harness:knowledge-record#/$defs/record_id" },
+          "additionalProperties": { "$ref": "urn:sre-harness:common#/$defs/sha256" }
+        },
+        "head_sha": {
+          "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$" }, { "type": "null" }]
+        }
+      }
+    },
+    "put_result": {
+      "description": "What `knowledge decision put` prints.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "status", "request"],
+      "properties": {
+        "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+        "status": { "enum": ["accepted", "duplicate"] },
+        "request": { "$ref": "urn:sre-harness:decision-request" }
+      }
+    },
+    "list_result": {
+      "description": "What `knowledge decision list` prints: every request, with its status now.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "now", "requests"],
+      "properties": {
+        "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+        "now": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "requests": { "type": "array", "items": { "$ref": "urn:sre-harness:decision-request" } }
+      }
+    },
+    "poll_result": {
+      "description": "What `knowledge decision poll` prints for one workspace. `responses` are the answers to apply now, each delivered to this workspace once; `already_delivered` were returned to it before and are not to be applied again; `stale` were answered for another state of the evidence or the head and are not to be applied (exit 1). A `candidate_hint` is material for a person to propose a candidate through the approval flow; it changes nothing in the index or the registry.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "status",
+        "workspace_id",
+        "snapshot",
+        "now",
+        "requests",
+        "responses",
+        "already_delivered",
+        "stale",
+        "candidate_hints"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+        "status": { "enum": ["ok", "stale_response"] },
+        "workspace_id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+        "snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["generation"],
+          "properties": { "generation": { "type": "integer", "minimum": 0 } }
+        },
+        "now": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "requests": { "type": "array", "items": { "$ref": "urn:sre-harness:decision-request" } },
+        "responses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["request_id", "response"],
+            "properties": {
+              "request_id": { "$ref": "#/$defs/request_id" },
+              "response": { "$ref": "urn:sre-harness:decision-response" }
+            }
+          }
+        },
+        "already_delivered": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["request_id", "delivered_at", "response"],
+            "properties": {
+              "request_id": { "$ref": "#/$defs/request_id" },
+              "delivered_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+              "response": { "$ref": "urn:sre-harness:decision-response" }
+            }
+          }
+        },
+        "stale": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["request_id", "reasons"],
+            "properties": {
+              "request_id": { "$ref": "#/$defs/request_id" },
+              "reasons": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "enum": [
+                    "content_hash_changed",
+                    "evidence_unavailable",
+                    "head_sha_changed",
+                    "head_sha_not_given"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "candidate_hints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["request_id", "question", "option", "evidence_ids", "reuse"],
+            "properties": {
+              "request_id": { "$ref": "#/$defs/request_id" },
+              "question": { "$ref": "#/$defs/question" },
+              "option": { "$ref": "#/$defs/option" },
+              "evidence_ids": { "$ref": "urn:sre-harness:decision-request#/properties/evidence_ids" },
+              "reuse": { "$ref": "urn:sre-harness:decision-response#/$defs/reuse" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

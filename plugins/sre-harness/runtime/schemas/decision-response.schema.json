@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:decision-response",
+  "title": "decision-response",
+  "description": "A person's answer to one decision request. The reference queue keeps it at <state root>/knowledge/decisions/inbox/<request id>.json, written once. `responder` names a person; AI and automation names are refused. This is not authentication. An answer applies to its task only unless `reuse` says otherwise, and even then it is never a rule by itself: reuse beyond the task goes through the approval flow as a candidate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "option", "responder", "answered_at", "reuse"],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "request_id": { "$ref": "urn:sre-harness:decision-request#/$defs/request_id" },
+    "option": { "$ref": "urn:sre-harness:decision-request#/$defs/option" },
+    "responder": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+    },
+    "answered_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "reuse": { "$ref": "#/$defs/reuse" }
+  },
+  "$defs": {
+    "reuse": {
+      "description": "Where the answer may be used again, and until when. task (the default) is the request's task only; project needs `until`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "until"],
+      "properties": {
+        "scope": { "enum": ["task", "project"] },
+        "until": {
+          "anyOf": [{ "$ref": "urn:sre-harness:common#/$defs/timestamp" }, { "type": "null" }]
+        }
+      },
+      "if": { "properties": { "scope": { "const": "project" } } },
+      "then": { "properties": { "until": { "$ref": "urn:sre-harness:common#/$defs/timestamp" } } }
+    }
+  }
+}

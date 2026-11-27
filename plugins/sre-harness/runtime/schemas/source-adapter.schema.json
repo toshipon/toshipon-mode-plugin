@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:source-adapter",
+  "title": "source-adapter",
+  "description": "What a source adapter's changes(cursor) answers to `knowledge update`. An adapter has a name (the --source value), a source (a stable name of the one source it reads, which keys its cursor in the index) and changes(cursor). The update checks each item again on its own; an item that fails is rejected, never indexed. Only an answer with complete true turns a record missing from `items` into a tombstone. An adapter reads its source only: it never writes the index.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["items", "tombstones", "cursor", "complete"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": { "$ref": "urn:sre-harness:knowledge-record#/$defs/item" }
+    },
+    "tombstones": {
+      "type": "array",
+      "items": { "$ref": "urn:sre-harness:knowledge-record#/$defs/tombstone" }
+    },
+    "cursor": {
+      "description": "What to hand back next time; the index keeps it per source.",
+      "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 200 }, { "type": "null" }]
+    },
+    "complete": { "type": "boolean" },
+    "skipped": {
+      "description": "Entries of the source that yield no item, and why (null when the adapter keeps no such list). The record `id` of each (null when there is none) leaves the index as rejected.",
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "reason"],
+            "properties": {
+              "id": {
+                "anyOf": [{ "$ref": "urn:sre-harness:knowledge-record#/$defs/record_id" }, { "type": "null" }]
+              },
+              "reason": { "type": "string", "minLength": 1, "maxLength": 100 }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

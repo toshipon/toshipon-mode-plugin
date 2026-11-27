@@ -136,6 +136,9 @@ $H iac validate --plan "$D/iac/approver_is_implementer/plan.json" \
 | `knowledge status` | 索引 | 標準出力だけ（generation、SQLite と FTS5、ソースの cursor、status 別の件数） | なし | 索引の schema version が違えば 2 | ローカル |
 | `knowledge search` | 索引、`knowledge/config.json`、`--principal`（必須）と scope・facet・query・予算 | 標準出力（`knowledge-search-result` の JSON）。`--task` を付けたときだけ `<ルート>/knowledge/tasks/<hash>.jsonl` に追記します | なし | 必須が予算に入らない（`mandatory_overflow`）、索引が今の設定に追随していない（`stale_index`）、タスク累計を超える（`task_budget_exhausted`）は 1。principal が不明か設定が無いと 3。索引が無い、引数の誤りは 2 | ローカル（読み取りだけ） |
 | `knowledge fetch` | 索引、`knowledge/config.json`、`--principal` と `--id`（必須）、レコードの出典（registry の artifact、run の `documents.jsonl`、bare リポジトリ） | 標準出力（`knowledge-fetch-result` の JSON）。`--task` を付けたときだけタスク累計に追記します | なし | 取得できない出典がある（`incomplete`）、取り下げ済み（`withdrawn`）、1 行も入らない（`max_tokens_too_small`）、`stale_index`、`task_budget_exhausted` は 1。principal が不明か設定が無いと 3。ID の形の誤り、`--offset` が末尾より後ろ、索引が無いは 2 | ローカル（読み取りだけ。git は bare リポジトリの object を読むだけで fetch しません） |
+| `knowledge context` | `--task-file`（schema `task-context`）、索引、`knowledge/config.json` | 標準出力（`knowledge-search-result` の JSON）。task file の `task_id` のタスク累計に追記します | なし | search と同じ（`mandatory_overflow`、`stale_index`、`task_budget_exhausted` は 1、principal が不明か設定が無いと 3）。task file が schema に通らない、JSON でない、256 KiB を超える、無いは 2 | ローカル（task file は読むだけ） |
+| `knowledge check` | `--task-file`、`--patch`（unified diff）、索引、`knowledge/config.json`、registry の版の記録と artifact | 標準出力（`knowledge-check-result` の JSON）。何も書きません | なし | 違反がある（`violations`）、当てられない検査がある（`incomplete`）、`stale_index` は 1。patch が 2 MiB を超える・UTF-8 でない・制御文字を含む・形が壊れている、task file の誤りは 2。repository の外を指す path（`../`、絶対 path）と、principal が不明なのは 3 | ローカル（読むだけ。宣言的検査はローカルの別プロセス） |
+| `knowledge decision put` / `answer` / `poll` / `list` / `cancel` | `--task-file`（put）、索引（put と poll）、`<ルート>/knowledge/decisions/`、人の入力（answer） | `<ルート>/knowledge/decisions/` に 1 回だけ書くファイル。標準出力（`decision-request` の `put_result` / `poll_result` / `list_result`、answer は `decision-response`） | なし | poll の `stale_response`、対象が open でない answer（2 回目の回答、期限切れ、取り下げ済み）と cancel は 1。選択肢に無い回答、読めない根拠 ID、質問や選択肢の上限超え・秘密情報の形、引数の誤りは 2。answer の TTY が無い、確認の hash の不一致、AI や自動化の名前、自動実行、queue の symlink は 3 | ローカル |
 | `knowledge migrate` | `<ルート>/registry/`、今の索引、`knowledge/config.json` | `index.sqlite3` を入れ替え、入れ替える前の索引を `knowledge/backups/` に写します。標準出力に計画、バックアップの名前、検査の結果、generation の前後。`--dry-run` は何も書きません | なし | 一致の検査が通らない、WAL を読んでいる reader が残っている、別の writer が動いているは何も変えずに 1。設定が無い、registry の版が欠けているは 2 | ローカル。registry は読むだけ |
 | `knowledge rollback` | `--to <バックアップの名前>` か `--list` | `--to` は今の索引を `knowledge/backups/` に写してから、指定のバックアップを索引に戻します | なし | harness が作った形でない名前、無いバックアップ、索引でないファイルは 2。別の writer が動いていれば何も変えずに 1 | ローカル |
 
@@ -177,7 +180,7 @@ exit code の意味はすべての段で同じです。
 | run | `<ルート>/runs/<run_id>/`。毎回新しいディレクトリで、既存の run は上書きしません |
 | 承認の記録 | `<ルート>/registry/<RG-id>/`。版は追記だけです |
 | bare リポジトリ | `<ルート>/cache/git/`。run をまたいで使います |
-| knowledge index | `<ルート>/knowledge/`。`config.json`（人が書く設定）、`index.sqlite3`（索引）、`writer.lock`、`tasks/<hash>.jsonl`（タスク累計の記録）、`backups/`（`migrate` と `rollback` が入れ替える前の索引） |
+| knowledge index | `<ルート>/knowledge/`。`config.json`（人が書く設定）、`index.sqlite3`（索引）、`writer.lock`、`tasks/<hash>.jsonl`（タスク累計の記録）、`backups/`（`migrate` と `rollback` が入れ替える前の索引）、`decisions/`（decision request の参照実装の outbox / inbox） |
 | 権限 | ディレクトリ 0700、ファイル 0600 |
 
 run にはレビュー本文、diff、文書の section が入ります。消すときは `runs/<run_id>/` を、bare リポジトリは `cache/git/` を削除してください（次の実行で作り直します）。ホームディレクトリを git で管理している場合、既定の場所は拒否されます。`AI_HARNESS_HOME` にリポジトリの外のディレクトリを指定してください。
@@ -447,6 +450,107 @@ WAL と入れ替え:
 - 索引は作り直せるので、`knowledge/index.sqlite3`（と `-wal`、`-shm`）を消しても正本は失われません。`knowledge update` で作り直せます。skill の手順を `knowledge search` に切り替えた後で戻すときは、skill の文面も戻してください。
 - バックアップの数に上限は無く、自動では消しません。要らないものは `knowledge/backups/` から `rm` で消してください（`rollback --list` に出る名前のファイルだけです）。
 
+### 実行・学習ループとの統合
+
+harness のコアが知るのは 3 つの契約だけです。タスクを動かすランナー（例: 端末の多重化、CI、人の手作業）、人に判断を求めるキュー（例: チケット管理、チャット）、知識の出典は、どれも JSON Schema と argv・標準入出力の規約でつなぎます。特定のツールの名前と、チケットの ID の読み方はコアに入れません。harness はランナーを同梱しません。
+
+| 契約 | schema | 作る側 | 使う側 |
+|---|---|---|---|
+| タスクランナー | `runtime/schemas/task-context.schema.json` | ランナー（`task_id`、`workspace_id`、`principal`、`project_id`、`component_id`、`repo`、`base_sha`、`changed_paths`、`resource_types` を書いた JSON） | `knowledge context`、`knowledge check`、`knowledge decision put` の `--task-file` |
+| 意思決定キュー | `decision-request.schema.json`、`decision-response.schema.json` | `knowledge decision put`（request）と、回答する人（response） | キューのアダプター。操作は `put(request)` → `accepted` か `duplicate`、`poll(workspace_id)` → 回答、の 2 つ |
+| ソースアダプター | `source-adapter.schema.json` | アダプターの `changes(cursor)`（項目、tombstone、次の cursor、`complete`、`skipped`。項目は `knowledge-record` の `$defs/item`） | `knowledge update` |
+
+`task_id` と `workspace_id` は harness にとって意味の無い名前です。形（英数字と `.` `_` `-`、64 文字まで）だけを検査し、中身を解釈しません。同梱の 3 つのアダプター（`file`、`review-registry`、`spec-run`）の `changes(cursor)` の答えが `source-adapter` の schema に通ることを、テストが確かめます。
+
+どのコマンドがどの schema を読み書きするかと、exit code です（exit code の意味はすべての段で同じです）。
+
+| コマンド | 読む | 標準出力 | exit 0 | exit 1 | exit 2 | exit 3 |
+|---|---|---|---|---|---|---|
+| `knowledge context --task-file F [--query Q] [--max-tokens N]` | `task-context` | `knowledge-search-result` | 成功 | `mandatory_overflow`、`stale_index`、`task_budget_exhausted` | task file の誤り、索引が無い | principal が不明 |
+| `knowledge check --task-file F --patch P` | `task-context`、unified diff | `knowledge-check-result` | 違反なし | `violations`、`incomplete`、`stale_index` | patch か task file の誤り | 外を指す path、principal が不明 |
+| `knowledge decision put --task-file F --question Q --option A --option B … --evidence KN-… --risk R [--head-sha S] [--expires-at T]` | `task-context` | `decision-request` の `$defs/put_result` | `accepted` か `duplicate` | 索引が今の設定に追随していない | 読めない根拠、上限超え、秘密情報の形 | principal が不明、symlink |
+| `knowledge decision answer --request ID --option O --responder NAME [--reuse-scope task\|project --reuse-until T]` | 人の入力 | 画面の後に `decision-response` | 記録した | open でない（回答済み、期限切れ、取り下げ済み、置換済み） | 選択肢に無い、無い request | TTY が無い、hash の不一致、AI や自動化の名前、自動実行 |
+| `knowledge decision poll --workspace W [--task T] [--head-sha S]` | queue と索引 | `decision-request` の `$defs/poll_result` | `ok` | `stale_response` | 索引が無い、引数の誤り | symlink |
+| `knowledge decision list [--status S]` / `cancel --request ID --reason R` | queue | `$defs/list_result` / `{request}` | 成功 | cancel の対象が回答済みか取り下げ済み | 無い request、理由の誤り | symlink |
+
+指示書の 6 段と、V2 のコマンドの対応です。
+
+| 段 | V2 での実現 |
+|---|---|
+| 1. タスク開始時の解決と検索 | ランナーが `task-context` を作り、`knowledge context` を呼ぶ |
+| 2. 生成前の適用条件の確認と原文の取得 | skill の手順が、結果の `applies_when` を読み、必要なときだけ `knowledge fetch` を呼ぶ |
+| 3. 独立した自己レビュー | 宣言的検査は `knowledge check` が `review evaluate` と同じ解釈器で決定論的に当てる。文章のルール（`not_checked`）は、検索結果と diff だけを渡した別のコンテキストの agent が見る |
+| 4. decision request | `knowledge decision put`（またはほかのキューのアダプターの `put`） |
+| 5. 回答の返却 | `knowledge decision poll` で受け取り、revision と重複を検査する |
+| 6. 新しい指摘の学習 | 既存の `review collect` → `analyze` → `classify` → `generate` → `evaluate` → `approve` をそのまま使う。approve で scope・アクセス・enforcement を記録し、`knowledge update --source review-registry` が拾う |
+
+#### knowledge context と knowledge check
+
+- `knowledge context` は、task file を 256 KiB まで読んで `task-context` の schema で検査し、その内容（principal、project、component、repo、`changed_paths` を `--path`、`resource_types`、`task_id` を `--task`）で `knowledge search` を 1 回行います。絞り込みと順位付けは search のままで、出力も search と同じです。`task_id` のタスク累計に数え、`--extend-task-budget` と `--reason` も search と同じ規則です。task file は読むだけです。
+- `knowledge check` は、search と同じ絞り込みとアクセス（task の `changed_paths` に patch が変える path を足したもの）で残った承認済みのレコードのうち、registry 由来の `policy_check` の宣言的検査を patch に当てます。解釈器は `review evaluate` と同じ `apply_rules` で、pattern は別プロセスの時間制限付きの照合だけを通ります。LLM は使いません。
+- 当てる check は、registry の版の artifact（`v<N>.md`）から parse した値です。artifact の sha256 がレコードの evidence と版の記録の両方と合い、版の記録の form・title・check が artifact と一致することを確かめてから当てます（`registry.active_rules` と同じ検査）。合わないものは当てずに `unfetched` に理由（`hash_mismatch`、`content_mismatch`、`source_unavailable` など）を付け、exit 1 です。
+- 違反は、レコードの ID、path、新しい側の行番号、検査の種類（`added_line_pattern` か `added_line_pattern_and_absent_pattern`）、`mandatory` か `advisory` です。`counts` に両方の数を出します。違反が 1 つでもあれば、`advisory` だけでも exit 1 です。
+- 宣言的検査を持たないルール（文章のルール、決定、要件）は、`not_checked` に ID と理由 `prose` を並べるだけで、この CLI は判定しません。
+- patch は外部入力として扱います。2 MiB まで、UTF-8 で、tab と行末の CR を除く制御文字を含まないものだけを読みます。path は相対で、`..`・`.` の要素、絶対 path、backslash、不可視の文字を含むと exit 3 です。hunk は見出しの行数で終わりを決めます。削除した file（`+++ /dev/null`）は検査しません。
+- 出力は ID、path、行番号、数だけで、patch の行も出典の本文も含みません。そのためタスク累計には数えません。索引にも registry にも書きません。
+
+#### decision request の参照実装（ファイルの outbox / inbox）
+
+参照実装は `<ルート>/knowledge/decisions/` のファイルだけで動き、ほかのツールに依存しません。ほかのキュー（チケット管理など）につなぐときは、同じ 2 つの操作（`put(request)` が `accepted` か `duplicate` を返し、`poll(workspace_id)` が回答を返す）を、`decision-request` と `decision-response` の schema の値でアダプターとして書きます。harness はそのアダプターを同梱しません。
+
+合成データでの流れです（「最初に試す手順」の準備を済ませた端末で実行します。ID は合成データで決まる値です）。
+
+```bash
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.review_registry   # registry と config.json
+$H knowledge update --source review-registry
+cat > "$D/task-a.json" <<'JSON'
+{"schema_version": 1, "task_id": "TASK-0001", "workspace_id": "ws-a", "principal": "workspace-b",
+ "project_id": "project-alpha", "component_id": "queue", "repo": "example-org/alpha",
+ "base_sha": null, "changed_paths": ["infra/queue/main.tf"], "resource_types": []}
+JSON
+sed 's/"ws-a"/"ws-b"/; s/"workspace-b"/"workspace-a"/' "$D/task-a.json" > "$D/task-b.json"
+cat > "$D/change.diff" <<'DIFF'
+diff --git a/infra/queue/main.tf b/infra/queue/main.tf
+--- a/infra/queue/main.tf
++++ b/infra/queue/main.tf
+@@ -1,3 +1,4 @@
+ resource "example_queue" "q" {
++  message_retention_seconds = 86400
+   name = "q"
+ }
+DIFF
+$H knowledge context --task-file "$D/task-a.json"                     # 1. RG-9002 と RG-9001 のレコード
+$H knowledge check --task-file "$D/task-a.json" --patch "$D/change.diff"   # 3. 違反 1 件で exit 1
+ASK=(--question "保持期間を 1 日にする変更を例外として認めるか" --option 認める --option 認めない
+     --evidence KN-7e348b3581d2 --risk high --head-sha 1111111111111111111111111111111111111111)
+$H knowledge decision put --task-file "$D/task-a.json" "${ASK[@]}"     # 4. accepted、DR-c8f8312e9585
+$H knowledge decision put --task-file "$D/task-b.json" "${ASK[@]}"     # 別の workspace: duplicate、同じ ID
+$H knowledge decision answer --request DR-c8f8312e9585 --option 認めない --responder alice   # 人が端末で
+$H knowledge decision poll --workspace ws-a --head-sha 1111111111111111111111111111111111111111  # 5. 回答
+$H knowledge decision poll --workspace ws-a --head-sha 1111111111111111111111111111111111111111  # already_delivered
+$H knowledge decision poll --workspace ws-b --head-sha 2222222222222222222222222222222222222222  # stale_response、exit 1
+```
+
+`check` は `RG-9002`（キューの保持期間の宣言的検査）の違反を `infra/queue/main.tf` の 2 行目に、`RG-9001`（文章のルール）を `not_checked` に出します。2 つ目の put は、別の workspace・別の principal でも同じ task・同じ質問・同じ根拠・同じ revision なので `duplicate` で、ws-b はその request の waiter になります。ws-a は 1 回目の poll で回答を受け取り、2 回目は `already_delivered` です。ws-b は head が request の revision と違うので `stale_response` で、回答を受け取りません。
+
+規則:
+
+- put は request を `outbox/<id>.json` に 1 回だけ書きます。書き終えたファイルを link で置くので、途中の状態は見えず、既存のファイルは置き換えません。ディレクトリは 0700、ファイルは 0600 で、queue の中の symlink は exit 3 です。
+- `revision` は、そのときの索引の generation、根拠レコードの content hash（task の principal のアクセスで読んだもの）、`--head-sha` です。根拠の ID は principal が読めるものだけで、読めない ID と存在しない ID は同じ文の exit 2 で拒否します。
+- `dedupe_key` は、task、正規化した質問（NFKC、大文字小文字、空白）、根拠 ID、revision の hash です。同じ key の request が取り下げ済みでも期限切れでもなければ `duplicate` で、既存の ID を返します。put は `queue.lock` の flock の下で決めて書くので、2 つの workspace が同時に put しても request は 1 つです（thread と別プロセスでテストしています）。
+- 質問は 500 文字、選択肢は 100 文字・2〜10 個までの 1 行です。制御文字と双方向制御文字は落とし、空白はまとめます。秘密情報の形があれば exit 2 です。`--expires-at` は任意で、その時刻を過ぎた未回答の request は `expired` になり、回答を受け付けません。
+- status は書いたファイルから導きます。取り下げ済み（`cancelled`）、同じ task・同じ質問・同じ根拠のより新しい request がある（`superseded`）、回答済み（`answered`）、期限切れ（`expired`）、それ以外は `open` の順です。outbox のファイルは `open` のままです。
+- answer は `review approve` と同じく、stdin と stdout が TTY のときだけ動きます。画面に質問、選択肢、選んだもの、根拠、revision、再利用の範囲と `confirmation_sha256` を出し、その先頭 12 文字の入力を求めます。回答は `inbox/<id>.json` に 1 回だけ書き、2 回目は何も変えずに exit 1 です。`--responder` に AI や自動化の名前（`claude`、`ai`、`bot`、`agent`、`assistant`、`harness`、`gpt`、`llm` を語に含むもの）は exit 3 で、`AI_HARNESS_AUTOMATED` か `AI_HARNESS_ACTIVE` が設定された実行からも記録しません。autonomous-improvement の reviewer の規則と同じです。
+- poll は、その workspace が put した request（最初に put した workspace と、`duplicate` を受け取った workspace）だけを返します。ほかの workspace の request は返しません。回答は、workspace ごとに `delivered/<id>/<workspace>.json` に記録して 1 回だけ `responses` に入れ、2 回目からは `already_delivered` に入れます。
+- 回答を返す前に、request の revision と今の状態を比べます。根拠の content hash が変わった（`content_hash_changed`）、根拠が索引から消えたか読めなくなった（`evidence_unavailable`）、`--head-sha` が違う（`head_sha_changed`）か付いていない（`head_sha_not_given`）回答は、`stale` に入れて返さず、exit 1 です。generation だけが進んだ（ほかのレコードの更新）ときは stale にしません。同じ質問を新しい状態で put し直すと、古い request は `superseded` になり、stale には出なくなります。
+- 回答の再利用は、既定でその task の中だけです。`--reuse-scope project --reuse-until <時刻>` の回答も強制ルールにはなりません。poll は、質問、選んだ option、根拠 ID を `candidate_hints` に返すだけで、索引にも registry にも書きません。規則にするには、人が候補として既存の承認の流れ（`review generate` から `review approve`）に載せます。`decisions.py` が索引の writer と registry の書き込みを使わないことを、構文木のテストが確かめます。
+
+限界:
+
+- `--responder` の名前の検査と TTY の確認は、本人確認ではありません。`review approve` と同じく、うっかりの自動回答を防ぐためのもので、pty を開いて確認の hash を打ち込むプログラムは通ります。名前は入力どおりに記録します。
+- 参照実装の排他は 1 台の OS の flock です。保存先はローカルディスクを前提にします。同じ OS の利用者は queue のファイルを直接書けるので、改ざん耐性はありません。
+- harness はランナーもキューの外部接続も同梱しません。数えられる判断待ちの件数は、この参照実装を通った分だけです。
+
 ### 認証
 
 GitHub を読む段は `--auth-env <環境変数名>` が必須で、既定値はありません（合成データでは代わりに `--fixture` を使います）。その変数が空なら、通信せずに exit 2 で止まります。PAT は作らず、`gh auth token` の出力をその変数に入れます。harness は gh の設定ディレクトリを読まないので、トークンは利用者が明示して渡します。
@@ -589,6 +693,8 @@ toshipon-mode plugin の Autonomous Improvement Harness v2（`plugins/toshipon-m
 - `knowledge fetch` の `git:` の locator を、`spec analyze` が実際に作った bare リポジトリで読むこと。テストはローカルで作った合成の bare リポジトリだけを通ります。`pr:` と `doc:` の出典は読みません。タスク累計の既定値（6000）と fetch の既定の上限（3000）が実際の作業で妥当かも測っていません。
 - `knowledge migrate` と `rollback` の入れ替え。確かめたのは、手元の macOS（SQLite 3.54.1）で、別プロセスの reader が古いファイルを開いたまま入れ替えても読み続けられること、WAL の frame を読んでいる reader がいると exit 1 で止まることだけです。CI の OS と SQLite、ネットワークファイルシステムでは確かめていません。実際の registry（`review approve` が実際の端末で書いたもの）での移行もしていません。
 - `knowledge update --source spec-run` を、実際の文書から `spec extract --backend claude` と `spec analyze` が作った run で取り込むこと。テストは合成の文書を stub で抽出した run と、手で書いた合成の `trace.json` だけを通ります。実際の端末で `--knowledge-*` を付けた `review approve` も行っていません。
+- `knowledge decision` の参照実装を、ネットワークファイルシステムや複数の host で共有した保存先で使うこと。排他は 1 台の OS の flock と、link による 1 回だけの作成に頼っていて、確かめたのは手元の macOS で thread と別プロセスが同時に put した場合だけです。実際の端末での `knowledge decision answer` は、手元で pty を開いて起動し確認の hash を打ち込む経路だけを通しました（`review approve` と同じく、pty を開くプログラムは通ります）。
+- `knowledge check` が読む unified diff の形。読むのは `git diff` の形（`diff --git`、`---` / `+++`、hunk の見出しの行数）と、`---` / `+++` だけの形です。引用符で囲んだ path は exit 2 で、combined diff（`@@@`）と binary の差分は hunk として読まないので検査されません。実際の作業で出る diff での誤検知と見落としは測っていません。
 - `knowledge search` の検索の質。合成データで確かめたのは、必須の集合がラベルと一致すること、予算と止まる条件、置換、漏れないことだけです。任意のレコードの recall と precision、既定の予算（1500 token）と鮮度の閾値（168 時間）が実際の作業で妥当かは測っていません。
 - `impact-report.md` の自動リンク対策（`www.`、`@`、`://` の文字参照化）が GitHub の Markdown 表示で実際にリンクにならないこと。テストは文字列に元の形が残らないことだけを確かめています。
 
