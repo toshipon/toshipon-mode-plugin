@@ -139,7 +139,7 @@ def _split(args, env, out):
     if not 0 <= args.gap_days <= 365:
         raise InputError("--gap-days must be 0-365.")
     run_dir = paths.open_run(paths.state_root(env), args.run)
-    made = split_stage.make(run_dir, args.t1, args.gap_days)
+    made = split_stage.make(run_dir, args.t1, args.gap_days, args.exclude_pr)
     summary = {
         "run_id": run_dir.name,
         "split": str(paths.child(run_dir, split_stage.FILE)),
@@ -358,6 +358,14 @@ def register(groups):
         type=int,
         default=0,
         help="evaluation PRs are created at or after t1 + this many days (default 0)",
+    )
+    split.add_argument(
+        "--exclude-pr",
+        type=int,
+        action="append",
+        default=[],
+        metavar="N",
+        help="leave this collected PR out of both sides (repeatable)",
     )
     split.set_defaults(handler=_timed("split", _split))
 

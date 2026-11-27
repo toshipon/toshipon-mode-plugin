@@ -8,6 +8,8 @@ The split is made by the time of each event, not by merge dates:
   PR's final state and may contain that later commit.
 - Evaluation side: PRs created at or after `t1 + gap_days`.
 - PRs in between (the gap) and PRs without a creation time belong to neither side.
+- PRs named with `--exclude-pr` belong to neither side either, and are listed in
+  `excluded.listed_prs` (e.g. a PR that holds a value the send check refuses).
 
 The file holds the period, the PR numbers and `sha256`, the hash of every field but `created_at`
 and `sha256` itself. Later stages refuse a split whose hash does not match its content.
@@ -50,14 +52,20 @@ def seal(split):
     return {**split, "sha256": records.fingerprint(body)}
 
 
-def make(run_dir, t1, gap_days=0):
+def make(run_dir, t1, gap_days=0, exclude=()):
     collect = records.read_json(paths.child(run_dir, "collect.json"))
+    listed = sorted(set(exclude))
+    unknown = [number for number in listed if number not in collect["pulls"]]
+    if unknown:
+        raise InputError(f"--exclude-pr names PRs this run did not collect: {unknown}")
     threads = records.read_jsonl(paths.child(run_dir, "threads.jsonl"))
     contexts = fix.pull_contexts(run_dir)
     created = created_times(run_dir, collect)
     evaluation_from = _shift(t1, gap_days)
     generation, evaluation, gap, undated = [], [], [], []
     for number in sorted(created):
+        if number in listed:
+            continue
         moment = created[number]
         if moment is None:
             undated.append(number)
@@ -89,6 +97,8 @@ def make(run_dir, t1, gap_days=0):
         "evaluation": {"prs": evaluation},
         "excluded": {"gap_prs": gap, "undated_prs": undated},
     }
+    if listed:
+        split["excluded"]["listed_prs"] = listed
     split = records.validate("review-split", seal(split))
     records.write_json(paths.child(run_dir, FILE), split)
     return split

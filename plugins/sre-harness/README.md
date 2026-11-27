@@ -1443,6 +1443,7 @@ $H review approve --run run-... --candidate IC-0001 --reviewer alice --reason ".
 
 - 分割は PR の merge 日ではなく出来事の時刻で行います。生成側は `--t1` より前に作られた PR で、そのうち `t1` より前のコメントと commit だけを使います。`t1` 以降（または時刻のない）コメントと commit は使わず、件数を `split.json` の `generation.dropped` と `analyze.json` の `split_left_out` に残します。`t1` 以降の commit がある PR は patch も使いません（patch は PR の最終状態で、その commit を含むことがあるためです）。最初のコメントが `t1` 以降の thread は丸ごと使いません。
 - 評価側は `created_at` が `t1 + --gap-days`（既定 0 日）以降の PR です。間の PR と作成時刻のない PR はどちらにも入りません。
+- `--exclude-pr N`（繰り返し可）で、収集した PR をどちらの側にも入れずに外せます。送信前の検査が拒否する値を含む PR を除くときに使います。外した PR は `excluded.listed_prs` に残り、収集していない番号を渡すと exit 2 です。
 - `split.json` は期間、PR 番号、`sha256`（`created_at` と `sha256` を除いた全項目の hash）を持ちます。内容と hash が合わない split、別リポジトリの split は exit 2 です。
 - analyze と generate に同じ `--split` を渡します。evaluate は、analyze か generate がこの split で動いていないとき、または `lessons.jsonl` が評価用 PR を 1 件でも参照しているとき、exit 2 で止まります（autonomous-improvement のホールドアウトと同じ規則です）。
 
