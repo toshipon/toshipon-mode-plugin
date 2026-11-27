@@ -48,8 +48,8 @@ def _status(args, env, out):
 
 
 def _update(args, env, out):
-    adapter = adapters.build(args.source, {"input": args.input})
     root = paths.state_root(env)
+    adapter = adapters.build(args.source, {"input": args.input, "root": root})
     result = ingest.update(root, adapter, dry_run=args.dry_run)
     print(json.dumps(result, indent=2, ensure_ascii=False), file=out)
     return EXIT_OK
@@ -244,7 +244,7 @@ def register(groups):
 
     update = stages.add_parser("update", help="read a source into the index (one transaction)")
     update.add_argument("--source", required=True, choices=sorted(adapters.ADAPTERS))
-    update.add_argument("--input", help="the JSON file the file source reads")
+    update.add_argument("--input", help="the JSON file the file source reads (file only)")
     update.add_argument(
         "--dry-run", action="store_true", help="report what would change and write nothing"
     )

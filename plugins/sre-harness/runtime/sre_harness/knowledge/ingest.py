@@ -128,6 +128,7 @@ def prepare(adapter, found, previous, now):
     """Ask `adapter` for its changes since the cursor `previous` and check every item."""
     changes = adapter.changes(previous)
     accepted, rejected = check(changes.items, config.known_readers(found), now)
+    left_out = {entry["id"] for entry in changes.skipped or ()}
     batch = store.Batch(
         source=adapter.source,
         adapter=adapter.name,
@@ -135,7 +136,7 @@ def prepare(adapter, found, previous, now):
         complete=changes.complete,
         records=accepted,
         tombstones=_tombstones(changes, accepted),
-        rejected=sorted({entry["id"] for entry in rejected if entry["id"] is not None}),
+        rejected=sorted({entry["id"] for entry in rejected if entry["id"] is not None} | left_out),
         config_hash=config.config_hash(found),
     )
     return Prepared(changes, accepted, rejected, batch)
@@ -145,7 +146,7 @@ def report(prepared, summary, dry_run):
     """The update's answer, from what was prepared and what the store did (or would do)."""
     batch, accepted, rejected = prepared.batch, prepared.accepted, prepared.rejected
     found = duplicates(accepted)
-    return {
+    answer = {
         "source": batch.source,
         "dry_run": dry_run,
         "complete": batch.complete,
@@ -167,6 +168,9 @@ def report(prepared, summary, dry_run):
         "rejected": rejected,
         "duplicates": found,
     }
+    if prepared.changes.skipped is not None:
+        answer["skipped"] = prepared.changes.skipped
+    return answer
 
 
 def update(root, adapter, *, dry_run=False, now=None):
