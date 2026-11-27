@@ -8,7 +8,9 @@ but the index in place changes only when the result agrees with the registry:
        file beside it (`store.staged`)
     2. take the registry in on the copy as `update --source review-registry` does. The records
        of the other sources (`file:` and the rest) stay as they are
-    3. check, for every repo of knowledge/config.json, that the entries
+    3. check, for every repo of knowledge/config.json but those several projects hold (they
+       have no one project, so the update skips their entries; listed in `check.excluded`), that
+       the entries
        `registry.active_rules(root, repo)` returns are exactly the approved records the copy
        holds from the review-registry source for that repo. A repo the registry itself
        refuses (an approved artifact changed after it was recorded) is a difference. Any
@@ -46,14 +48,31 @@ def _everyone(settings):
     )
 
 
+SHARED = "repo_in_several_projects"
+
+
 def repos(settings):
     return sorted({repo for project in settings["projects"].values() for repo in project["repos"]})
 
 
+def excluded(settings):
+    """The repos left out of the check, with why: a repo that several projects hold has no one
+    project, so its entries are never taken in (`skipped` with the same reason)."""
+    return [
+        {"repo": repo, "reason": SHARED}
+        for repo in repos(settings)
+        if config.project_of(settings, repo)[1] == SHARED
+    ]
+
+
 def expected(root, settings):
-    """{repo: ids of the entries `registry.active_rules` returns, or why it refused them}."""
+    """{repo: ids of the entries `registry.active_rules` returns, or why it refused them}, for
+    the repos the check covers (not `excluded`)."""
+    left_out = {row["repo"] for row in excluded(settings)}
     found = {}
     for repo in repos(settings):
+        if repo in left_out:
+            continue
         try:
             found[repo] = {rule["id"] for rule in registry.active_rules(root, repo)}
         except HarnessError as error:
@@ -161,7 +180,11 @@ def run(root, now=None):
         summary = stage.writer.apply(prepared.batch, now)
         with stage.read() as built:
             rows = differences(expected(root, settings), indexed(built, settings))
-        check = {"ok": all(row["ok"] for row in rows), "repos": rows}
+        check = {
+            "ok": all(row["ok"] for row in rows),
+            "repos": rows,
+            "excluded": excluded(settings),
+        }
         if not check["ok"]:
             kept = {"name": None, "reason": "not_replaced"}
             return _answer(
