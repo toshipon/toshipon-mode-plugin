@@ -69,7 +69,25 @@ def test_there_is_no_option_or_variable_that_skips_the_terminal_check(evaluated,
     run_id, _ = evaluated
     assert cli.main(["review", "approve", "--help"]) == 0
     options = set(re.findall(r"(?<![\w-])--[a-z][a-z-]*", capsys.readouterr().out))
-    assert options == {"--help", "--run", "--candidate", "--reviewer", "--reason", "--activate-as"}
+    knowledge = {
+        "--knowledge-scope",
+        "--knowledge-project",
+        "--knowledge-component",
+        "--knowledge-classification",
+        "--knowledge-reader",
+        "--knowledge-enforcement",
+        "--knowledge-applies-when",
+        "--knowledge-exception",
+    }  # where the rule sits in the knowledge index; none of them skips the terminal check
+    assert options == {
+        "--help",
+        "--run",
+        "--candidate",
+        "--reviewer",
+        "--reason",
+        "--activate-as",
+        *knowledge,
+    }
     env = {**home, "SRE_HARNESS_ASSUME_TTY": "1", "CI": "1", "TERM": "xterm-256color"}
     argv = ["review", "approve", "--run", run_id, "--candidate", "IC-0001"]
     assert run_cli([*argv, "--reviewer", "alice", "--reason", REASON], env)[0] == 3
