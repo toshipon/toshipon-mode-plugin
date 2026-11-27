@@ -2,6 +2,7 @@
 cannot contain, with instruction-shaped passages flagged for the reader."""
 
 import re
+import unicodedata
 
 from .base import sha256
 
@@ -19,14 +20,26 @@ _INSTRUCTION_SHAPES = [
     r"(?:以下|次)の(?:コマンド|命令)を実行",
 ]
 _INSTRUCTION = [re.compile(shape) for shape in _INSTRUCTION_SHAPES]
-_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f​-‏‪-‮⁦-⁩]")
 _LABEL = re.compile(r"[^A-Za-z0-9_.:/#@,=+ -]")
 OPEN, CLOSE = "<<<UNTRUSTED-DATA", "<<<END-UNTRUSTED-DATA"
+_PLAIN_PATH = re.compile(r"^[A-Za-z0-9_./@+=,-]{1,200}$")
+
+
+def plain_path(path):
+    """True for a path that cannot be read as a sentence. Any other path is shown only
+    inside an envelope."""
+    return isinstance(path, str) and bool(_PLAIN_PATH.match(path))
+
+
+def invisible(character):
+    """Control, format (bidi, zero-width, soft hyphen) and line/paragraph separator characters."""
+    return unicodedata.category(character) in ("Cc", "Cf", "Zl", "Zp", "Cs", "Co")
 
 
 def clean(text):
-    """Without control, bidi and zero-width characters. Newlines and tabs stay."""
-    return _CONTROL.sub("", text.replace("\r\n", "\n").replace("\r", "\n"))
+    """Without characters that hide or reorder text. Newlines and tabs stay."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return "".join(c for c in text if c in "\n\t" or not invisible(c))
 
 
 def one_line(text, limit=240):

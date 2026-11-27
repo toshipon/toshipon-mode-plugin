@@ -22,8 +22,9 @@ class Evidence:
     def _path(self, locator, revision):
         return self.directory / f"{sha256(f'{locator}@{revision}')}.json"
 
-    def add(self, locator, revision, text):
-        """Save a snapshot of a source that git cannot read back."""
+    def add(self, locator, revision, text, replace=False):
+        """Save a snapshot of a source that git cannot read back. A saved snapshot is not
+        replaced with other content: claims already checked against it would change meaning."""
         problems = check_reference({"locator": locator, "revision": revision})
         if problems:
             raise Refusal("snapshot needs a locator and a revision", problems)
@@ -32,6 +33,12 @@ class Evidence:
         if len(text.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
             raise Refusal(f"snapshot is larger than {MAX_SNAPSHOT_BYTES} bytes: {locator}")
         text = redact_text(text)
+        path = self._path(locator, revision)
+        if not replace and path.exists() and read_json(path)["sha256"] != sha256(text):
+            raise Refusal(
+                f"{locator}@{revision} is already saved with other content;"
+                " a changed source is a new revision"
+            )
         record = {
             "locator": locator,
             "revision": revision,

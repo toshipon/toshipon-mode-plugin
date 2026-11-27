@@ -276,3 +276,57 @@ class Loading(ExplorerCase):
 
     def test_fixture_entities_follow_the_contract(self):
         self.assertEqual([p for e in load("entities.json") for p in ix.check_entity(e)], [])
+
+
+class ReviewFindings(ExplorerCase):
+    """Regressions found by an independent review."""
+
+    def test_secrets_in_a_description_are_replaced_before_the_index_is_stored(self):
+        token = "ghp_" + "K3j4" * 9
+        entity = {"id": "DOC-1", "type": "document", "description": f"deploy token={token}"}
+        self.ok("index", "add", "--file", self.write("e.json", [entity]))
+        self.assertNotIn(token, json.dumps(self.ok("index", "show")))
+        self.assertNotIn(token, json.dumps(self.ok("explore", "--entity", "DOC-1")))
+        self.assertNotIn(
+            token, "".join(p.read_text() for p in (self.tmp / "state").rglob("index.json"))
+        )
+
+    def test_a_malformed_registry_is_a_refusal(self):
+        for name, value in (
+            ("decisions", {"decisions": [{"title": "no id"}]}),
+            (
+                "decisions",
+                {"decisions": [{"id": "DEC-0001", "status": "approved", "rationale": None}]},
+            ),
+            ("trace", {"links": [{"to": {"type": "decision", "id": "DEC-0001"}}]}),
+            ("requirements", {"requirements": "all of them"}),
+            ("decisions", []),
+        ):
+            with self.subTest(value):
+                refused = self.refused(
+                    "index", "import-registry", f"--{name}", self.write("r.json", value)
+                )
+                self.assertIn("not in the shape sre-harness writes", refused["error"])
+
+    def test_a_source_with_a_stated_revision_is_checked_for_staleness_too(self):
+        entity = {
+            "id": "PROP-retention",
+            "type": "property",
+            "description": "保持期間",
+            "source": {"locator": "git:infra/queue.tf#L3", "revision": self.base},
+            "rationale_recorded": True,
+        }
+        untouched = {
+            **entity,
+            "id": "PROP-max",
+            "source": {"locator": "git:infra/queue.tf#L5", "revision": self.base},
+        }
+        self.ok("index", "add", "--file", self.write("e.json", [entity, untouched]))
+        self.assertEqual(self.ok("check"), {"findings": [], "head": self.base, "not_checked": 0})
+        self.change()
+        checked = self.ok("check")
+        self.assertEqual(
+            [(f["kind"], f["entity"]) for f in checked["findings"]],
+            [("stale_reference", "PROP-retention")],
+        )
+        self.assertEqual(checked["not_checked"], 0)

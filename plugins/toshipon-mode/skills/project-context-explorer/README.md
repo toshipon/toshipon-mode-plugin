@@ -43,7 +43,7 @@ $CE html                                       # 出力された path を browse
 |---|---|
 | 承認済みの決定が 7 日と 14 日で食い違う（DEC-0001 / DEC-0002） | `check` の `conflict` |
 | 理由がどこにも書かれていない設定値（visibility timeout） | `check` の `missing_rationale` |
-| 索引を作ったあとに変わる行（`synthetic_repo.py` は 2 commit を作る。base で索引を作ると head で古くなる） | `check` の `stale_reference` |
+| 索引を作ったあとに変わる行 | `check` の `stale_reference`。上の手順は head で索引を作るので出ない。テストは base で索引を作ってから head に進めて確かめている。手で見るには、`index add` のあとに `infra/queue.tf` の値を変えて commit する |
 | 索引に無い entity への関係、届かない文書ツール | `dangling_reference`、`source_unavailable` |
 | 議事録と entity の説明に紛れた指示文、HTML と script の断片 | prompt の枠の中、HTML の文字列 |
 | 存在しない引用、revision 違い、行の指定違い、未取得の文書を引く主張 | `claims check` の unsupported |
@@ -75,6 +75,7 @@ python3 plugins/toshipon-mode/skills/project-context-explorer/examples/synthetic
 | 仕込んだ unsupported claim の検出 | 4 件中 4 件 | `claims.json` の手作業のラベルと `claims check` の判定を比べた |
 | 正しい主張の誤った拒否 | 6 件中 0 件 | 同上 |
 | 探索が返す量 | 2000 entity の索引でも 5 件、6000 文字未満 | `tests/test_retrieval.py` |
+| テスト | 97 件が通過（`python3 -m unittest discover -s tests`） | 合成データ |
 | HTML の描画 | payload は実行されず、構成図と詳細が出る | headless Chrome（`--dump-dom` と screenshot）で 1 度だけ手で確かめた。CI では動かしていない |
 | 理解にかかる時間（TTU） | 未測定 | — |
 | 実際の agent が書く主張の unsupported claim rate | 未測定 | — |
@@ -84,7 +85,7 @@ python3 plugins/toshipon-mode/skills/project-context-explorer/examples/synthetic
 
 - precision が 0.54 にとどまるのは、問いに合った上位 3 件の entity それぞれについて、1 hop 先をすべて返すからです。関係があるだけで問いに関係しない entity が入ります。返るのは metadata（1 件 240 文字まで）で、本文の取得は token の予算で別に絞られます。
 - ラベルは実装した本人が、探索の結果を見る前に付けました。問いは 4 つ、entity は 15 件です。別の人のラベル、実プロジェクトの規模と書き方では測っていません。
-- unsupported claim の検出は、引用が出典に実在するかの照合が、仕込んだ誤りを拾えるかを見たものです。agent が実際に書く主張のうち何割が unsupported になるか、ではありません。照合は、主張の文が引用から正しく導かれているかも見ません。
+- unsupported claim の検出は、引用が出典に実在するかの照合が、仕込んだ誤りを拾えるかを見たものです。agent が実際に書く主張のうち何割が unsupported になるか、ではありません。照合は、主張の文が引用から正しく導かれているかも見ません。6 文字以上の引用が出典にあれば通ります。
 - TTU は人が実際に使わないと測れず、使わない場合との比較も要ります。`learn weak` の正答率と、`review-context-recovery` の `understanding_seconds` が、記録から出せる材料です。
 - Confluence と Google Drive の MCP につないだ取得は試していません。取得手順はツール名を持たず、agent がセッションの中で道具を探す作りです。
 
@@ -104,5 +105,9 @@ python3 -m unittest discover -s tests -v
 - 問いと entity の照合は、語と日本語の 2 文字の重なりを数えるだけです。言い換えや同義語は拾いません。
 - git 以外の出典（PR、文書）が古くなったかどうかは検査しません。
 - 行の指定がある出典は、上に行が挿入されるだけでも `stale_reference` になります。
+- `packet --mode` は packet に mode の名前を載せるだけで、中身は変えません。mode ごとの進め方は SKILL.md の手順が決めます。
 - 指示の形をした文の検出は目印で、検出できない書き方があります。
+- git は読み取りの subcommand だけを、fetch と transport を止めて実行します。repository の設定にある外部プログラム（pager、external diff、textconv、filter、fsmonitor、partial clone の upload-pack）が読み取りで起動しないことは、独立したレビューが手元の git 2.54 で確かめた範囲です。ほかの版の git や、まだ知られていない設定の経路は確かめていません。信頼できない経路で受け取った repository（`.git` ごと渡された archive など）には使わないでください。
+- 空白や日本語を含む path は、取得手順に直接は書かれません。参照の表から読む一手間が要ります。
+- state の置き場所の規則は `autonomous-improvement` の `ai_harness.store` と同じですが、あちらは jsonschema に依存するため import せず、同じ規則を持ち直しています。
 - APM のように skill を別々の場所に置く配布では、隣の runtime を見つけられず起動しません。

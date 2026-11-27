@@ -1,4 +1,8 @@
-"""Shared ground: the state home outside any repository, private writes, hashing, estimates."""
+"""Shared ground: the state home outside any repository, private writes, hashing, estimates.
+
+The state home follows the rules of `ai_harness.store` in the Autonomous Improvement skill.
+That module is not imported, because it needs the jsonschema package and these skills run on
+the standard library alone."""
 
 import hashlib
 import json
@@ -58,6 +62,11 @@ def project_dir(kind, root, *parts, env=None):
     path = state_home(env) / kind / f"{real.name or 'root'}-{sha256(str(real))[:8]}"
     for part in parts:
         path = path / part
+    for directory in (path, *path.parents):
+        if directory == state_home(env):
+            break
+        if directory.is_symlink():  # a planted link would move the records somewhere else
+            raise Refusal(f"state directory must not be a symlink: {directory}")
     return private_dir(path)
 
 
@@ -83,6 +92,8 @@ def write_private(path, text):
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
     except BaseException:
@@ -90,28 +101,54 @@ def write_private(path, text):
         raise
 
 
-def append_private(path, record):
+def append_private(path, record, create=False):
+    """Append one record. With `create`, the file must not exist yet: of two processes that
+    start the same log, one gets FileExistsError."""
     path = Path(path)
     private_dir(path.parent)
-    descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | (os.O_EXCL if create else 0)
+    descriptor = os.open(path, flags, 0o600)
     with os.fdopen(descriptor, "a", encoding="utf-8") as stream:
         stream.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
 
 
-def read_json(path, what="file"):
+def read_text(path, what="file"):
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
+        return Path(path).read_text(encoding="utf-8")
     except FileNotFoundError:
         raise Refusal(f"{what} not found: {path}") from None
-    except (UnicodeDecodeError, json.JSONDecodeError) as broken:
+    except UnicodeDecodeError:
+        raise Refusal(f"{what} is not UTF-8 text: {path}") from None
+    except OSError as failed:
+        raise Refusal(f"{what} cannot be read: {path}: {failed.strerror}") from None
+
+
+def read_json(path, what="file"):
+    try:
+        value = json.loads(read_text(path, what))
+        json.dumps(value, ensure_ascii=False).encode("utf-8")  # a lone surrogate cannot be stored
+    except json.JSONDecodeError as broken:
         raise Refusal(f"{what} is not UTF-8 JSON: {path}: {broken}") from None
+    except UnicodeEncodeError:
+        raise Refusal(f"{what} holds a character that is not valid Unicode text: {path}") from None
+    return value
 
 
 def read_jsonl(path):
+    """Every record of an append-only log. A line that does not parse (a write cut short)
+    is refused by line number; nothing is skipped silently."""
     path = Path(path)
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    records = []
+    for number, line in enumerate(read_text(path, "log").splitlines(), 1):
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            raise Refusal(f"log has a broken record at line {number}: {path}") from None
+    return records
 
 
 def dump(value):

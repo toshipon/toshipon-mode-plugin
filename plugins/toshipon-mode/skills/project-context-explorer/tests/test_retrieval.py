@@ -135,6 +135,9 @@ class Packet(ExplorerCase):
         self.assertGreater(budget["prompt_tokens"], 0)
         kinds = {gap["kind"] for gap in packet["gaps"]}
         self.assertLessEqual({"conflict", "stale_reference", "source_unavailable"}, kinds)
+        self.assertIn(
+            "stale_reference | PROP-retention | git:infra/queue.tf#L3 changed", packet["prompt"]
+        )
         self.assertIn("設定値だけから過去の理由を推測しない", packet["prompt"])
 
     def test_retrieval_instructions_do_not_assume_a_document_tool(self):

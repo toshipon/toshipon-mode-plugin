@@ -6,6 +6,7 @@ import re
 import subprocess
 
 from .base import Refusal
+from .untrusted import invisible
 
 READ_ONLY = frozenset({"rev-parse", "show", "cat-file", "diff", "log", "ls-tree"})
 _WRITING_OPTION = re.compile(
@@ -13,7 +14,6 @@ _WRITING_OPTION = re.compile(
 )
 REVISION = re.compile(r"^[0-9a-f]{7,40}$")
 _NEVER_AN_OPTION = re.compile(r"^[^-]")
-_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def git(root, *args):
@@ -22,11 +22,20 @@ def git(root, *args):
         raise Refusal(f"git subcommand is not read-only: {args[:1]}")
     if any(_WRITING_OPTION.match(arg) for arg in args):
         raise Refusal("git option can write a file or run a program")
-    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"}
+    # A repository's own config can name programs. A repository that claims to be a partial
+    # clone makes git fetch a missing object, which starts the configured upload-pack. Reading
+    # never needs a fetch, so fetching and every transport are switched off.
+    env = {
+        **os.environ,
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_NO_LAZY_FETCH": "1",
+        "LC_ALL": "C",
+    }
     for configured_program in ("GIT_EXTERNAL_DIFF", "GIT_DIFF_OPTS", "GIT_PAGER"):
         env.pop(configured_program, None)
     done = subprocess.run(
-        ["git", "-C", str(root), "--no-pager", *args],
+        ["git", "-C", str(root), "--no-pager", "-c", "protocol.allow=never", *args],
         capture_output=True,
         env=env,
         check=False,
@@ -45,7 +54,13 @@ def checked_revision(revision):
 def checked_path(path):
     """A repository-relative path: no absolute path, no `..`, nothing git reads as an option."""
     parts = path.split("/") if isinstance(path, str) else [""]
-    if not path or path.startswith("/") or ".." in parts or "" in parts or _CONTROL.search(path):
+    if (
+        not path
+        or path.startswith("/")
+        or ".." in parts
+        or "" in parts
+        or any(map(invisible, path))
+    ):
         raise Refusal(f"path must be relative to the repository root: {path!r}")
     if not _NEVER_AN_OPTION.match(path) or ":" in path:
         raise Refusal(f"path is not a plain repository path: {path!r}")
@@ -66,14 +81,11 @@ def head(root):
 
 
 def show(root, revision, path):
-    """The file's text at the revision, or None when the revision or the path is not there."""
-    return git(
-        root,
-        "show",
-        "--no-ext-diff",
-        "--no-textconv",
-        f"{checked_revision(revision)}:{checked_path(path)}",
-    )
+    """The file's text at the revision, or None when the revision has no file at the path."""
+    name = f"{checked_revision(revision)}:{checked_path(path)}"
+    if (git(root, "cat-file", "-t", name) or "").strip() != "blob":
+        return None
+    return git(root, "show", "--no-ext-diff", "--no-textconv", name)
 
 
 def diff(root, base, head_revision, path=None):

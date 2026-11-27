@@ -32,9 +32,11 @@ def _load(name):
 
 
 def retrieval(index):
-    rows = []
+    rows, bounds = [], {}
     for item in _load("gold.json")["questions"]:
-        found = [entity["id"] for entity in explore(index, question=item["question"])["entities"]]
+        explored = explore(index, question=item["question"])
+        bounds = {key: explored["bounds"][key] for key in ("hops", "max_entities")}
+        found = [entity["id"] for entity in explored["entities"]]
         hits = sorted(set(found) & set(item["relevant"]))
         rows.append(
             {
@@ -51,7 +53,7 @@ def retrieval(index):
     relevant = sum(r["relevant"] for r in rows)
     return {
         "questions": len(rows),
-        "bounds": {"hops": 1, "max_entities": 12},
+        "bounds": bounds,
         "micro_precision": round(hits / retrieved, 2) if retrieved else None,
         "micro_recall": round(hits / relevant, 2),
         "per_question": rows,

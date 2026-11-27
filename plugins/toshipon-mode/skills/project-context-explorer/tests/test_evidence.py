@@ -1,5 +1,7 @@
 """Evidence accuracy: a claim holds only when its excerpt is in the cited source at the cited revision."""
 
+from pathlib import Path
+
 from support import ExplorerCase
 
 from context_recovery import claims as cl
@@ -14,7 +16,11 @@ class ClaimContract(ExplorerCase):
             "status": "confirmed",
             "text": "保持期間は 7 日",
             "references": [
-                {"locator": "git:infra/queue.tf#L3", "revision": self.base, "excerpt": "= 7"}
+                {
+                    "locator": "git:infra/queue.tf#L3",
+                    "revision": self.base,
+                    "excerpt": "message_retention_days     = 7",
+                }
             ],
         }
         return {**claim, **changes}
@@ -39,12 +45,14 @@ class ClaimContract(ExplorerCase):
             "text is empty": self.base_claim(text=" "),
             "claim id must look like C1": self.base_claim(id="claim-1"),
             "revision must be a commit sha": self.base_claim(
-                references=[{"locator": "git:infra/queue.tf", "revision": "main", "excerpt": "x"}]
+                references=[
+                    {"locator": "git:infra/queue.tf", "revision": "main", "excerpt": "retention"}
+                ]
             ),
             "locator must be": self.base_claim(
                 references=[{"locator": "infra/queue.tf", "revision": self.base}]
             ),
-            "excerpt must be 1-600 characters": self.base_claim(
+            "excerpt must be 6-600 characters": self.base_claim(
                 references=[
                     {"locator": "git:infra/queue.tf", "revision": self.base, "excerpt": "x" * 601}
                 ]
@@ -145,7 +153,11 @@ class Verification(ExplorerCase):
             "status": "confirmed",
             "text": "x",
             "references": [
-                {"locator": "git:src/worker.py#L900", "revision": self.base, "excerpt": "x"}
+                {
+                    "locator": "git:src/worker.py#L900",
+                    "revision": self.base,
+                    "excerpt": "ledger.charge",
+                }
             ],
         }
         report = self.run_cli("claims", "check", "--file", self.write("c.json", [claim]), expect=1)[
@@ -155,7 +167,7 @@ class Verification(ExplorerCase):
         claim["references"][0] = {
             "locator": "git:src/worker.py",
             "revision": "0" * 40,
-            "excerpt": "x",
+            "excerpt": "ledger.charge",
         }
         report = self.run_cli(
             "claims", "check", "--file", self.write("c2.json", [claim]), expect=1
@@ -300,3 +312,111 @@ def synthetic_status(repo):
         ["git", "-C", str(repo), "status", "--porcelain=v2", "--branch", "--untracked-files=all"],
         capture_output=True, text=True, check=True,
     ).stdout  # fmt: skip
+
+
+class ReviewFindings(ExplorerCase):
+    """Regressions found by an independent review."""
+
+    def test_a_snapshot_cannot_be_replaced_with_other_content(self):
+        first = self.write("a.txt", "手順 4: 手動で返金する。")
+        args = (
+            "evidence",
+            "add",
+            "--locator",
+            "doc:confluence:RUNBOOK-7",
+            "--revision",
+            "v3",
+            "--file",
+        )
+        self.ok(*args, first)
+        self.ok(*args, first)  # the same content again is not a change
+        refused = self.refused(*args, self.write("b.txt", "手順 4: 返金しない。"))
+        self.assertIn("already saved with other content", refused["error"])
+
+    def test_unreadable_files_are_refusals(self):
+        args = ("evidence", "add", "--locator", "doc:gdrive:X", "--revision", "1", "--file")
+        self.assertIn("not found", self.refused(*args, str(self.tmp / "nope.txt"))["error"])
+        binary = self.tmp / "bin.txt"
+        binary.write_bytes(b"\xff\xfe\x00")
+        self.assertIn("not UTF-8", self.refused(*args, str(binary))["error"])
+        self.assertIn(
+            "cannot be read", self.refused("index", "add", "--file", str(self.tmp))["error"]
+        )
+
+    def test_a_directory_is_not_a_source(self):
+        claim = {
+            "id": "C1",
+            "status": "confirmed",
+            "text": "x",
+            "references": [
+                {"locator": "git:infra", "revision": self.base, "excerpt": "queue.tf is here"}
+            ],
+        }
+        report = self.run_cli("claims", "check", "--file", self.write("c.json", [claim]), expect=1)[
+            0
+        ]
+        self.assertIn("source_unavailable", report["results"][0]["problems"][0])
+
+    def test_an_excerpt_too_short_to_identify_anything_is_refused(self):
+        claim = {
+            "id": "C1",
+            "status": "confirmed",
+            "text": "x",
+            "references": [
+                {"locator": "git:infra/queue.tf", "revision": self.base, "excerpt": "="}
+            ],
+        }
+        refused = self.refused("claims", "check", "--file", self.write("c.json", [claim]))
+        self.assertIn("excerpt must be 6-600 characters", refused["problems"][0])
+
+    def test_paths_with_invisible_or_bidi_characters_are_refused(self):
+        for path in ("docs/a‮b.md", "docs/a​b.md", "docs/a⁦b.md"):
+            with self.subTest(path), self.assertRaises(Refusal):
+                gitread.checked_path(path)
+
+    def test_a_torn_record_is_a_refusal_that_names_the_line(self):
+        from context_recovery.base import read_jsonl
+
+        log = self.tmp / "log.jsonl"
+        log.write_text('{"event": "a"}\n{"event": "b", "x', encoding="utf-8")
+        with self.assertRaises(Refusal) as raised:
+            read_jsonl(log)
+        self.assertIn("line 2", str(raised.exception))
+
+    def test_a_repository_that_claims_to_be_a_partial_clone_cannot_start_a_program(self):
+        import subprocess
+        import sys
+
+        ran = self.tmp / "ran"
+        probe = self.tmp / "probe.py"
+        probe.write_text(
+            f"import pathlib\npathlib.Path({str(ran)!r}).write_text('ran')\n", encoding="utf-8"
+        )
+        for key, value in (
+            ("core.repositoryformatversion", "1"),
+            ("extensions.partialClone", "origin"),
+            ("remote.origin.url", str(self.repo)),
+            ("remote.origin.promisor", "true"),
+            ("remote.origin.uploadpack", f"{sys.executable} {probe}"),
+        ):
+            subprocess.run(["git", "-C", str(self.repo), "config", key, value], check=True)
+        missing = "1234567890123456789012345678901234567890"
+        self.assertIsNone(gitread.resolve(self.repo, missing))
+        self.assertIsNone(gitread.show(self.repo, missing, "infra/queue.tf"))
+        self.assertIsNone(gitread.diff(self.repo, missing, self.base))
+        self.assertFalse(ran.exists())
+        self.assertIsNotNone(
+            gitread.show(self.repo, self.base, "infra/queue.tf")
+        )  # reading still works
+
+    def test_a_lone_surrogate_in_input_is_a_refusal(self):
+        entity = '[{"id": "DOC-1", "type": "document", "description": "x \\ud800 y"}]'
+        refused = self.refused("index", "add", "--file", self.write("e.json", entity))
+        self.assertIn("not valid Unicode text", refused["error"])
+
+    def test_a_symlinked_scope_directory_is_refused(self):
+        home = Path(self.ok("path")["home"])
+        (home.parent / "planted").symlink_to(self.repo / "docs", target_is_directory=True)
+        refused = self.run_cli("--scope", "planted", "path", expect=2)[1]
+        self.assertIn("must not be a symlink", refused["error"])
+        self.assertFalse((self.repo / "docs" / "index.json").exists())

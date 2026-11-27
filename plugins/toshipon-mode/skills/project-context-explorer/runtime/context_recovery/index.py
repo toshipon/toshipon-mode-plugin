@@ -7,6 +7,7 @@ from pathlib import Path
 from .base import SCHEMA_VERSION, Refusal, now, read_json, sha256
 from .claims import check_reference, cited_text, parse_locator
 from .gitread import checked_path, head, show
+from .redaction import redact
 from .untrusted import clean
 
 TYPES = (
@@ -159,7 +160,7 @@ def upsert(index, entities, root):
     revision = head(root) if needs_stamp else None
     for entity in entities:
         entity = stamp(entity, root, revision)
-        entity = {**entity, "description": " ".join(clean(entity["description"]).split())}
+        entity = redact({**entity, "description": " ".join(clean(entity["description"]).split())})
         entity.setdefault("relationships", [])
         index["entities"][entity["id"]] = entity
     index["updated_at"] = now()
@@ -182,15 +183,17 @@ def set_sources(index, sources):
             )
     if problems:
         raise Refusal("sources do not follow the contract", problems)
-    index["sources"] = [
-        {
-            "category": source["category"],
-            "available": source["available"],
-            "tool": " ".join(clean(source.get("tool", "")).split())[:80],
-            "note": " ".join(clean(str(source.get("note", ""))).split())[:MAX_DESCRIPTION],
-        }
-        for source in sources
-    ]
+    index["sources"] = redact(
+        [
+            {
+                "category": source["category"],
+                "available": source["available"],
+                "tool": " ".join(clean(source.get("tool", "")).split())[:80],
+                "note": " ".join(clean(str(source.get("note", ""))).split())[:MAX_DESCRIPTION],
+            }
+            for source in sources
+        ]
+    )
     index["updated_at"] = now()
     return index
 
@@ -217,8 +220,20 @@ def _registry_source(record):
 def from_registry(decisions=None, requirements=None, trace=None):
     """Entities from the sre-harness registries (decisions.json, requirements.json, trace.json).
     The registries stay the source of truth for decisions and requirements; this only indexes them."""
+    try:
+        given = [value for value in (decisions, requirements, trace) if value is not None]
+        if not all(isinstance(value, dict) for value in given):
+            raise TypeError("a registry file is an object")
+        return _from_registry(decisions or {}, requirements or {}, trace or {})
+    except (KeyError, TypeError, AttributeError) as wrong:
+        raise Refusal(
+            f"registry file is not in the shape sre-harness writes: {type(wrong).__name__}: {wrong}"
+        ) from None
+
+
+def _from_registry(decisions, requirements, trace):
     entities = {}
-    for decision in (decisions or {}).get("decisions", []):
+    for decision in decisions.get("decisions", []):
         relations = [{"type": "supersedes", "to": old} for old in decision.get("supersedes", [])]
         entity = {
             "id": decision["id"],
@@ -233,7 +248,7 @@ def from_registry(decisions=None, requirements=None, trace=None):
         if source:
             entity["source"] = source
         entities[entity["id"]] = entity
-    for requirement in (requirements or {}).get("requirements", []):
+    for requirement in requirements.get("requirements", []):
         entity = {
             "id": requirement["id"],
             "type": "requirement",
@@ -248,7 +263,7 @@ def from_registry(decisions=None, requirements=None, trace=None):
         if source:
             entity["source"] = source
         entities[entity["id"]] = entity
-    for link in (trace or {}).get("links", []):
+    for link in trace.get("links", []):
         ends = (link["from"], link["to"])
         if all(
             end["type"] in ("decision", "requirement") and end["id"] in entities for end in ends
@@ -318,9 +333,17 @@ def check(index, root):
             )
             continue
         where = parse_locator(source["locator"])
-        if where["kind"] != "git" or "sha256" not in source:
+        if where["kind"] != "git":
             not_checked += 1
             continue
+        recorded = source.get("sha256")
+        if recorded is None:  # a stated revision without a hash: read what it cited back then
+            then = show(root, source["revision"], where["path"])
+            cited = None if then is None else cited_text(then, where)
+            if cited is None:
+                not_checked += 1
+                continue
+            recorded = sha256(cited)
         text = show(root, revision, where["path"])
         current = None if text is None else cited_text(text, where)
         if current is None:
@@ -331,7 +354,7 @@ def check(index, root):
                     "detail": f"{source['locator']} is not at {revision[:12]}",
                 }
             )
-        elif sha256(current) != source["sha256"]:
+        elif sha256(current) != recorded:
             findings.append(
                 {
                     "kind": "stale_reference",

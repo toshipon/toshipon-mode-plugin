@@ -41,7 +41,12 @@ class Learning(ExplorerCase):
 
     def test_questions_need_evidence_that_reads_back(self):
         refused = self.add(
-            self.question("Q1", "failure_scenario", ["PROP-visibility-timeout"], excerpt="= 999"),
+            self.question(
+                "Q1",
+                "failure_scenario",
+                ["PROP-visibility-timeout"],
+                excerpt="visibility_timeout_seconds = 999",
+            ),
             expect=2,
         )[1]
         self.assertIn("excerpt_not_found", refused["problems"][0])
@@ -55,12 +60,13 @@ class Learning(ExplorerCase):
             "prompt is empty": self.question("Q1", "rationale", ["CMP-worker"], prompt=""),
             "at least one claim": self.question("Q1", "rationale", ["CMP-worker"], claims=[]),
             "question id must be": self.question("", "rationale", ["CMP-worker"]),
+            "entity_ids must name at least": self.question("Q1", "recognition", [{}]),
         }
         for expected, question in cases.items():
             with self.subTest(expected):
                 self.assertIn(expected, "\n".join(self.add(question, expect=2)[1]["problems"]))
         only_unknown = self.question(
-            "Q1", "rationale", ["PROP-visibility-timeout"],
+            "Q1", "recognition", ["PROP-visibility-timeout"],
             claims=[{"id": "C1", "status": "unknown", "text": "理由", "searched": ["docs/adr/"]}],
         )  # fmt: skip
         self.assertIn("every claim is unknown", self.add(only_unknown, expect=2)[1]["problems"][0])
@@ -69,6 +75,18 @@ class Learning(ExplorerCase):
             self.run_cli("learn", "add", "--file", self.write("q.json", {}), expect=2)[1]["error"],
         )
         self.assertIn("question must be an object", self.add("Q1", expect=2)[1]["problems"][0])
+
+    def test_a_reason_nobody_wrote_down_is_not_asked_as_a_rationale_question(self):
+        inferred = self.question("Q1", "rationale", ["PROP-visibility-timeout"])
+        inferred["claims"][0].update(status="inferred", uncertainty="値からの読み取り")
+        refused = self.add(inferred, expect=2)[1]
+        self.assertIn(
+            "a rationale question needs a source that states the reason", refused["problems"][0]
+        )
+        self.assertEqual(
+            self.add(self.question("Q1", "rationale", ["PROP-visibility-timeout"]))[0]["added"],
+            ["Q1"],
+        )
 
     def test_the_answer_is_held_back_until_the_user_has_answered(self):
         self.add(self.question("Q1", "failure_scenario", ["PROP-visibility-timeout", "CMP-worker"]))

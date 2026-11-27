@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import index as ix
 from . import learning
-from .base import Refusal, dump, project_dir, read_json, write_private
+from .base import Refusal, dump, project_dir, read_json, read_text, write_private
 from .claims import verify
 from .evidence import Evidence
 from .explorer import render
@@ -98,8 +98,7 @@ def _run(args):
     if command == "explore":
         return _exploration(space, args)
     if command == "evidence":
-        text = Path(args.file).read_text(encoding="utf-8")
-        return space.evidence.add(args.locator, args.revision, text)
+        return space.evidence.add(args.locator, args.revision, read_text(args.file, "source text"))
     if command == "claims":
         return verify(read_json(args.file, "claims"), space.evidence.resolve)
     if command == "packet":

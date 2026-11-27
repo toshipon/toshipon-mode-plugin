@@ -19,7 +19,10 @@ class Measure(ExplorerCase):
         self.assertIn("synthetic", report["data"])
         self.assertEqual(report["time_to_understanding"], "not measured")
         checked = report["claim_check"]
-        self.assertEqual(checked["seeded_unsupported_caught"], checked["seeded_unsupported"])
+        self.assertEqual(
+            (checked["seeded_unsupported"], checked["seeded_unsupported_caught"]), (4, 4)
+        )
+        self.assertEqual(retrieval_bounds(report), {"hops": 1, "max_entities": 12})
         self.assertEqual(checked["supported_wrongly_rejected"], 0)
         retrieval = report["retrieval"]
         self.assertEqual(retrieval["questions"], 4)
@@ -52,3 +55,7 @@ class Measure(ExplorerCase):
             cwd=ROOT / "runtime",
         )
         self.assertEqual(json.loads(module.stdout)["findings"], [])
+
+
+def retrieval_bounds(report):
+    return report["retrieval"]["bounds"]

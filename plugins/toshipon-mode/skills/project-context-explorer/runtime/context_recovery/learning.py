@@ -24,7 +24,11 @@ def check_question(question, index):
         if not isinstance(question.get(key), str) or not question[key].strip():
             problems.append(f"{name}: {key} is empty")
     entities = question.get("entity_ids")
-    if not isinstance(entities, list) or not entities:
+    if (
+        not isinstance(entities, list)
+        or not entities
+        or not all(isinstance(e, str) for e in entities)
+    ):
         problems.append(f"{name}: entity_ids must name at least one entity")
     else:
         problems += [
@@ -49,6 +53,12 @@ def add(path, questions, index, resolve):
         problems += [
             f"{question['id']}: {p}" for result in report["results"] for p in result["problems"]
         ]
+        written = any(claim["status"] in ("confirmed", "conflict") for claim in question["claims"])
+        if question["kind"] == "rationale" and not written:
+            problems.append(
+                f"{question['id']}: a rationale question needs a source that states the reason"
+                " (a confirmed or conflict claim); a reason nobody wrote down is not asked"
+            )
         if not any(claim["status"] != "unknown" for claim in question["claims"]):
             problems.append(
                 f"{question['id']}: every claim is unknown; there is no evidence to learn from"

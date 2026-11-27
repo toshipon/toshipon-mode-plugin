@@ -17,7 +17,7 @@ _DOC = re.compile(
 )
 _DOC_REVISION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,79}$")
 _CLAIM_ID = re.compile(r"^C[0-9]{1,4}$")
-MAX_EXCERPT = 600
+MIN_EXCERPT, MAX_EXCERPT = 6, 600  # a shorter excerpt matches almost any source
 
 
 def parse_locator(locator):
@@ -58,9 +58,11 @@ def check_reference(reference):
         problems.append(f"{reference['locator']}: revision must be {expected}")
     excerpt = reference.get("excerpt")
     if excerpt is not None and (
-        not isinstance(excerpt, str) or not excerpt.strip() or len(excerpt) > MAX_EXCERPT
+        not isinstance(excerpt, str) or not MIN_EXCERPT <= len(_squash(excerpt)) <= MAX_EXCERPT
     ):
-        problems.append(f"{reference['locator']}: excerpt must be 1-{MAX_EXCERPT} characters")
+        problems.append(
+            f"{reference['locator']}: excerpt must be {MIN_EXCERPT}-{MAX_EXCERPT} characters"
+        )
     return problems
 
 
