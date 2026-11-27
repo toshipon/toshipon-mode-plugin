@@ -2,6 +2,7 @@
 
 import io
 import json
+import shutil
 
 import pytest
 
@@ -29,6 +30,15 @@ def corpus(tmp_path_factory):
     path.write_text(json.dumps(scenario.corpus, ensure_ascii=False))
     ingest.update(root, build("file", {"input": path}), now=INDEXED)
     return env, scenario
+
+
+@pytest.fixture(autouse=True)
+def no_task_total(request):
+    """`--task` also adds to the task total (knowledge/tasks/). Each test starts without one,
+    so the module's shared corpus does not run out of budget across tests."""
+    if "corpus" in request.fixturenames:
+        env, _ = request.getfixturevalue("corpus")
+        shutil.rmtree(paths.state_root(env) / "knowledge" / "tasks", ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)
@@ -125,7 +135,13 @@ def test_what_does_not_fit_is_counted(corpus):
     )
     assert result["budget"]["used_tokens"] <= 900
     assert not {view["id"] for view in returned} & set(result["truncated"]["ids"])
-    assert result["budget"]["task"] is None
+    # `--task` counts what was returned toward the task total (a fresh one in each test).
+    assert result["budget"]["task"] == {
+        "id": task["task_id"],
+        "limit": 6000,
+        "used_before": 0,
+        "used_after": result["budget"]["used_tokens"],
+    }
 
 
 # Leaks -----------------------------------------------------------------------------------
@@ -312,7 +328,16 @@ def test_the_same_input_and_generation_give_the_same_bytes(corpus):
     for task in scenario.tasks[:6]:
         first = raw(env, *task_args(task, "--include-proposed"))
         second = raw(env, *task_args(task, "--include-proposed"))
-        assert first == second
+        assert first[0] == second[0]
+        # `--task` adds to the task total, the one part that moves: the second call starts
+        # where the first ended. Without it, the bytes are the same.
+        before, after = json.loads(first[1]), json.loads(second[1])
+        assert after["budget"]["task"]["used_before"] == before["budget"]["task"]["used_after"]
+        before["budget"]["task"] = after["budget"]["task"] = None
+        assert before == after
+        argv = [part for part in task_args(task, "--include-proposed") if part != task["task_id"]]
+        argv.remove("--task")
+        assert raw(env, *argv) == raw(env, *argv)
 
 
 def test_fts5_syntax_in_the_query_is_only_words(corpus):
@@ -449,4 +474,7 @@ def test_the_search_module_is_what_the_cli_runs(corpus):
         resource_types=tuple(task["resource_types"]),
     )
     direct = search.run(paths.state_root(env), task["principal"], request, SEARCHED)
+    # The CLI adds the task total (`--task`) around what the search module returns.
+    assert printed["budget"]["task"]["used_after"] == printed["budget"]["used_tokens"]
+    printed["budget"]["task"] = None
     assert direct == printed

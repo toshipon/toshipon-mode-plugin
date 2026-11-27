@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:knowledge-fetch-result",
+  "title": "knowledge-fetch-result",
+  "description": "What `knowledge fetch` prints. Any status but ok exits 1. A record the principal cannot read, one that does not exist and one that left the index get the same answer (incomplete, record null, one access_denied entry). Source text appears only inside `fragments[].text`, wrapped in the untrusted envelope; secret-shaped or denied text never appears, `withheld` names only the shapes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "snapshot",
+    "principal",
+    "id",
+    "record",
+    "budget",
+    "offset",
+    "next_offset",
+    "fragments",
+    "unfetched",
+    "withheld"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "status": {
+      "enum": ["ok", "incomplete", "withdrawn", "max_tokens_too_small", "task_budget_exhausted", "stale_index"]
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation", "updated_at", "asked_generation", "moved"],
+      "properties": {
+        "generation": { "type": "integer", "minimum": 0 },
+        "updated_at": { "anyOf": [{ "$ref": "urn:sre-harness:common#/$defs/timestamp" }, { "type": "null" }] },
+        "asked_generation": {
+          "description": "--generation as given (the generation the caller's search saw), or null.",
+          "anyOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+        },
+        "moved": { "description": "true when --generation was given and the index is no longer at it.", "type": "boolean" }
+      }
+    },
+    "principal": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+    "id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/record_id" },
+    "record": {
+      "description": "The index's own values for the record; no source text changes them. null when the record cannot be read.",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "enforcement", "kind", "content_hash"],
+          "properties": {
+            "status": { "$ref": "urn:sre-harness:knowledge-record#/$defs/status" },
+            "enforcement": { "$ref": "urn:sre-harness:knowledge-record#/$defs/enforcement" },
+            "kind": { "$ref": "urn:sre-harness:knowledge-record#/$defs/kind" },
+            "content_hash": { "$ref": "urn:sre-harness:common#/$defs/sha256" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["estimator", "max_tokens", "used_tokens", "task"],
+      "properties": {
+        "estimator": { "const": "utf8_bytes_div_3" },
+        "max_tokens": { "type": "integer", "minimum": 1 },
+        "used_tokens": { "description": "The estimate of every fragments[].text together; never above max_tokens.", "type": "integer", "minimum": 0 },
+        "needed_tokens": { "description": "With max_tokens_too_small: what the next whole line needs.", "type": "integer", "minimum": 1 },
+        "task": { "$ref": "urn:sre-harness:knowledge-search-result#/properties/budget/properties/task" }
+      }
+    },
+    "offset": { "type": "integer", "minimum": 0 },
+    "next_offset": {
+      "description": "Where the next page starts (--offset), counted in lines across the fetched evidence; null when this page ends the text.",
+      "anyOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+    },
+    "fragments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "locator",
+          "revision",
+          "content_sha256",
+          "hash_match",
+          "size",
+          "start_line",
+          "end_line",
+          "total_lines",
+          "instruction_like",
+          "text"
+        ],
+        "properties": {
+          "locator": { "type": "string", "minLength": 1 },
+          "revision": { "type": "string", "minLength": 1 },
+          "content_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+          "hash_match": { "const": true },
+          "size": { "type": "integer", "minimum": 0 },
+          "start_line": { "type": "integer", "minimum": 1 },
+          "end_line": { "type": "integer", "minimum": 1 },
+          "total_lines": { "type": "integer", "minimum": 1 },
+          "instruction_like": { "type": "boolean" },
+          "text": {
+            "description": "Whole lines of the source inside the untrusted envelope: an opening line `<<<UNTRUSTED-DATA <boundary> source=<label>[ instruction_like=yes]>>>`, the text, and `<<<END-UNTRUSTED-DATA <boundary>>>>`. The boundary is derived from the text and never occurs in it.",
+            "type": "string",
+            "pattern": "^<<<UNTRUSTED-DATA [0-9a-f]{16} "
+          }
+        }
+      }
+    },
+    "unfetched": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason"],
+        "properties": {
+          "locator": { "type": "string", "minLength": 1 },
+          "revision": { "type": "string", "minLength": 1 },
+          "reason": {
+            "$ref": "urn:sre-harness:knowledge-search-result#/properties/unfetched/items/properties/reason"
+          },
+          "hash_match": { "const": false },
+          "content_sha256": { "description": "With hash_mismatch: the hash of what is there now.", "$ref": "urn:sre-harness:common#/$defs/sha256" }
+        }
+      }
+    },
+    "withheld": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["locator", "shapes"],
+        "properties": {
+          "locator": { "type": "string", "minLength": 1 },
+          "shapes": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "pattern": "^[a-z_]{1,40}$" }
+          }
+        }
+      }
+    }
+  }
+}
