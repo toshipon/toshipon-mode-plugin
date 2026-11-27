@@ -39,6 +39,9 @@ Rules this module decides:
                  delivered, and poll exits 1.
     delivered    a workspace gets an answer once; after that it is `already_delivered` and is
                  not checked for staleness again (it was applied already).
+    workspace    list and cancel take the workspace and see only the requests it put or
+                 waits for. The name is trusted as given: whoever names a workspace reads its
+                 requests. It is not authentication.
     reuse        task by default. An answer reused beyond its task is returned as a
                  `candidate_hint` for a person to take through the approval flow; nothing here
                  writes the index or the registry, and an answer never becomes a rule.
@@ -607,13 +610,25 @@ def poll(root, workspace, *, now, task_id=None, head_sha=None):
 # list and cancel ---------------------------------------------------------------------------
 
 
-def listing(root, now, wanted=None):
-    """Every request with its status now, oldest first; only `wanted` when given."""
+def _listed(shown):
+    """A request as list and cancel print it: the revision without the content hashes of the
+    evidence (the state of records is the index's to say, through its access filter)."""
+    revision = {
+        name: value for name, value in shown["revision"].items() if name != "content_hashes"
+    }
+    return {**shown, "revision": revision}
+
+
+def listing(root, now, wanted=None, workspace=None):
+    """The requests `workspace` put or waits for (a duplicate put), with their status now,
+    oldest first; only `wanted` when given. Without a workspace, every request: for the
+    operator's own counts, never from the command line."""
     queue = load(root)
     superseded = replaced(queue)
     shown = [
-        view(request, queue, now, superseded)
+        _listed(view(request, queue, now, superseded))
         for request in sorted(queue.requests.values(), key=lambda r: (r["created_at"], r["id"]))
+        if workspace is None or workspace in queue.waiters.get(request["id"], ())
     ]
     return {
         "schema_version": records.SCHEMA_VERSION,
@@ -622,14 +637,16 @@ def listing(root, now, wanted=None):
     }
 
 
-def cancel(root, request_id, reason, now):
-    """Withdraw an open, expired or superseded request. An answered one stays answered."""
+def cancel(root, request_id, reason, now, workspace):
+    """Withdraw an open, expired or superseded request that `workspace` put or waits for. An
+    answered one stays answered. A request of another workspace gets the answer of a missing
+    one."""
     reason = reason_text(reason)
     with _locked(root):
         queue = load(root)
         request = queue.requests.get(request_id)
-        if request is None:
-            raise InputError(f"there is no decision request {request_id}.")
+        if request is None or workspace not in queue.waiters.get(request_id, ()):
+            raise InputError(f"there is no decision request {request_id} for {workspace}.")
         state = status(request, queue, now, replaced(queue))
         if state in {"cancelled", "answered"}:
             raise QualityGateError(f"{request_id} is {state}; nothing was changed.")
@@ -641,5 +658,5 @@ def cancel(root, request_id, reason, now):
         queue.cancelled[request_id] = cancellation
         return {
             "schema_version": records.SCHEMA_VERSION,
-            "request": view(request, queue, now, replaced(queue)),
+            "request": _listed(view(request, queue, now, replaced(queue))),
         }

@@ -719,7 +719,7 @@ harness のコアが知るのは 3 つの契約だけです。タスクを動か
 | `knowledge decision put --task-file F --question Q --option A --option B … --evidence KN-… --risk R [--head-sha S] [--expires-at T]` | `task-context` | `decision-request` の `$defs/put_result` | `accepted` か `duplicate` | 索引が今の設定に追随していない | 読めない根拠、上限超え、秘密情報の形 | principal が不明、symlink |
 | `knowledge decision answer --request ID --option O --responder NAME [--reuse-scope task\|project --reuse-until T]` | 人の入力 | 画面の後に `decision-response` | 記録した | open でない（回答済み、期限切れ、取り下げ済み、置換済み） | 選択肢に無い、無い request | TTY が無い、hash の不一致、AI や自動化の名前、自動実行 |
 | `knowledge decision poll --workspace W [--task T] [--head-sha S]` | queue と索引 | `decision-request` の `$defs/poll_result` | `ok` | `stale_response` | 索引が無い、引数の誤り | symlink |
-| `knowledge decision list [--status S]` / `cancel --request ID --reason R` | queue | `$defs/list_result` / `{request}` | 成功 | cancel の対象が回答済みか取り下げ済み | 無い request、理由の誤り | symlink |
+| `knowledge decision list --workspace W [--status S]` / `cancel --workspace W --request ID --reason R` | queue | `$defs/list_result` / `{request}`（どちらも `$defs/listed` の形） | 成功 | cancel の対象が回答済みか取り下げ済み | `--workspace` が無い、無い request（ほかの workspace の request も同じ答え）、理由の誤り | symlink |
 
 指示書の 6 段と、V2 のコマンドの対応です。
 
@@ -789,13 +789,14 @@ $H knowledge decision poll --workspace ws-b --head-sha 2222222222222222222222222
 - 質問は 500 文字、選択肢は 100 文字・2〜10 個までの 1 行です。制御文字と双方向制御文字は落とし、空白はまとめます。秘密情報の形があれば exit 2 です。`--expires-at` は任意で、その時刻を過ぎた未回答の request は `expired` になり、回答を受け付けません。
 - status は書いたファイルから導きます。取り下げ済み（`cancelled`）、同じ task・同じ質問・同じ根拠のより新しい request がある（`superseded`）、回答済み（`answered`）、期限切れ（`expired`）、それ以外は `open` の順です。outbox のファイルは `open` のままです。
 - answer は `review approve` と同じく、stdin と stdout が TTY のときだけ動きます。画面に質問、選択肢、選んだもの、根拠、revision、再利用の範囲と `confirmation_sha256` を出し、その先頭 12 文字の入力を求めます。回答は `inbox/<id>.json` に 1 回だけ書き、2 回目は何も変えずに exit 1 です。`--responder` に AI や自動化の名前（`claude`、`ai`、`bot`、`agent`、`assistant`、`harness`、`gpt`、`llm` を語に含むもの）は exit 3 で、`AI_HARNESS_AUTOMATED` か `AI_HARNESS_ACTIVE` が設定された実行からも記録しません。autonomous-improvement の reviewer の規則と同じです。
-- poll は、その workspace が put した request（最初に put した workspace と、`duplicate` を受け取った workspace）だけを返します。ほかの workspace の request は返しません。回答は、workspace ごとに `delivered/<id>/<workspace>.json` に記録して 1 回だけ `responses` に入れ、2 回目からは `already_delivered` に入れます。
+- poll は、その workspace が put した request（最初に put した workspace と、`duplicate` を受け取った workspace）だけを返します。ほかの workspace の request は返しません。`list` と `cancel` も `--workspace` が必須で、その workspace が put したか `duplicate` で待っている request だけを返し、取り下げられます。ほかの workspace の request の `cancel` は、無い request と同じ exit 2 です。`list` と `cancel` の出力の `revision` には、根拠の content hash（`content_hashes`）を出しません。回答は、workspace ごとに `delivered/<id>/<workspace>.json` に記録して 1 回だけ `responses` に入れ、2 回目からは `already_delivered` に入れます。
 - 回答を返す前に、request の revision と今の状態を比べます。根拠の content hash が変わった（`content_hash_changed`）、根拠が索引から消えたか読めなくなった（`evidence_unavailable`）、`--head-sha` が違う（`head_sha_changed`）か付いていない（`head_sha_not_given`）回答は、`stale` に入れて返さず、exit 1 です。generation だけが進んだ（ほかのレコードの更新）ときは stale にしません。同じ質問を新しい状態で put し直すと、古い request は `superseded` になり、stale には出なくなります。
 - 回答の再利用は、既定でその task の中だけです。`--reuse-scope project --reuse-until <時刻>` の回答も強制ルールにはなりません。poll は、質問、選んだ option、根拠 ID を `candidate_hints` に返すだけで、索引にも registry にも書きません。規則にするには、人が候補として既存の承認の流れ（`review generate` から `review approve`）に載せます。`decisions.py` が索引の writer と registry の書き込みを使わないことを、構文木のテストが確かめます。
 
 限界:
 
 - `--responder` の名前の検査と TTY の確認は、本人確認ではありません。`review approve` と同じく、うっかりの自動回答を防ぐためのもので、pty を開いて確認の hash を打ち込むプログラムは通ります。名前は入力どおりに記録します。
+- queue は workspace の名前を信頼します。`--workspace` に名前を渡せば、その workspace の request を読めて取り下げられます。本人確認ではありません。
 - 参照実装の排他は 1 台の OS の flock です。保存先はローカルディスクを前提にします。同じ OS の利用者は queue のファイルを直接書けるので、改ざん耐性はありません。
 - harness はランナーもキューの外部接続も同梱しません。数えられる判断待ちの件数は、この参照実装を通った分だけです。
 

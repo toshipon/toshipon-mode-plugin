@@ -235,12 +235,14 @@ def _decision_poll(args, env, out):
 
 
 def _decision_list(args, env, out):
-    _print(decisions.listing(paths.state_root(env), clock(), args.status), out)
+    root = paths.state_root(env)
+    _print(decisions.listing(root, clock(), args.status, workspace=args.workspace), out)
     return EXIT_OK
 
 
 def _decision_cancel(args, env, out):
-    _print(decisions.cancel(paths.state_root(env), args.request, args.reason, clock()), out)
+    root = paths.state_root(env)
+    _print(decisions.cancel(root, args.request, args.reason, clock(), args.workspace), out)
     return EXIT_OK
 
 
@@ -447,13 +449,17 @@ def _register_decision(stages):
     )
     polling.set_defaults(handler=_decision_poll)
 
-    listing = steps.add_parser("list", help="every request with its status now")
+    listing = steps.add_parser(
+        "list", help="the requests a workspace put or waits for, with their status now"
+    )
+    listing.add_argument("--workspace", required=True, type=_name)
     listing.add_argument(
         "--status", choices=("open", "answered", "cancelled", "expired", "superseded")
     )
     listing.set_defaults(handler=_decision_list)
 
     cancelling = steps.add_parser("cancel", help="withdraw a request that is not answered")
+    cancelling.add_argument("--workspace", required=True, type=_name)
     cancelling.add_argument("--request", required=True, type=request_id)
     cancelling.add_argument("--reason", required=True, help="one line, recorded")
     cancelling.set_defaults(handler=_decision_cancel)
