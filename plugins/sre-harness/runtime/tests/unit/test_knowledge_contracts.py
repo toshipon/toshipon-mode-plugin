@@ -218,3 +218,164 @@ def test_an_adapter_answer_outside_the_contract_does_not_conform():
     ):
         assert problems("source-adapter", {**good, **change}) != [], change
     assert problems("source-adapter", {k: v for k, v in good.items() if k != "cursor"}) != []
+
+
+# knowledge context: one search from a task-context file ---------------------------------------
+
+INDEXED = "2026-11-27T00:00:00Z"
+SEARCHED = "2026-11-27T06:00:00Z"
+
+
+@pytest.fixture
+def corpus(home, tmp_path, monkeypatch):
+    from sre_harness.knowledge import cli as knowledge_cli
+    from sre_harness.knowledge import ingest
+
+    monkeypatch.setattr(knowledge_cli, "clock", lambda: SEARCHED)
+    root = state_root(home)
+    scenario = knowledge_corpus.scenario(50)
+    paths.write_private(root / "knowledge" / "config.json", json.dumps(scenario.config))
+    path = tmp_path / "corpus.json"
+    path.write_text(json.dumps(scenario.corpus, ensure_ascii=False))
+    ingest.update(root, build("file", {"input": path}), now=INDEXED)
+    return home, scenario
+
+
+def task_file(tmp_path, task, workspace="ws-a", name="task.json", **changes):
+    value = {
+        "schema_version": 1,
+        "task_id": task["task_id"],
+        "workspace_id": workspace,
+        "principal": task["principal"],
+        "project_id": task["project_id"],
+        "component_id": task["component_id"],
+        "repo": None,
+        "base_sha": None,
+        "changed_paths": task["paths"],
+        "resource_types": task["resource_types"],
+        **changes,
+    }
+    path = tmp_path / name
+    path.write_text(json.dumps(value, ensure_ascii=False))
+    return path
+
+
+def cli_json(env, *argv):
+    import io
+
+    from sre_harness import cli
+
+    out = io.StringIO()
+    code = cli.main(list(argv), env=env, out=out)
+    text = out.getvalue()
+    return code, (json.loads(text) if text.strip() else None)
+
+
+def context(env, path, *extra):
+    return cli_json(env, "knowledge", "context", "--task-file", str(path), *extra)
+
+
+def search_for(env, task, *extra):
+    argv = ["knowledge", "search", "--principal", task["principal"]]
+    argv += ["--project", task["project_id"], "--component", task["component_id"]]
+    argv += ["--task", task["task_id"]]
+    for path in task["paths"]:
+        argv += ["--path", path]
+    for kind in task["resource_types"]:
+        argv += ["--resource-type", kind]
+    return cli_json(env, *argv, *extra)
+
+
+def without_task_total(result):
+    return {**result, "budget": {**result["budget"], "task": None}}
+
+
+def test_context_is_the_search_its_task_file_describes(corpus, tmp_path):
+    env, scenario = corpus
+    task = scenario.tasks[1]
+    code, found = context(env, task_file(tmp_path, task), "--query", task["query"])
+    assert code == 0
+    assert problems("knowledge-search-result", found) == []
+    assert found["records"]
+    code, searched = search_for(env, task, "--query", task["query"])
+    assert code == 0
+    assert without_task_total(found) == without_task_total(searched)
+
+
+def test_context_counts_against_the_task_as_search_does(corpus, tmp_path):
+    env, scenario = corpus
+    task = scenario.tasks[1]
+    _, first = context(env, task_file(tmp_path, task))
+    _, second = context(env, task_file(tmp_path, task))
+    used = first["budget"]["used_tokens"]
+    assert first["budget"]["task"] == {
+        "id": task["task_id"],
+        "limit": 6000,
+        "used_before": 0,
+        "used_after": used,
+    }
+    assert second["budget"]["task"]["used_before"] == used
+    _, searched = search_for(env, task)
+    assert searched["budget"]["task"]["used_before"] == 2 * used
+
+
+def test_context_takes_the_task_budget_extension_as_search_does(corpus, tmp_path):
+    env, scenario = corpus
+    path = task_file(tmp_path, scenario.tasks[1])
+    code, found = context(env, path, "--extend-task-budget", "100", "--reason", "長い作業")
+    assert code == 0 and found["budget"]["task"]["limit"] == 6100
+    assert context(env, path, "--reason", "理由だけ")[0] == 2
+
+
+def test_context_returns_only_the_records_of_the_task_project(corpus, tmp_path):
+    env, scenario = corpus
+    limited = next(t for t in scenario.tasks if t["principal"] == "workspace-b")
+    _, found = context(env, task_file(tmp_path, limited), "--max-tokens", "100000")
+    assert {r["id"] for r in found["records"]} == set(limited["applicable"])
+    for shown in found["records"]:
+        assert shown["scope"].get("project_id") in (None, limited["project_id"])
+
+
+def test_context_stops_when_the_mandatory_records_do_not_fit(corpus, tmp_path):
+    env, scenario = corpus
+    overflowing = scenario.tasks[0]
+    code, found = context(env, task_file(tmp_path, overflowing))
+    assert code == 1 and found["status"] == "mandatory_overflow" and found["records"] == []
+
+
+def test_context_with_an_unknown_principal_is_refused(corpus, tmp_path):
+    env, scenario = corpus
+    path = task_file(tmp_path, scenario.tasks[1], principal="workspace-z")
+    assert context(env, path) == (3, None)
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "{not json",
+        json.dumps({"schema_version": 1}),
+        json.dumps([1, 2]),
+        "﻿{}",
+    ],
+)
+def test_a_task_file_outside_the_contract_is_an_input_error(corpus, tmp_path, written):
+    env, _ = corpus
+    path = tmp_path / "task.json"
+    path.write_text(written)
+    assert context(env, path) == (2, None)
+
+
+def test_a_missing_or_oversized_task_file_is_an_input_error(corpus, tmp_path):
+    env, scenario = corpus
+    assert context(env, tmp_path / "absent.json") == (2, None)
+    huge = task_file(tmp_path, scenario.tasks[1], changed_paths=[f"p/{n:06d}" for n in range(1000)])
+    huge.write_text(huge.read_text() + " " * (256 * 1024))
+    assert context(env, huge) == (2, None)
+
+
+def test_a_task_file_is_only_read(corpus, tmp_path):
+    env, scenario = corpus
+    path = task_file(tmp_path, scenario.tasks[1])
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    context(env, path)
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
