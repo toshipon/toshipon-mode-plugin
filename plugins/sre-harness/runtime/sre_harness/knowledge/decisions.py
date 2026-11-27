@@ -11,7 +11,8 @@ a user may write for another queue:
     decisions/outbox/<id>.json                 a request (decision-request), status open
     decisions/inbox/<id>.json                  its answer (decision-response)
     decisions/cancelled/<id>.json              {request_id, reason, cancelled_at}
-    decisions/waiters/<id>/<workspace>.json    a workspace that put the request
+    decisions/waiters/<id>/<workspace>.json    a workspace that put the request, and the
+                                               principal of the task it put it for
     decisions/delivered/<id>/<workspace>.json  {request_id, workspace_id, delivered_at,
                                                response_sha256}: the answer reached it
 
@@ -34,8 +35,10 @@ Rules this module decides:
     status       cancelled, else superseded, else answered, else expired (now is at or past
                  expires_at), else open. The outbox file always says open; this is derived.
     stale        an answer about to be delivered whose evidence no longer has the recorded
-                 content hash (content_hash_changed) or cannot be read with the request's
-                 principal any more (evidence_unavailable), or whose head differs from
+                 content hash (content_hash_changed) or cannot be read any more
+                 (evidence_unavailable) with the principal of the workspace it is delivered
+                 to (the one its waiter file names; the request's, for a waiter file that
+                 names none), or whose head differs from
                  --head-sha (head_sha_changed) or is not given (head_sha_not_given). It is not
                  delivered, and poll exits 1.
     delivered    a workspace gets an answer once; after that it is `already_delivered` and is
@@ -179,6 +182,7 @@ class Queue:
     responses: dict = field(default_factory=dict)  # id -> response
     cancelled: dict = field(default_factory=dict)  # id -> cancellation
     waiters: dict = field(default_factory=dict)  # id -> {workspace}
+    principals: dict = field(default_factory=dict)  # id -> {workspace: principal it put for}
     delivered: dict = field(default_factory=dict)  # id -> {workspace: delivery}
 
 
@@ -215,7 +219,12 @@ def load(root):
                 if value.get("id", value.get("request_id")) != path.stem:
                     raise InputError(f"the queue file {path} names another request.")
                 kept[path.stem] = value
-    queue.waiters = {key: set(rows) for key, rows in _per_workspace(base / WAITERS).items()}
+    waiting = _per_workspace(base / WAITERS)
+    queue.waiters = {key: set(rows) for key, rows in waiting.items()}
+    queue.principals = {
+        key: {name: row["principal"] for name, row in rows.items() if "principal" in row}
+        for key, rows in waiting.items()
+    }
     queue.delivered = _per_workspace(base / DELIVERED)
     return queue
 
@@ -363,13 +372,18 @@ def _revision(root, task, evidence, head_sha):
     return {"generation": generation, "content_hashes": found, "head_sha": head_sha}
 
 
-def _wait(root, request_id, workspace, now):
+def _wait(root, request_id, workspace, principal, now):
     folder = _folder(root, WAITERS, request_id)
     try:
         _create(
             folder,
             f"{workspace}.json",
-            {"request_id": request_id, "workspace_id": workspace, "at": now},
+            {
+                "request_id": request_id,
+                "workspace_id": workspace,
+                "principal": principal,
+                "at": now,
+            },
         )
     except FileExistsError:
         pass
@@ -390,7 +404,7 @@ def put(root, task, *, question, options, evidence_ids, risk, now, head_sha=None
         joined = [r for r in same if status(r, queue, now, superseded) in LIVE]
         if joined:
             request = min(joined, key=_order)
-            _wait(root, request["id"], workspace, now)
+            _wait(root, request["id"], workspace, task["principal"], now)
             queue.waiters.setdefault(request["id"], set()).add(workspace)
             shown = view(request, queue, now, superseded)
             return {
@@ -417,7 +431,7 @@ def put(root, task, *, question, options, evidence_ids, risk, now, head_sha=None
             request["expires_at"] = expires_at
         records.validate("decision-request", request)
         _create(_folder(root, OUTBOX), f"{request['id']}.json", request)
-        _wait(root, request["id"], workspace, now)
+        _wait(root, request["id"], workspace, task["principal"], now)
     return {"schema_version": records.SCHEMA_VERSION, "status": "accepted", "request": request}
 
 
@@ -513,15 +527,22 @@ def answer(root, request_id, *, option, responder, reuse, now, ask, show, env=No
 # poll --------------------------------------------------------------------------------------
 
 
-def _current_hashes(root, requests):
-    """(generation, {principal: {id: content_hash}}) of the evidence of `requests`, each read
-    with its request's principal. A principal no longer in the config reads nothing."""
+def reader_of(request, queue, workspace):
+    """The principal whose access the answer to `request` is checked with for `workspace`: the
+    one its waiter file names, else (a file written before waiters named one) the request's."""
+    return queue.principals.get(request["id"], {}).get(workspace, request["principal"])
+
+
+def _current_hashes(root, wanted_by):
+    """(generation, {principal: {id: content_hash}}) of the evidence in `wanted_by`
+    [(principal, evidence ids)], each read with its principal. A principal no longer in the
+    config reads nothing."""
     settings = config.load(root)
     if settings is None:
         raise BoundaryError("no knowledge/config.json, so no principal can be resolved.")
     wanted = {}
-    for request in requests:
-        wanted.setdefault(request["principal"], set()).update(request["evidence_ids"])
+    for name, ids in wanted_by:
+        wanted.setdefault(name, set()).update(ids)
     found = {}
     with store.reader(root) as reader:
         for name, ids in sorted(wanted.items()):
@@ -564,7 +585,9 @@ def poll(root, workspace, *, now, task_id=None, head_sha=None):
             key=lambda request: (request["created_at"], request["id"]),
         )
         answered = [r for r in mine if status(r, queue, now, superseded) == "answered"]
-        generation, hashes = _current_hashes(root, answered)
+        generation, hashes = _current_hashes(
+            root, [(reader_of(r, queue, workspace), r["evidence_ids"]) for r in answered]
+        )
         result = {
             "schema_version": records.SCHEMA_VERSION,
             "status": "ok",
@@ -589,7 +612,7 @@ def poll(root, workspace, *, now, task_id=None, head_sha=None):
                     }
                 )
                 continue
-            reasons = stale_reasons(request, hashes[request["principal"]], head_sha)
+            reasons = stale_reasons(request, hashes[reader_of(request, queue, workspace)], head_sha)
             if reasons:
                 result["stale"].append({"request_id": request_id, "reasons": reasons})
                 continue

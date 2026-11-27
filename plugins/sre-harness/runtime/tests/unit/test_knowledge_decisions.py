@@ -15,7 +15,7 @@ from sre_harness import cli, records
 from sre_harness.knowledge import cli as knowledge_cli
 from sre_harness.knowledge import decisions, model
 from tests.invariants.test_boundaries import RUNTIME
-from tests.knowledge_helpers import item, state_root, update, write_config, write_input
+from tests.knowledge_helpers import CONFIG, item, state_root, update, write_config, write_input
 
 NOW = "2026-11-27T06:00:00Z"
 LATER = "2026-11-28T06:00:00Z"
@@ -652,3 +652,22 @@ def test_asking_again_at_a_head_that_came_back_gives_a_request_that_takes_an_ans
     assert back["request"]["id"] not in {first["request"]["id"], moved["request"]["id"]}
     at_terminal(monkeypatch)
     assert answer(env, back["request"]["id"])[0] == 0
+
+
+def test_staleness_is_judged_with_the_principal_of_each_waiting_workspace(
+    env, tmp_path, monkeypatch
+):
+    request_id, _ = answered(env, tmp_path, monkeypatch)
+    _, joined = put(env, tmp_path, workspace="ws-b", principal="workspace-b")
+    assert joined["status"] == "duplicate"
+    waiter = decisions_dir(env) / "waiters" / request_id / "ws-b.json"
+    assert json.loads(waiter.read_text())["principal"] == "workspace-b"
+    settings = json.loads(json.dumps(CONFIG))
+    settings["principals"]["workspace-b"]["readers"] = ["everyone"]  # R1 is no longer readable
+    write_config(env, settings)
+    assert update(env, write_input(tmp_path / "in.json", items()))[0] == 0
+    code, other = poll(env, "ws-b", "--head-sha", HEAD)
+    assert code == 1 and other["responses"] == []
+    assert other["stale"] == [{"request_id": request_id, "reasons": ["evidence_unavailable"]}]
+    code, mine = poll(env, "ws-a", "--head-sha", HEAD)
+    assert code == 0 and [row["request_id"] for row in mine["responses"]] == [request_id]
