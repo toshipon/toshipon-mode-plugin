@@ -8,6 +8,7 @@ An item is listed in `rejected`, and kept out of the index, when it
     access_missing      has no `access` (scope is not access: nothing is readable by default)
     unknown_reader      names a reader no principal in knowledge/config.json holds
     invariant_violated  breaks model.problems (approval, mandatory, scope ids)
+    invalid_glob        has a path glob that could make matching slow (globs.problem)
     origin_kind_reserved  has an origin kind that only another adapter may give
                         (RESERVED_KINDS: a file cannot pose as the review registry or a run)
     owned_by_other_source  has the id of a record another source holds (the store's plan);
@@ -19,7 +20,7 @@ indexed; nothing is merged automatically.
 
 from dataclasses import dataclass
 
-from .. import records
+from .. import globs, records
 from ..errors import InputError
 from . import config, model, store
 
@@ -71,6 +72,13 @@ def check(items, known_readers, now, adapter=None):
         problems = records.violations("knowledge-record", item, "item")
         if problems:
             rejected.append(_rejection(index, origin, "schema_invalid", "; ".join(problems[:5])))
+            continue
+        if any(globs.problem(glob) for glob in item.get("facets", {}).get("path_globs", ())):
+            detail = (
+                f"a path glob is longer than {globs.MAX_GLOB_LENGTH} characters or has more "
+                f"than {globs.MAX_DOUBLE_STARS} '**'"
+            )
+            rejected.append(_rejection(index, origin, globs.INVALID, detail))
             continue
         owner = RESERVED_KINDS.get(item["origin"]["kind"])
         if owner is not None and owner != adapter:

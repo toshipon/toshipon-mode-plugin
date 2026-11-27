@@ -436,6 +436,7 @@ run にはレビュー本文、diff、文書の section が入ります。消す
 - `complete: false`（部分的な取り込み）では、入力に無いレコードを消しません。`complete: true` のときだけ、消えたものを tombstone にします。
 - `access` の無いレコードと、どの principal も持たない reader を名指しするレコードは、索引に入れずに `rejected` に理由を付けて出します。
 - レコード ID は、それを最初に取り込んだ source のものです。別の source が同じ ID（同じ `origin`）のレコードを出しても書き込まず、そのレコードだけを `rejected` に理由 `owned_by_other_source` で出します（ほかの item は取り込み、generation は実際に何かが変わったときだけ進みます）。持ち主の source がそのレコードを外した（tombstone にした）後なら、別の source が取り込めます。
+- `facets.path_globs` の glob は、連続する `**/` を 1 つとして読みます（意味は同じです）。畳んだ後に `**` が 3 個を超える glob と、200 文字を超える glob は、照合に時間がかかるので索引に入れず、`rejected` に理由 `invalid_glob` で出します（`review` の宣言的検査の glob は畳むだけで、上限は当てません）。
 - `origin.kind` の `review-registry` は `--source review-registry` だけ、`decision` と `requirement` は `--source spec-run` だけが出せます。`--source file` の item がこれらの kind を使うと、`rejected` に理由 `origin_kind_reserved` で出します。
 - WAL を使うので、ローカルディスクに置いてください。ネットワークファイルシステムでは壊れることがあります。
 - Python の `sqlite3` に FTS5 が無いと、`knowledge update` は exit 2 で止まります。`knowledge status` の `fts5` で確かめられます。`knowledge status` の `extension_loading` は、`sqlite3` が SQLite の拡張を読み込めるか（接続に `enable_load_extension` があり、呼べるか）です。索引は拡張を使わないので、`false` でも止まりません。
