@@ -37,6 +37,11 @@ What it holds:
   overflowing task, and tasks whose query is a paraphrase sharing no term with the records'
   wording (`literal_query` holds that wording).
 
+`paraphrase_scenario(size)` is `scenario(size)` with more records after it, for the paraphrase
+cases (PARAPHRASES): 36 queries in three categories (`ja`, `en`, `cross`) that say what a
+topic's records say in other words. The cases are apart from the tasks, so nothing above
+changes; `knowledge_eval --paraphrase` measures them.
+
 The labels come from the generator's own rule. They check that the mechanism works; they say
 nothing about how well a real query is answered.
 
@@ -48,7 +53,7 @@ texts into the state root (`$AI_HARNESS_HOME/sre-harness/`).
 import argparse
 import json
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sre_harness import paths, records
@@ -100,6 +105,82 @@ TOPICS = {
     "encryption": ("暗号化", "鍵による秘匿", ("保存時", "転送時", "保存時と転送時")),
     "rate-limit": ("レート制限", "呼び出し回数の上限", ("毎秒 100 件", "毎秒 1000 件")),
 }
+# Topics only the paraphrase cases add records for: topic: (language, wording, values). Their
+# words are chosen not to collide with one another or with the topics above.
+PARAPHRASE_TOPICS = {
+    "retry": ("ja", "再試行の回数", ("3 回", "5 回")),
+    "tagging": ("ja", "タグ付け", ("必須", "推奨")),
+    "permission": ("ja", "アクセス権限", ("最小限", "読み取りのみ")),
+    "capacity": ("ja", "ディスク容量", ("80% まで", "90% まで")),
+    "rollout": ("ja", "段階的な展開", ("1% から", "10% から")),
+    "detail-level": ("ja", "ログの出力レベル", ("警告以上", "情報以上")),
+    "message-ttl": ("en", "message ttl", ("30 days", "90 days")),
+    "request-deadline": ("en", "request deadline", ("5 seconds", "30 seconds")),
+    "backoff-interval": ("en", "backoff interval", ("1 second", "exponential")),
+    "snapshot-schedule": ("en", "snapshot schedule", ("hourly", "daily")),
+    "paging-threshold": ("en", "paging threshold", ("2%", "5%")),
+    "cost-labels": ("en", "cost allocation labels", ("required", "recommended")),
+    "least-privilege": ("en", "least privilege", ("required", "recommended")),
+    "disk-headroom": ("en", "disk headroom", ("20%", "30%")),
+    "canary-release": ("en", "canary release", ("1%", "5%")),
+    "certificate-renewal": ("en", "certificate renewal", ("14 days ahead", "30 days ahead")),
+    "connection-pool": ("en", "connection pool size", ("20", "50")),
+    "log-verbosity": ("en", "log verbosity", ("info", "warn")),
+}
+# The paraphrase cases: (category, topic, paraphrased query). The literal query is the topic's
+# wording. `ja`: Japanese records and query; `en`: English records and query; `cross`: the
+# query is in the other language. A query is meant to share no search term with the records of
+# its topic (test_knowledge_corpus checks it), so only another way of searching can find them.
+PARAPHRASES = (
+    ("ja", "retention", "どれくらい残しておくか"),
+    ("ja", "timeout", "応答を待つ長さの上限"),
+    ("ja", "backup", "壊れても戻せるよう写しを取る"),
+    ("ja", "alerting", "異常を担当者へ知らせる"),
+    ("ja", "encryption", "中身を第三者に読ませない工夫"),
+    ("ja", "rate-limit", "要求の量に歯止めをかける"),
+    ("ja", "retry", "失敗後に何度やり直すか"),
+    ("ja", "tagging", "資源に持ち主の名札を貼る"),
+    ("ja", "permission", "誰が触ってよいかの決まり"),
+    ("ja", "capacity", "記憶領域の空きの残り"),
+    ("ja", "rollout", "新しい版を一部の利用者へ順に出す"),
+    ("ja", "detail-level", "記録をどの程度細かく書き出すか"),
+    ("en", "message-ttl", "how long old entries stick around"),
+    ("en", "request-deadline", "maximum wait before a call gives up"),
+    ("en", "backoff-interval", "how long to pause before trying again"),
+    ("en", "snapshot-schedule", "how often copies of the volumes are taken"),
+    ("en", "paging-threshold", "when should the on-call person get woken up"),
+    ("en", "cost-labels", "marking cloud assets with who pays for them"),
+    ("en", "least-privilege", "grant people only the rights they actually need"),
+    ("en", "disk-headroom", "how full a volume may get before we act"),
+    ("en", "canary-release", "ship a new version to a small slice of traffic first"),
+    ("en", "certificate-renewal", "replace TLS certs before they lapse"),
+    ("en", "connection-pool", "how many open links to the database at once"),
+    ("en", "log-verbosity", "how chatty the application output should be"),
+    ("cross", "retention", "how long data is kept"),
+    ("cross", "timeout", "how long to wait for a reply"),
+    ("cross", "backup", "making spare copies in case of loss"),
+    ("cross", "encryption", "scrambling stored contents so outsiders cannot read them"),
+    ("cross", "retry", "number of times to try again"),
+    ("cross", "permission", "who is allowed to touch what"),
+    ("cross", "snapshot-schedule", "ボリュームの写しを取る間隔"),
+    ("cross", "paging-threshold", "当番を夜中に起こす基準"),
+    ("cross", "least-privilege", "必要な分だけ許可を渡す"),
+    ("cross", "canary-release", "新しい版をまず少しの通信にだけ出す"),
+    ("cross", "certificate-renewal", "証明書の期限切れの前の差し替え"),
+    ("cross", "connection-pool", "データベースへの同時接続の数"),
+)
+PARAPHRASE_CATEGORIES = ("ja", "en", "cross")
+# Where the cases work, in turn: every component but the overflowing one.
+PARAPHRASE_PLACES = (
+    ("project-alpha", "queue"),
+    ("project-alpha", "api"),
+    ("project-alpha", "storage"),
+    ("project-beta", "batch"),
+    ("project-gamma", "billing"),
+    ("project-gamma", "search"),
+    ("project-gamma", "cache"),
+    ("project-gamma", "auth"),
+)
 STATUSES = (
     ("approved", 70),
     ("proposed", 10),
@@ -117,6 +198,7 @@ class Scenario:
     sources: dict
     tasks: list
     traps: dict
+    paraphrase_cases: list = field(default_factory=list)
 
 
 def config():
@@ -473,7 +555,7 @@ def _tasks(builder, settings, rejected_keys):
     return tasks
 
 
-def scenario(size, seed=SEED):
+def _base(size, seed):
     settings = config()
     builder = _Builder(size, seed)
     _fixed(builder)
@@ -484,8 +566,111 @@ def scenario(size, seed=SEED):
     tasks = _tasks(builder, settings, rejected_keys)
     builder.traps["overflow_task"] = "TASK-0001"
     builder.traps["paraphrase_tasks"] = [t["task_id"] for t in tasks if t["paraphrase"]]
+    return settings, builder, rejected_keys, tasks
+
+
+def _made(settings, builder, tasks, cases=()):
     corpus = {"schema_version": 1, "source": SOURCE, "complete": True, "items": builder.items}
-    return Scenario(settings, corpus, builder.sources, tasks, builder.traps)
+    return Scenario(settings, corpus, builder.sources, tasks, builder.traps, list(cases))
+
+
+def scenario(size, seed=SEED):
+    settings, builder, _, tasks = _base(size, seed)
+    return _made(settings, builder, tasks)
+
+
+# Paraphrase cases ----------------------------------------------------------------------------
+
+
+def wording_of(topic):
+    """(language, wording, values) of any topic."""
+    if topic in TOPICS:
+        wording, _, values = TOPICS[topic]
+        return "ja", wording, values
+    return PARAPHRASE_TOPICS[topic]
+
+
+def _paraphrase_record(builder, topic, project, component):
+    language, wording, values = wording_of(topic)
+    key = builder.key("para")
+    value = builder.random.choice(values)
+    if language == "ja":
+        where = component or project or "全サービス"
+        summary = f"{where} の{wording}は {value} にする（規則 {key}）"
+        when = [f"{wording}を設定するとき"]
+    else:
+        where = component or project or "all services"
+        summary = f"{where}: {wording} {value} (rule {key})"
+        when = [f"{wording} changes"]
+    builder.add(key, summary, project=project, component=component, topic=topic, applies_when=when)
+
+
+def case_request(case):
+    """The search a case describes, as `knowledge context` makes it from a task file."""
+    component = case["component_id"]
+    return search.Request(
+        project=case["project_id"],
+        component=component,
+        task=case["id"],
+        repo=PROJECTS[case["project_id"]]["repo"],
+        paths=tuple(case["paths"]),
+        resource_types=tuple(case["resource_types"]),
+    )
+
+
+def _paraphrase_cases(builder, settings, rejected_keys):
+    made, cases = set(), []
+    for number, (category, topic, query) in enumerate(PARAPHRASES, start=1):
+        project, component = PARAPHRASE_PLACES[number % len(PARAPHRASE_PLACES)]
+        limited = number % 3 == 0 and project != THIRD_PROJECT
+        for place in ((None, None), (project, None), (project, component)):
+            if (topic, *place) not in made:
+                made.add((topic, *place))
+                _paraphrase_record(builder, topic, *place)
+        cases.append(
+            {
+                "id": f"PARA-{number:04d}",
+                "category": category,
+                "topic": topic,
+                "query": query,
+                "literal_query": wording_of(topic)[1],
+                "principal": PRINCIPAL_LIMITED if limited else PRINCIPAL_ALL,
+                "project_id": project,
+                "component_id": component,
+                "paths": [f"services/{component}/main.tf"],
+                "resource_types": [component],
+            }
+        )
+    rows = {}
+    for name, holder in settings["principals"].items():
+        rows[name] = [
+            model.normalize(item, "2026-11-27T00:00:00Z")
+            for item in builder.items
+            if item["origin"]["key"] not in rejected_keys and _readable(item, holder)
+        ]
+    for case in cases:
+        live = search.narrow(rows[case["principal"]], case_request(case)).live
+        case["relevant"] = sorted(
+            row["id"]
+            for row in live
+            if row["enforcement"] != "mandatory" and case["topic"] in row["facets"]["topic"]
+        )
+    return cases
+
+
+def paraphrase_scenario(size, seed=SEED):
+    """scenario(size) and, after its records, the records the paraphrase cases need: for each
+    case's topic, one record of the organization, one of the case's project and one of its
+    component (once each). The records of scenario(size) are the same, byte for byte.
+
+    Each case: id, category (ja / en / cross), topic, query (the paraphrase), literal_query
+    (the records' wording), principal, project_id, component_id, paths, resource_types, and
+    `relevant`: the approved advisory records of the topic that apply to the case (scope,
+    facets, readable by its principal, not replaced). Mandatory records are left out: they
+    are returned whatever the query, so they say nothing about it."""
+    settings, builder, rejected, tasks = _base(size, seed)
+    cases = _paraphrase_cases(builder, settings, rejected)
+    return _made(settings, builder, tasks, cases)
 
 
 def _document(number, locator, text):
