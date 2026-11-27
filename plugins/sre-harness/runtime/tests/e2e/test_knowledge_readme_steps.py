@@ -9,9 +9,11 @@ from examples.synthetic import knowledge_corpus as kc
 from examples.synthetic import review_registry as rr
 from sre_harness import paths, records
 from sre_harness.knowledge import cli as knowledge_cli
+from sre_harness.knowledge import ingest
 from tests.helpers import run_cli
 
 HEAD = "1" * 40
+INDEXED = "2026-11-27T00:00:00Z"
 TASK = {
     "schema_version": 1,
     "task_id": "TASK-0101",
@@ -37,7 +39,14 @@ CHANGE = """diff --git a/infra/queue/main.tf b/infra/queue/main.tf
 
 @pytest.fixture(autouse=True)
 def clock(monkeypatch):
+    """The README's steps run on one clock: the updates at 00:00, the rest at 06:00. With the
+    real clock for the updates, a run after 06:00 of that day would index the records after the
+    search's clock, and their freshness would turn `unknown`."""
     monkeypatch.setattr(knowledge_cli, "clock", lambda: "2026-11-27T06:00:00Z")
+    real = ingest.records.iso
+    monkeypatch.setattr(
+        ingest.records, "iso", lambda moment=None: real(moment) if moment else INDEXED
+    )
 
 
 def test_the_first_steps_of_knowledge_retrieval(home, tmp_path):

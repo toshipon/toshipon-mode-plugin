@@ -140,6 +140,11 @@ SEARCH_RESULT = {
     "status": "ok",
     "snapshot": {"generation": 42, "updated_at": "2026-11-27T00:00:00Z"},
     "principal": "workspace-a",
+    "retrieval": {
+        "method": "fts5",
+        "query_terms": 3,
+        "expansion": {"source": "caller", "terms": 4},
+    },
     "budget": {
         "estimator": "utf8_bytes_div_3",
         "max_tokens": 1500,
@@ -190,6 +195,12 @@ def test_the_design_example_of_a_search_result_is_valid():
     assert records.violations("knowledge-search-result", SEARCH_RESULT) == []
 
 
+def test_a_search_result_without_an_expansion_is_valid():
+    value = json.loads(json.dumps(SEARCH_RESULT))
+    value["retrieval"] = {"method": "fts5", "query_terms": 0, "expansion": None}
+    assert records.violations("knowledge-search-result", value) == []
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -201,6 +212,10 @@ def test_the_design_example_of_a_search_result_is_valid():
         lambda v: v["unfetched"].append({"id": "KN-000000000005", "reason": "made_up"}),
         lambda v: v.pop("proposed"),
         lambda v: v["mandatory"].pop("ids"),
+        lambda v: v.pop("retrieval"),
+        lambda v: v["retrieval"].update(method="vector"),
+        lambda v: v["retrieval"].update(expansion={"source": "model", "terms": 1}),
+        lambda v: v["retrieval"].update(query_terms=-1),
     ],
 )
 def test_a_search_result_outside_the_contract_is_invalid(change):

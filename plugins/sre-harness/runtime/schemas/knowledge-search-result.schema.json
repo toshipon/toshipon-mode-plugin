@@ -10,6 +10,7 @@
     "status",
     "snapshot",
     "principal",
+    "retrieval",
     "budget",
     "mandatory",
     "records",
@@ -33,6 +34,30 @@
       }
     },
     "principal": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+    "retrieval": {
+      "description": "How the advisory records were matched; not counted against the budget. method: only fts5 (word match) in this version; another method (a hybrid with vectors) would be added to the enum when one is implemented. query_terms: the search terms of --query. expansion: null without --expand; with it, source caller and the number of distinct search terms of the expansion words. The mandatory set never depends on any of it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "query_terms", "expansion"],
+      "properties": {
+        "method": { "enum": ["fts5"] },
+        "query_terms": { "type": "integer", "minimum": 0 },
+        "expansion": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["source", "terms"],
+              "properties": {
+                "source": { "const": "caller" },
+                "terms": { "type": "integer", "minimum": 0 }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
     "budget": {
       "type": "object",
       "additionalProperties": false,

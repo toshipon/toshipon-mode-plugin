@@ -5,6 +5,7 @@ for the task its task file names."""
 
 import argparse
 import json
+import platform
 import re
 import sys
 
@@ -43,8 +44,10 @@ def _status(args, env, out):
         "index": "absent",
         "generation": 0,
         "schema_version": store.SCHEMA_VERSION,
+        "python_version": platform.python_version(),
         "sqlite_version": store.sqlite_version(),
         "fts5": store.fts5_available(),
+        "extension_loading": store.extension_loading(),
         "updated_at": None,
         "sources": [],
         "records": {},
@@ -112,6 +115,10 @@ def _charge(root, task, principal, result, *, command, ids, now):
     )
 
 
+def _expansion(args):
+    return None if args.expand is None else search.expansion(args.expand)
+
+
 def _search(args, env, out):
     if args.component and not args.project:
         raise InputError("--component needs --project: a component belongs to one project.")
@@ -129,6 +136,7 @@ def _search(args, env, out):
         include_proposed=args.include_proposed,
         max_tokens=args.max_tokens,
         stale_after_hours=args.stale_after_hours,
+        expand=_expansion(args),
     )
     return _searched(env, args.principal, request, task, out)
 
@@ -137,7 +145,9 @@ def _context(args, env, out):
     """One search, as the task file describes it (the contract `task-context`)."""
     found = context.load(args.task_file)
     task = _task(args, found["task_id"])
-    request = context.request(found, query=args.query or "", max_tokens=args.max_tokens)
+    request = context.request(
+        found, query=args.query or "", max_tokens=args.max_tokens, expand=_expansion(args)
+    )
     return _searched(env, found["principal"], request, task, out)
 
 
@@ -325,6 +335,7 @@ def _register_search(stages):
         "--task", type=_name, help="adds the records scoped to this task, and counts the total"
     )
     found.add_argument("--query", help="words to rank the advisory records by (never mandatory)")
+    _expand_argument(found)
     found.add_argument("--repo")
     found.add_argument("--path", action="append", help="a changed path; repeat for more")
     found.add_argument("--resource-type", action="append", help="repeat for more")
@@ -337,6 +348,16 @@ def _register_search(stages):
     found.add_argument("--stale-after-hours", type=_count(0), default=search.STALE_AFTER_HOURS)
     _task_budget_arguments(found)
     found.set_defaults(handler=_search)
+
+
+def _expand_argument(parser):
+    parser.add_argument(
+        "--expand",
+        action="append",
+        metavar="WORD",
+        help=f"a word the caller adds to the query (repeat, at most {search.MAX_EXPAND_WORDS} of "
+        f"{search.MAX_EXPAND_LENGTH} characters); advisory records only, never mandatory",
+    )
 
 
 def _task_budget_arguments(parser):
@@ -355,6 +376,7 @@ def _register_context(stages):
     )
     found.add_argument("--task-file", required=True, help="a task-context JSON file (only read)")
     found.add_argument("--query", help="words to rank the advisory records by (never mandatory)")
+    _expand_argument(found)
     found.add_argument("--max-tokens", type=_count(1), default=search.DEFAULT_MAX_TOKENS)
     _task_budget_arguments(found)
     found.set_defaults(handler=_context)
@@ -453,7 +475,9 @@ def register(groups):
     )
     stages = knowledge.add_subparsers(dest="stage", required=True)
 
-    status = stages.add_parser("status", help="generation, SQLite and FTS5, sources, counts")
+    status = stages.add_parser(
+        "status", help="generation, Python, SQLite, FTS5 and extension loading, sources, counts"
+    )
     status.set_defaults(handler=_status)
 
     update = stages.add_parser("update", help="read a source into the index (one transaction)")

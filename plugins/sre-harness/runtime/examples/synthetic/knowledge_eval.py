@@ -44,16 +44,44 @@ The search a method makes is a function `(root, principal name, search.Request, 
 in METHODS; another method (a query widened with synonyms, a hybrid with vectors) is one more
 entry, and every metric is computed for it in the same way (`--method`).
 
+**Paraphrase cases** (`--paraphrase`). The cases of `knowledge_corpus.paraphrase_scenario`
+(36 queries in the categories ja, en and cross, at least 10 each) are searched as
+`knowledge context` searches a task, once per way of querying (PARAPHRASE_PLANS):
+
+    fts5-paraphrase   the paraphrased query as it is
+    fts5-literal      the records' own wording as the query: the ceiling a better query reaches
+    caller-expansion  the paraphrased query with `--expand` words read from an expansions file
+                      ({"model": ..., "run": N, "terms": {case id: [word, ...]}}); one result per
+                      file, and the mean, min, max and sample standard deviation over the files.
+                      No file is written here: no model is called
+
+    relevant   the case's `relevant` labels: approved advisory records of its topic that apply
+               to it. Mandatory records are left out of both sides: they are returned whatever
+               the query, so they say nothing about it
+    returned   the advisory records the search returned (a search that stops returns none and
+               is counted in `stopped`; an expansion the search refuses, in `refused`)
+    recall     returned and relevant / relevant, pooled over the cases of a category
+    precision  returned and relevant / returned, pooled likewise (none when nothing returned)
+
+each at --max-tokens 1500 (the default) and 20000, where the budget no longer caps the recall.
+`--write-expansion-input PATH` writes what a caller that widens queries is given: the case ids
+and the paraphrased queries only, never the wording, the labels or a record.
+
 Run it from `runtime/`:
 
     python -m examples.synthetic.knowledge_eval --size 50 --format markdown
     python -m examples.synthetic.knowledge_eval --size 50 --size 300 --size 2000 > eval.json
     python -m examples.synthetic.knowledge_eval --size 50 --format evaluator-output
+    python -m examples.synthetic.knowledge_eval --paraphrase --size 50 --format markdown
+    python -m examples.synthetic.knowledge_eval --paraphrase --expansions run1.json \\
+        --expansions run2.json
+    python -m examples.synthetic.knowledge_eval --write-expansion-input cases.json
 
 The state root is a new temporary directory (outside any repository), removed at the end.
 """
 
 import argparse
+import dataclasses
 import json
 import math
 import shutil
@@ -66,7 +94,7 @@ from examples.synthetic import github_responses as gh
 from examples.synthetic import knowledge_corpus as kc
 from examples.synthetic import review_registry as rr
 from sre_harness import paths, records
-from sre_harness.errors import QualityGateError
+from sre_harness.errors import InputError, QualityGateError
 from sre_harness.knowledge import (
     budget,
     check,
@@ -133,6 +161,12 @@ SCOPES = {
     ),
     "estimate_vs_tokenizer": (
         "CI では測らない。手順は README の「評価」にあり、測った文字列の範囲のことしか言えない"
+    ),
+    "paraphrase": (
+        "合成データでの値。言い換えは生成の作者が書いた 36 個で、人が書く query の分布は再現しない。"
+        "fts5-paraphrase の query はレコードと検索の語を 1 つも共有しないように作ってあるので、"
+        "任意のレコードを返さないのは作りのとおり。fts5-literal は元の語で検索した上限の目安。"
+        "caller-expansion の値は渡した expansions のファイルについてだけ言える"
     ),
 }
 
@@ -672,6 +706,266 @@ def evaluate(sizes=kc.SIZES, method="fts5", seed=kc.SEED, work_dir=None):
         shutil.rmtree(base, ignore_errors=True)
 
 
+# Paraphrase cases --------------------------------------------------------------------------
+
+PARAPHRASE_BUDGETS = (search.DEFAULT_MAX_TOKENS, 20000)
+EXPANSION_FILE_BYTES = 1024 * 1024
+# How a case is queried: (case, its expansion words or None) -> (query, expansion words).
+PARAPHRASE_PLANS = {
+    "fts5-paraphrase": lambda case, words: (case["query"], None),
+    "fts5-literal": lambda case, words: (case["literal_query"], None),
+    "caller-expansion": lambda case, words: (case["query"], words or []),
+}
+PARAPHRASE_DEFINITIONS = {
+    "relevant": (
+        "case の topic の、case に適用される承認済みの任意のレコード（scope、facet、principal が"
+        "読める、置換されていない）。必須のレコードは query に関係なく返るので、正解からも返った"
+        "集合からも除く"
+    ),
+    "returned": "search が返した任意のレコード。止まった search は 0 件（stopped に数える）",
+    "recall": "区分の case をまとめて、返した正解の数 / 正解の数",
+    "precision": "区分の case をまとめて、返した正解の数 / 返した数（返した数が 0 なら null）",
+    "stdev": "expansions のファイルが 2 つ以上のときの標本標準偏差（1 つなら null）",
+}
+
+
+def prepare_paraphrase(directory, size, seed=kc.SEED):
+    """Index the corpus of `size` with the paraphrase records. Returns (root, scenario)."""
+    root, _ = _state(directory)
+    made = kc.paraphrase_scenario(size, seed)
+    paths.write_private(root / "knowledge" / "config.json", records.canonical(made.config))
+    corpus = Path(directory) / "corpus.json"
+    corpus.write_text(json.dumps(made.corpus, ensure_ascii=False), encoding="utf-8")
+    ingest.update(root, build("file", {"input": corpus}), now=INDEXED)
+    return root, made
+
+
+def case_search(root, search_fn, case, *, query, expand=None, max_tokens):
+    """One search for a case, as `knowledge context` makes it from the case's task."""
+    request = dataclasses.replace(
+        kc.case_request(case), query=query, expand=expand, max_tokens=max_tokens
+    )
+    return search_fn(root, case["principal"], request, SEARCHED)
+
+
+def advisory(result):
+    """The advisory records a search returned; none when it stopped."""
+    if result["status"] != "ok":
+        return set()
+    return {view["id"] for view in result["records"] if "mandatory" not in view["why_selected"]}
+
+
+def pooled(rows):
+    """Recall and precision pooled over (returned ids, relevant ids, stopped, refused) rows."""
+    hits = sum(len(got & wanted) for got, wanted, _, _ in rows)
+    returned = sum(len(got) for got, _, _, _ in rows)
+    relevant = sum(len(wanted) for _, wanted, _, _ in rows)
+    return {
+        "cases": len(rows),
+        "relevant": relevant,
+        "returned": returned,
+        "hits": hits,
+        "recall": round(hits / relevant, 4) if relevant else None,
+        "precision": round(hits / returned, 4) if returned else None,
+        "stopped": sum(1 for _, _, stopped, _ in rows if stopped),
+        "refused": sum(1 for _, _, _, refused in rows if refused),
+    }
+
+
+def paraphrase_retrieval(root, cases, search_fn, plan, max_tokens, words=None):
+    """{category: pooled metrics} of `plan` (PARAPHRASE_PLANS) with the search `search_fn`.
+    `words` is {case id: [word, ...]}, the expansion words; an expansion `knowledge search`
+    would refuse (exit 2) returns nothing and is counted in `refused`."""
+    rows = {category: [] for category in kc.PARAPHRASE_CATEGORIES}
+    for case in cases:
+        query, expand = PARAPHRASE_PLANS[plan](case, (words or {}).get(case["id"]))
+        refused = False
+        if expand is not None:
+            try:
+                expand = search.expansion(expand)
+            except InputError:
+                refused = True
+        got, stopped = set(), False
+        if not refused:
+            result = case_search(
+                root, search_fn, case, query=query, expand=expand, max_tokens=max_tokens
+            )
+            got, stopped = advisory(result), result["status"] != "ok"
+        rows[case["category"]].append((got, set(case["relevant"]), stopped, refused))
+    return {category: pooled(found) for category, found in rows.items()}
+
+
+def spread(values):
+    """mean, min, max and sample standard deviation (None for one value) of the given values;
+    the values that are None are left out."""
+    known = [value for value in values if value is not None]
+    if not known:
+        return {"mean": None, "min": None, "max": None, "stdev": None}
+    return {
+        "mean": round(statistics.fmean(known), 4),
+        "min": min(known),
+        "max": max(known),
+        "stdev": round(statistics.stdev(known), 4) if len(known) > 1 else None,
+    }
+
+
+def load_expansions(path, case_ids):
+    """An expansions file: {"model": str, "run": int, "terms": {case id: [str, ...]}}. A case it
+    does not name is searched with no expansion word. ValueError when the file is not one."""
+    data = Path(path).read_bytes()
+    if len(data) > EXPANSION_FILE_BYTES:
+        raise ValueError(f"{path} is larger than {EXPANSION_FILE_BYTES} bytes")
+    try:
+        value = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise ValueError(f"{path} is not UTF-8 JSON") from None
+    shaped = (
+        isinstance(value, dict)
+        and set(value) == {"model", "run", "terms"}
+        and isinstance(value["model"], str)
+        and value["model"].strip()
+        and isinstance(value["run"], int)
+        and not isinstance(value["run"], bool)
+        and isinstance(value["terms"], dict)
+        and all(
+            isinstance(words, list) and all(isinstance(word, str) for word in words)
+            for words in value["terms"].values()
+        )
+    )
+    if not shaped:
+        raise ValueError(f'{path} is not {{"model": str, "run": int, "terms": {{id: [str]}}}}')
+    unknown = sorted(set(value["terms"]) - set(case_ids))
+    if unknown:
+        raise ValueError(f"{path} names cases that do not exist: {', '.join(unknown[:5])}")
+    return value
+
+
+def expansion_input(seed=kc.SEED):
+    """What a caller that widens the queries is given: case ids and paraphrased queries only."""
+    cases = kc.paraphrase_scenario(kc.SIZES[0], seed).paraphrase_cases
+    return [{"id": case["id"], "query": case["query"]} for case in cases]
+
+
+def _paraphrase_size(directory, size, search_fn, budgets, expansions, seed):
+    root, made = prepare_paraphrase(directory, size, seed)
+    cases = made.paraphrase_cases
+    by_budget = {}
+    for max_tokens in budgets:
+        found = {
+            plan: paraphrase_retrieval(root, cases, search_fn, plan, max_tokens)
+            for plan in ("fts5-paraphrase", "fts5-literal")
+        }
+        if expansions:
+            files = [
+                {
+                    "model": value["model"],
+                    "run": value["run"],
+                    "categories": paraphrase_retrieval(
+                        root, cases, search_fn, "caller-expansion", max_tokens, value["terms"]
+                    ),
+                }
+                for value in expansions
+            ]
+            found["caller-expansion"] = {
+                "files": files,
+                "summary": {
+                    category: {
+                        name: spread([f["categories"][category][name] for f in files])
+                        for name in ("recall", "precision")
+                    }
+                    for category in kc.PARAPHRASE_CATEGORIES
+                },
+            }
+        by_budget[str(max_tokens)] = found
+    return {"records": len(made.corpus["items"]), "budgets": by_budget}
+
+
+def evaluate_paraphrase(
+    sizes=kc.SIZES,
+    budgets=PARAPHRASE_BUDGETS,
+    expansions=(),
+    method="fts5",
+    seed=kc.SEED,
+    work_dir=None,
+):
+    """Recall and precision of the paraphrase cases by category, size, budget and plan, with the
+    search `method` (METHODS). `expansions` are loaded expansions files. Deterministic."""
+    search_fn = METHODS[method]
+    cases = kc.paraphrase_scenario(kc.SIZES[0], seed).paraphrase_cases
+    base = Path(tempfile.mkdtemp(prefix="sre-harness-paraphrase.", dir=work_dir))
+    try:
+        result = {
+            "schema_version": 1,
+            "synthetic": True,
+            "note": SYNTHETIC_NOTE,
+            "method": method,
+            "seed": seed,
+            "estimator": terms.ESTIMATOR,
+            "definitions": dict(PARAPHRASE_DEFINITIONS),
+            "categories": {
+                category: sum(case["category"] == category for case in cases)
+                for category in kc.PARAPHRASE_CATEGORIES
+            },
+            "budgets": list(budgets),
+            "expansions": [{"model": v["model"], "run": v["run"]} for v in expansions],
+            "sizes": {},
+        }
+        for size in sizes:
+            folder = base / f"size-{size}"
+            folder.mkdir()
+            result["sizes"][str(size)] = _paraphrase_size(
+                folder, size, search_fn, budgets, expansions, seed
+            )
+        result["claim_scope"] = {"paraphrase": SCOPES["paraphrase"]}
+        return result
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def _cell(value):
+    return f"{_ratio(value['recall'])} / {_ratio(value['precision'])} / {value['returned']}"
+
+
+def paraphrase_markdown(result):
+    """One row per size, budget and category: relevant, then recall / precision / returned of
+    each plan (and the spread over the expansions files when there are any)."""
+    expanded = bool(result["expansions"])
+    columns = ["規模", "予算", "区分", "case", "正解", "fts5-paraphrase", "fts5-literal"]
+    if expanded:
+        columns.append(
+            f"caller-expansion（{len(result['expansions'])} ファイルの平均 / 最小 / 最大）"
+        )
+    text = (
+        f"{SYNTHETIC_NOTE}\n\n言い換えの case（ja {result['categories']['ja']}、"
+        f"en {result['categories']['en']}、cross {result['categories']['cross']}）、"
+        f"検索方式 `{result['method']}`、seed {result['seed']}。各列は recall / precision / "
+        "返した任意のレコードの数。必須のレコードは正解からも返した集合からも除いています。\n\n"
+    )
+    text += "| " + " | ".join(columns) + " |\n" + "|---" * len(columns) + "|\n"
+    for size, value in result["sizes"].items():
+        for max_tokens, found in value["budgets"].items():
+            for category in kc.PARAPHRASE_CATEGORIES:
+                literal = found["fts5-literal"][category]
+                cells = [
+                    f"{size} 件 + 言い換え {value['records'] - int(size)} 件",
+                    max_tokens,
+                    category,
+                    str(literal["cases"]),
+                    str(literal["relevant"]),
+                    _cell(found["fts5-paraphrase"][category]),
+                    _cell(literal),
+                ]
+                if expanded:
+                    recall = found["caller-expansion"]["summary"][category]["recall"]
+                    cells.append(
+                        " / ".join(_ratio(recall[name]) for name in ("mean", "min", "max"))
+                    )
+                text += "| " + " | ".join(cells) + " |\n"
+    text += "\n主張できる範囲:\n\n" + f"- 言い換え: {SCOPES['paraphrase']}\n"
+    text += "".join(f"- {name}: {meaning}\n" for name, meaning in PARAPHRASE_DEFINITIONS.items())
+    return text
+
+
 # Output ------------------------------------------------------------------------------------
 
 
@@ -886,7 +1180,60 @@ def main(argv=None):
     parser.add_argument(
         "--work-dir", help="where the temporary state root goes (outside any repository)"
     )
+    parser.add_argument(
+        "--paraphrase", action="store_true", help="measure the paraphrase cases instead"
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        action="append",
+        help="with --paraphrase, a search budget; repeat (default 1500 and 20000)",
+    )
+    parser.add_argument(
+        "--expansions",
+        action="append",
+        metavar="FILE",
+        help='with --paraphrase, {"model", "run", "terms": {case id: [word]}}; repeat',
+    )
+    parser.add_argument(
+        "--write-expansion-input",
+        metavar="PATH",
+        help="write the case ids and paraphrased queries a query widener is given, and stop",
+    )
     args = parser.parse_args(argv)
+    if args.write_expansion_input:
+        cases = expansion_input(args.seed)
+        Path(args.write_expansion_input).write_text(
+            json.dumps(cases, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
+        )
+        print(json.dumps({"written": args.write_expansion_input, "cases": len(cases)}))
+        return
+    if not args.paraphrase:
+        if args.max_tokens or args.expansions:
+            parser.error("--max-tokens and --expansions need --paraphrase")
+    else:
+        if args.format == "evaluator-output":
+            parser.error("--paraphrase prints json or markdown")
+        if any(limit < 1 for limit in args.max_tokens or ()):
+            parser.error("--max-tokens needs a whole number of at least 1")
+        ids = [case["id"] for case in expansion_input(args.seed)]
+        try:
+            loaded = [load_expansions(path, ids) for path in args.expansions or ()]
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
+        found = evaluate_paraphrase(
+            tuple(args.size or kc.SIZES),
+            tuple(args.max_tokens or PARAPHRASE_BUDGETS),
+            loaded,
+            args.method,
+            args.seed,
+            args.work_dir,
+        )
+        if args.format == "markdown":
+            print(paraphrase_markdown(found), end="")
+        else:
+            print(json.dumps(found, indent=2, ensure_ascii=False))
+        return
     result = evaluate(tuple(args.size or (kc.SIZES[0],)), args.method, args.seed, args.work_dir)
     if args.format == "markdown":
         print(markdown(result), end="")

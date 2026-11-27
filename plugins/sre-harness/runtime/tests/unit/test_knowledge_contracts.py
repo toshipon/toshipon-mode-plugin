@@ -302,6 +302,18 @@ def test_context_is_the_search_its_task_file_describes(corpus, tmp_path):
     assert without_task_total(found) == without_task_total(searched)
 
 
+def test_context_takes_expansion_words_as_search_does(corpus, tmp_path):
+    env, scenario = corpus
+    task = scenario.tasks[4]
+    words = ["--expand", task["literal_query"], "--expand", "バックアップ"]
+    code, found = context(env, task_file(tmp_path, task), "--query", task["query"], *words)
+    assert code == 0 and problems("knowledge-search-result", found) == []
+    assert found["retrieval"]["expansion"]["source"] == "caller"
+    code, searched = search_for(env, task, "--query", task["query"], *words)
+    assert code == 0
+    assert without_task_total(found) == without_task_total(searched)
+
+
 def test_context_counts_against_the_task_as_search_does(corpus, tmp_path):
     env, scenario = corpus
     task = scenario.tasks[1]

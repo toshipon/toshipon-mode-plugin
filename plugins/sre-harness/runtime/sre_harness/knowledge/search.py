@@ -32,17 +32,23 @@ Rules this module decides (the design leaves them open):
                   place now, so who may read what (and which readers were rejected) may have
                   changed under it. No record is returned until `knowledge update` runs.
     tokens        a returned record costs terms.estimate_tokens of its canonical JSON, exactly
-                  as it appears in `records` or `proposed` (see `tokens`).
+                  as it appears in `records` or `proposed` (see `tokens`). `retrieval` is not
+                  counted.
+    expansion     words the caller adds to the query (`--expand`): their search terms join the
+                  query's, matched with the same OR, so they rank and narrow the advisory
+                  records only. They are a set: their order and repetition play no part.
+    retrieval     how the advisory records were matched: the method (only "fts5" here), the
+                  number of search terms of the query, and of the expansion (null without one).
 """
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from .. import records
-from ..errors import EXIT_OK, EXIT_QUALITY, BoundaryError
+from ..errors import EXIT_OK, EXIT_QUALITY, BoundaryError, InputError
 from ..globs import path_matches
 from ..review.markdown import clean
-from . import config, model, store, terms
+from . import config, model, store, terms, untrusted
 
 DEFAULT_MAX_TOKENS = 1500
 STALE_AFTER_HOURS = 168
@@ -59,6 +65,9 @@ CONFIDENCE = {
 CHAIN_STATUSES = frozenset({"approved", "superseded"})  # a successor chain runs through these
 VOUCHING_STATES = frozenset({"complete", "partial"})  # source states that mean "it succeeded"
 SAME_SUBJECT = "both_approved_same_subject"
+METHOD = "fts5"
+MAX_EXPAND_WORDS = 32
+MAX_EXPAND_LENGTH = 64
 NOTHING_TRUNCATED = {"count": 0, "ids": [], "tokens_needed": 0}
 
 
@@ -76,6 +85,44 @@ class Request:
     include_proposed: bool = False
     max_tokens: int = DEFAULT_MAX_TOKENS
     stale_after_hours: int = STALE_AFTER_HOURS
+    expand: tuple | None = None  # the caller's expansion words (see `expansion`)
+
+
+# The query and its expansion ---------------------------------------------------------------
+
+
+def expansion(words):
+    """The caller's expansion words, checked where they come in: at most MAX_EXPAND_WORDS words
+    of at most MAX_EXPAND_LENGTH characters (exit 2 otherwise), without control and format
+    characters, as a sorted set. FTS5 syntax in them is only words, as in the query."""
+    words = list(words)
+    if len(words) > MAX_EXPAND_WORDS:
+        raise InputError(f"--expand takes at most {MAX_EXPAND_WORDS} words.")
+    if any(len(word) > MAX_EXPAND_LENGTH for word in words):
+        raise InputError(f"an --expand word has at most {MAX_EXPAND_LENGTH} characters.")
+    cleaned = {"".join(c for c in word if not untrusted.invisible(c)).strip() for word in words}
+    return tuple(sorted(word for word in cleaned if word))
+
+
+def _expansion_terms(request):
+    return sorted({term for word in request.expand or () for term in terms.terms(word)})
+
+
+def search_terms(request):
+    """The terms the advisory records are matched with: the query's and the expansion's."""
+    return sorted(set(terms.terms(request.query)) | set(_expansion_terms(request)))
+
+
+def retrieval(request):
+    """How the advisory records were matched. Never counted against the budget."""
+    widened = None
+    if request.expand is not None:
+        widened = {"source": "caller", "terms": len(_expansion_terms(request))}
+    return {
+        "method": METHOD,
+        "query_terms": len(terms.terms(request.query)),
+        "expansion": widened,
+    }
 
 
 # Filtering -------------------------------------------------------------------------------
@@ -328,7 +375,7 @@ def select(rows, *, request, matches, provenance, sources, conflict_edges, now):
     """Steps 2-8 over the records the principal may read. Pure: the store's answers come in as
     plain values (`matches` {id: bm25}, `provenance` {id: source}, `sources` {name: row},
     `conflict_edges` [(id, id)])."""
-    words = terms.terms(request.query)
+    words = search_terms(request)
     narrowed = narrow(rows, request)
     applicable, replaced, live = narrowed.applicable, narrowed.replaced, narrowed.live
 
@@ -419,11 +466,12 @@ def run(root, name, request, now):
             "status": None,
             "snapshot": {"generation": reader.generation, "updated_at": meta["updated_at"]},
             "principal": principal.name,
+            "retrieval": retrieval(request),
         }
         if meta["config_hash"] != config.config_hash(settings):
             empty = {"count": 0, "tokens": 0, "complete": False, "ids": []}
             return {**head, **stopped("stale_index", request, empty)}
-        words = terms.terms(request.query)
+        words = search_terms(request)
         body = select(
             reader.records(principal),
             request=request,
