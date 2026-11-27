@@ -221,18 +221,27 @@ def report(prepared, summary, dry_run):
 
 
 def update(root, adapter, *, dry_run=False, now=None):
-    """Bring the index in line with `adapter`'s source. With `dry_run`, only report."""
+    """Bring the index in line with `adapter`'s source. With `dry_run`, only report.
+
+    The source is read under the writer lock, so a writer that holds it (a `volume import`
+    replacing the registry, another update) is never read half way; a dry run takes no lock
+    and reads the source as it is."""
     store.require_fts5()
     found = settings(root)
     now = now or records.iso()
-    previous = None
-    if store.exists(root):
-        with store.reader(root) as reader:
-            previous = reader.cursor(adapter.source)
-    prepared = prepare(adapter, found, previous, now)
     if dry_run:
-        summary = store.plan(root, prepared.batch)
-    else:
-        with store.writer(root) as writer:
+        previous = None
+        if store.exists(root):
+            with store.reader(root) as reader:
+                previous = reader.cursor(adapter.source)
+        prepared = prepare(adapter, found, previous, now)
+        return report(prepared, store.plan(root, prepared.batch), dry_run)
+    with store.locked(root) as held:
+        previous = None
+        if store.exists(root):
+            with store.reader(root) as reader:
+                previous = reader.cursor(adapter.source)
+        prepared = prepare(adapter, found, previous, now)
+        with held.writer() as writer:
             summary = writer.apply(prepared.batch, now)
     return report(prepared, summary, dry_run)

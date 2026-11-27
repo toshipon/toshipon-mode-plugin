@@ -4,7 +4,7 @@ import json
 import pytest
 
 from sre_harness import paths, records
-from sre_harness.errors import InputError
+from sre_harness.errors import InputError, QualityGateError
 from sre_harness.knowledge import config, ingest, model, store
 from sre_harness.knowledge.adapters import Changes, build
 from sre_harness.knowledge.adapters import file as file_adapter
@@ -334,3 +334,17 @@ def test_a_file_source_cannot_use_an_origin_kind_another_adapter_owns(root, tmp_
     (entry,) = result["rejected"]
     assert entry["reason"] == "origin_kind_reserved" and entry["index"] == 0
     assert result["counts"]["indexed"] == 1 and set(indexed(root)) == {"K1"}
+
+
+def test_the_source_is_read_under_the_writer_lock_and_a_dry_run_reads_without_it(root, tmp_path):
+    adapter = build("file", {"input": write_input(tmp_path / "in.json", [item("R1")])})
+    calls = []
+    original = adapter.changes
+    adapter.changes = lambda cursor: calls.append(cursor) or original(cursor)
+    with store.writer(root):
+        with pytest.raises(QualityGateError):
+            ingest.update(root, adapter, now=NOW)
+        assert calls == []
+        assert ingest.update(root, adapter, now=NOW, dry_run=True)["dry_run"] is True
+    assert len(calls) == 1
+    assert ingest.update(root, adapter, now=NOW)["counts"]["inserted"] == 1

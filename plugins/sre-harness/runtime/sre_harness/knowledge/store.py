@@ -513,14 +513,16 @@ def _take_lock(folder):
     return descriptor
 
 
-@contextmanager
-def writer(root):
-    """The only way to change the index. Exit 1 at once if another writer is running."""
-    require_fts5()
-    folder = directory(root, create=True)
-    lock = _take_lock(folder)
-    try:
-        path = _file(folder, INDEX)
+class Locked:
+    """The writer lock, held: what is read under it (a source, the index through `reader`)
+    does not change under a writer, and `writer()` opens the index (made when there is none)."""
+
+    def __init__(self, folder):
+        self._folder = folder
+
+    @contextmanager
+    def writer(self):
+        path = _file(self._folder, INDEX)
         if not path.exists():
             os.close(_create_private(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL))
         connection = _connect(path)
@@ -533,8 +535,25 @@ def writer(root):
                 yield Writer(connection)
         finally:
             connection.close()
+
+
+@contextmanager
+def locked(root):
+    """The writer lock alone. Exit 1 at once if another writer is running."""
+    require_fts5()
+    folder = directory(root, create=True)
+    lock = _take_lock(folder)
+    try:
+        yield Locked(folder)
     finally:
         os.close(lock)
+
+
+@contextmanager
+def writer(root):
+    """The only way to change the index. Exit 1 at once if another writer is running."""
+    with locked(root) as held, held.writer() as opened:
+        yield opened
 
 
 class Reader:

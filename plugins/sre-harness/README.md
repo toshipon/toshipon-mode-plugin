@@ -432,7 +432,7 @@ run にはレビュー本文、diff、文書の section が入ります。消す
 `knowledge update` は、ソース（`--source file` が読む合成データの JSON、`--source review-registry` が読む承認の記録、`--source spec-run` が読む spec の run の台帳）を検査して `<ルート>/knowledge/index.sqlite3` に取り込みます。LLM もネットワークも使いません。
 
 - SQLite は作り直せる索引で、正本ではありません。正本はソースと `knowledge/config.json` です。`index.sqlite3` を消しても、`knowledge update` で作り直せます。
-- 書き込むのは一度に 1 つの writer だけです。1 回の取り込みは 1 つのトランザクションで、何か変わったときだけ generation が 1 進みます。同じ入力をもう一度取り込んでも generation は進みません。索引は source ごとに、その source を最後に取り込んだときの `config.json` の hash を持ちます。`config.json` を変えると、その source の次の取り込みで generation が進みます。
+- 書き込むのは一度に 1 つの writer だけです。1 回の取り込みは 1 つのトランザクションで、何か変わったときだけ generation が 1 進みます。同じ入力をもう一度取り込んでも generation は進みません。索引は source ごとに、その source を最後に取り込んだときの `config.json` の hash を持ちます。`config.json` を変えると、その source の次の取り込みで generation が進みます。ソースの読み取り（registry、run の台帳、`--input` のファイル）も writer の lock の中で行うので、lock を持つ別の writer（`volume import` など）が置き換えている途中のソースは読みません。`--dry-run` は lock を取らず、その時点のソースを読みます。
 - `complete: false`（部分的な取り込み）では、入力に無いレコードを消しません。`complete: true` のときだけ、消えたものを tombstone にします。
 - `access` の無いレコードと、どの principal も持たない reader を名指しするレコードは、索引に入れずに `rejected` に理由を付けて出します。
 - レコード ID は、それを最初に取り込んだ source のものです。別の source が同じ ID（同じ `origin`）のレコードを出しても書き込まず、そのレコードだけを `rejected` に理由 `owned_by_other_source` で出します（ほかの item は取り込み、generation は実際に何かが変わったときだけ進みます）。持ち主の source がそのレコードを外した（tombstone にした）後なら、別の source が取り込めます。
