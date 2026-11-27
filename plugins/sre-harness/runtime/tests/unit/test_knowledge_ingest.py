@@ -281,3 +281,45 @@ def test_the_adapter_is_given_the_cursor_it_returned_last_time(root, tmp_path):
     ingest.update(root, Recording(), now=NOW)
     ingest.update(root, Recording(), now=NOW)
     assert seen == [None, "c1"]
+
+
+# Ownership of a record id -------------------------------------------------------------------
+
+
+def test_a_record_id_another_source_holds_is_rejected_and_left_as_it_is(root, tmp_path):
+    first = write_input(tmp_path / "a.json", [item("K1")], source="alpha")
+    assert run(root, first)["counts"]["inserted"] == 1
+    hijack = item("K1", summary="K1 from beta", enforcement="mandatory")
+    second = write_input(tmp_path / "b.json", [hijack, item("K2")], source="beta")
+    result = run(root, second)
+    (entry,) = result["rejected"]
+    assert entry["reason"] == "owned_by_other_source" and entry["index"] == 0
+    assert entry["id"] == model.record_id("synthetic", "K1")
+    assert result["counts"]["indexed"] == 1 and result["counts"]["inserted"] == 1
+    assert result["counts"]["rejected"] == 1 and result["counts"]["updated"] == 0
+    kept = indexed(root)["K1"]
+    assert kept["summary"] == item("K1")["summary"] and kept["enforcement"] == "advisory"
+    again = run(root, second)
+    assert (
+        again["advanced"] is False and again["generation"]["before"] == again["generation"]["after"]
+    )
+    assert [row["reason"] for row in again["rejected"]] == ["owned_by_other_source"]
+    dry = ingest.update(root, build("file", {"input": second}), now=NOW, dry_run=True)
+    assert [row["reason"] for row in dry["rejected"]] == ["owned_by_other_source"]
+
+
+def test_a_record_its_owner_dropped_can_be_taken_by_another_source(root, tmp_path):
+    run(root, write_input(tmp_path / "a.json", [item("K1")], source="alpha"))
+    run(root, write_input(tmp_path / "a2.json", [], source="alpha"))
+    taken = run(root, write_input(tmp_path / "b.json", [item("K1", summary="K1 b")], source="beta"))
+    assert taken["rejected"] == [] and taken["counts"]["inserted"] == 1
+    assert indexed(root)["K1"]["summary"] == "K1 b"
+
+
+@pytest.mark.parametrize("kind", ["review-registry", "decision", "requirement"])
+def test_a_file_source_cannot_use_an_origin_kind_another_adapter_owns(root, tmp_path, kind):
+    reserved = item("RG-9002", origin={"kind": kind, "key": "RG-9002"})
+    result = run(root, write_input(tmp_path / "in.json", [reserved, item("K1")]))
+    (entry,) = result["rejected"]
+    assert entry["reason"] == "origin_kind_reserved" and entry["index"] == 0
+    assert result["counts"]["indexed"] == 1 and set(indexed(root)) == {"K1"}
