@@ -203,3 +203,134 @@ def git_evidence(path, sha, text, start=None, end=None):
 
 def fetch(env, *argv):
     return run_cli(["knowledge", "fetch", *argv], env)
+
+
+# A synthetic spec run (registries written directly, as `spec extract` and `analyze` write them) --
+
+SPEC_RUN_ID = "run-20261120T000000Z-0000beef"
+SPEC_CREATED_AT = "2026-11-20T00:00:00Z"
+HEAD_SHA = "1" * 40
+
+
+def spec_decision(number, status="approved", supersedes=(), basis="explicit", **extra):
+    """A decision draft of document DOC-<number>: `supersedes` names external ids."""
+    from tests.spec_helpers import decision
+
+    value = decision(number, status=status, supersedes=supersedes, basis=basis)
+    value["evidence"] = [{"id": "E1", "ref": f"DOC-{number:04d}#S1", "quote": f"status: {status}"}]
+    if basis == "inferred":
+        value["id"] = f"DCI-{number:04d}"
+        value.pop("external_id")
+    value.update(extra)
+    return value
+
+
+def spec_requirement(number, basis="explicit", decision_refs=(), **extra):
+    explicit = basis == "explicit"
+    value = {
+        "schema_version": 1,
+        "id": f"{'REQ' if explicit else 'RQI'}-{number:04d}",
+        "run_id": SPEC_RUN_ID,
+        "created_at": SPEC_CREATED_AT,
+        "title": f"requirement {number}",
+        "statement": f"要件 {number} の文",
+        "acceptance_criteria": [],
+        "rationale": "",
+        "evidence": [{"id": "E1", "ref": f"DOC-{100 + number:04d}#S1", "quote": "要件"}],
+        "decision_refs": list(decision_refs),
+        "nfr_category": None,
+        "ambiguity": [],
+        "basis": basis,
+        "confidence": "high" if explicit else "low",
+    }
+    if explicit:
+        value["external_id"] = value["id"]
+    value.update(extra)
+    return value
+
+
+def spec_link(number, source, target, relation, basis="explicit"):
+    return {
+        "schema_version": 1,
+        "id": f"TL-{number:04d}",
+        "run_id": SPEC_RUN_ID,
+        "created_at": SPEC_CREATED_AT,
+        "from": {"type": source[0], "id": source[1]},
+        "to": {"type": target[0], "id": target[1]},
+        "relation": relation,
+        "basis": basis,
+        "evidence": {"ref": f"{HEAD_SHA}:docs/x.md#L1"},
+        "confidence": "high" if basis == "explicit" else "low",
+    }
+
+
+def section_text(document):
+    return f"{document} の本文。合成データです。"
+
+
+def write_spec_run(env, drafts, requirements=(), links=None, *, run_id=SPEC_RUN_ID, built=None):
+    """Write decisions.json (from `drafts` through `registry.build`, or `built` as it is),
+    requirements.json, trace.json (when `links` is given) and documents.jsonl with one section
+    per evidence ref. Returns the run id."""
+    from sre_harness.spec import registry as spec_registry
+
+    def own(value):
+        return {**value, "run_id": run_id}
+
+    decisions = built if built is not None else spec_registry.build([own(d) for d in drafts])
+    head = {"schema_version": 1, "run_id": run_id, "created_at": SPEC_CREATED_AT}
+    directory = paths.child(state_root(env), "runs", run_id)
+    records.write_json(directory / "decisions.json", {**head, **decisions})
+    records.write_json(
+        directory / "requirements.json",
+        {**head, "requirements": [own(r) for r in requirements], "input_missing": []},
+    )
+    if links is not None:
+        trace = {
+            **head,
+            "default_branch": {"name": "main", "sha": HEAD_SHA},
+            "links": [own(link) for link in links],
+        }
+        records.write_json(directory / "trace.json", trace)
+    refs = sorted(
+        {
+            evidence["ref"]
+            for item in [*decisions["decisions"], *requirements]
+            for evidence in item["evidence"]
+        }
+    )
+    rows = []
+    for ref in refs:
+        document, section = ref.split("#")
+        rows.append(
+            {
+                "schema_version": 1,
+                "id": document,
+                "run_id": run_id,
+                "created_at": SPEC_CREATED_AT,
+                "kind": "adr",
+                "title": document,
+                "sections": [
+                    {
+                        "id": section,
+                        "heading": document,
+                        "text": section_text(document),
+                        "locator": f"docs/{document}.md",
+                    }
+                ],
+                "provenance": {
+                    "source_id": "synthetic",
+                    "locator": f"docs/{document}.md",
+                    "content_sha256": records.sha256(section_text(document)),
+                    "retrieved_at": SPEC_CREATED_AT,
+                },
+                "missing": [],
+            }
+        )
+    records.write_jsonl(directory / "documents.jsonl", rows)
+    return run_id
+
+
+def update_spec(env, run_id=SPEC_RUN_ID, project="project-alpha", *extra):
+    argv = ["knowledge", "update", "--source", "spec-run", "--run", run_id, "--project", project]
+    return run_cli([*argv, *extra], env)
