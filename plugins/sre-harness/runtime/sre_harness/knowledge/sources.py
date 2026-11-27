@@ -35,8 +35,10 @@ _REGISTRY = re.compile(r"registry:(RG-[0-9]{4,})/(v[0-9]{4,}\.md)")
 _RUN = re.compile(
     r"run:(run-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8})/documents\.jsonl#(DOC-[0-9]{4,})#(S[0-9]{1,6})"
 )
+# The path never starts with "-": the project context explorer refuses such a locator
+# (gitread.checked_path), so the two indexes never read it differently.
 _GIT = re.compile(
-    r"git:(?P<path>[A-Za-z0-9_.@+=,-]+(?:/[A-Za-z0-9_.@+=,-]+)*)"
+    r"git:(?P<path>(?!-)[A-Za-z0-9_.@+=,-]+(?:/[A-Za-z0-9_.@+=,-]+)*)"
     r"(?:#L(?P<start>[1-9][0-9]{0,6})(?:-L(?P<end>[1-9][0-9]{0,6}))?)?"
 )
 _SHA = re.compile(r"[0-9a-f]{40}")
@@ -158,8 +160,19 @@ def _cited(text, start, end):
     return "\n".join(lines[first - 1 : last])
 
 
+def _readable_git(match, revision):
+    return bool(_SHA.fullmatch(revision)) and ".." not in match["path"].split("/")
+
+
+def reads_git(locator, revision):
+    """True for a `git:` locator and revision that `read` would look up (whether the bare
+    repository has the commit is another matter)."""
+    match = _GIT.fullmatch(locator)
+    return match is not None and _readable_git(match, revision)
+
+
 def _git(root, match, record, revision):
-    if not _SHA.fullmatch(revision) or ".." in match["path"].split("/"):
+    if not _readable_git(match, revision):
         return UNAVAILABLE
     target = f"{revision}:{match['path']}"
     for git_dir in _repositories(root, record["facets"]["repo"]):

@@ -13,8 +13,8 @@
     {
       "name": "sre-harness",
       "source": "./plugins/sre-harness",
-      "description": "Read-only harnesses for review learning and specification consistency: structured lessons from GitHub review history, decision and requirement traceability across open pull requests, and an evidence contract for IaC delivery.",
-      "version": "0.1.3",
+      "description": "Read-only harnesses for review learning and specification consistency: structured lessons from GitHub review history, decision and requirement traceability across open pull requests, an evidence contract for IaC delivery, and a knowledge index that returns the approved norms for one task within an access filter and a token budget.",
+      "version": "0.2.0",
       "author": { "name": "toshipon" }
     }
   ]
