@@ -52,8 +52,8 @@ from datetime import datetime, timezone
 from .. import records
 from ..errors import EXIT_OK, EXIT_QUALITY, BoundaryError, InputError
 from ..globs import path_matches
-from ..review.markdown import clean
 from . import config, model, store, terms, untrusted
+from .untrusted import clean
 
 DEFAULT_MAX_TOKENS = 1500
 STALE_AFTER_HOURS = 168
@@ -283,7 +283,8 @@ def reasons(record, request, term_hit=False):
 
 def view(record, why, freshness):
     """A record as `knowledge search` prints it: normative fields and evidence pointers, no
-    source text. Strings that came from a source lose control and bidi characters."""
+    source text. Strings that came from a source lose control, bidi and zero-width characters
+    (`untrusted.clean`, as the fetch envelope)."""
     scope = record["scope"]
     shown = {"level": scope["level"]}
     shown.update({name: scope[name] for name in model.SCOPE_IDS[: _depth(record)]})

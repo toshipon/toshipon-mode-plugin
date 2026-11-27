@@ -47,8 +47,9 @@ Rules this module decides:
                  writes the index or the registry, and an answer never becomes a rule.
 
 A responder must name a person: AI and automation names are refused, as autonomous-improvement
-refuses them for reviewers (the same words, the same splitting), and so is a run marked as
-automated. It is not authentication.
+refuses them for reviewers (the same words, the same splitting, whole words only), also in the
+name's examined form (`privacy.examined`), and so is a run marked as automated. It is not
+authentication.
 """
 
 import fcntl
@@ -252,7 +253,11 @@ def require_person(responder, env=None):
     if env.get(AUTOMATED_ENV) or env.get(ACTIVE_ENV):
         raise BoundaryError("an answer cannot be recorded from an automated run.")
     name = text(responder, RESPONDER_LENGTH, "--responder")
-    words = [word.lower() for word in _WORDS.findall(name)]
+    # The words of the name as given and of its examined form (NFKC, no combining or ignorable
+    # characters), so neither a full-width letter nor a joiner splits a reserved word.
+    words = [
+        word.casefold() for form in (name, privacy.examined(name)) for word in _WORDS.findall(form)
+    ]
     if any(word in RESERVED_NAMES for word in words):
         raise BoundaryError("--responder must name a person; AI and automation names are refused.")
     return name
@@ -260,7 +265,7 @@ def require_person(responder, env=None):
 
 def reason_text(reason):
     value = text(reason, REASON_LENGTH, "--reason")
-    if privacy.find_secrets(value):
+    if privacy.find_secrets(privacy.forms(reason + "\n" + value)):
         raise InputError("--reason has the shape of a secret; it was not recorded.")
     return value
 
@@ -315,11 +320,12 @@ def view(request, queue, now, superseded):
 
 
 def _checked(question, options, evidence_ids, risk):
+    given = [question, *options]
     question = text(question, QUESTION_LENGTH, "--question")
     options = [text(option, OPTION_LENGTH, "--option") for option in options]
     if not MIN_OPTIONS <= len(options) <= MAX_OPTIONS or len(set(options)) != len(options):
         raise InputError(f"give {MIN_OPTIONS}-{MAX_OPTIONS} different --option values.")
-    if privacy.find_secrets("\n".join([question, *options])):
+    if privacy.find_secrets(privacy.forms("\n".join([*given, question, *options]))):
         raise InputError("the question or an option has the shape of a secret; nothing was put.")
     evidence = sorted(set(evidence_ids))
     if not 1 <= len(evidence) <= MAX_EVIDENCE:

@@ -5,6 +5,7 @@ term per line, `#` starts a comment, matching ignores case. The file stays outsi
 """
 
 import re
+import unicodedata
 from pathlib import Path
 
 from .errors import BoundaryError, InputError
@@ -30,6 +31,35 @@ _SECRETS = {name: re.compile(pattern) for name, pattern in _SECRET_SHAPES.items(
 _PLACEHOLDER = re.compile(
     r"\$\{[^{}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|<[^<>]+>|\{\{[^{}]*\}\}|%[A-Za-z]|\*+"
 )
+
+
+# Default_Ignorable_Code_Point (Unicode DerivedCoreProperties): drawn as nothing, so a word can
+# carry them unseen. Hangul fillers, variation selectors and tags are among them.
+_IGNORABLE = re.compile(
+    "[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f"
+    "\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8"
+    "\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0000-\U000e0fff]"
+)
+_DROPPED = frozenset({"Mn", "Me", "Cc", "Cf"})  # combining marks, control and format
+_KEPT = frozenset("\n\t")  # they separate words; dropping them would join two lines
+
+
+def _strip(text):
+    text = _IGNORABLE.sub("", text)
+    return "".join(c for c in text if c in _KEPT or unicodedata.category(c) not in _DROPPED)
+
+
+def examined(text):
+    """The form text is checked in, never printed: NFKC (a full-width letter is the letter),
+    without default-ignorable characters, combining marks (Mn, Me), control and format
+    characters (Cc, Cf), newlines and tabs aside. Stripped before and after NFKC, since NFKC
+    can turn one ignorable character into another."""
+    return _strip(unicodedata.normalize("NFKC", _strip(text)))
+
+
+def forms(text):
+    """The text as read and in its examined form, for a check that must see through either."""
+    return text + "\n" + examined(text)
 
 
 def _has_secret(name, pattern, text):

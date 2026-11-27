@@ -4,7 +4,7 @@ supersession, conflicts and freshness. Records are synthetic and built in memory
 import pytest
 
 from sre_harness import records
-from sre_harness.knowledge import model, search, terms
+from sre_harness.knowledge import model, search, terms, untrusted
 from sre_harness.review import markdown
 from tests.knowledge_helpers import item
 
@@ -514,7 +514,8 @@ def test_the_view_drops_ids_below_the_level_and_cleans_control_characters():
     }
     text = records.canonical(view)
     assert not markdown._CONTROL.search(text)
-    assert view["summary"] == markdown.clean(row["summary"])
+    assert view["summary"] == "保持期間[31m は 14 日" == untrusted.clean(row["summary"])
+    assert view["applies_when"] == ["キューを作る"] and view["exceptions"] == ["例外"]
     assert set(view) == set(
         records.schema("knowledge-search-result")["$defs"]["record"]["required"]
     )

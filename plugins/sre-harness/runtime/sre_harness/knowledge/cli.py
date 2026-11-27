@@ -105,7 +105,7 @@ def _task(args, task_id):
         raise InputError(
             f"--reason must be one line of 1-{REASON_LENGTH} characters without control characters."
         )
-    if privacy.find_secrets(reason):
+    if privacy.find_secrets(privacy.forms(reason)):
         raise InputError("--reason has the shape of a secret; it was not recorded.")
     return budget.Task(task_id, extend, reason)
 

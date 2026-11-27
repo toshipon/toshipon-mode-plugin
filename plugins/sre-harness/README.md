@@ -526,7 +526,7 @@ $H knowledge search --principal workspace-a --project project-beta --component a
 | `budget.used_tokens` | 返したレコード（`records` と `proposed`）の canonical JSON を、UTF-8 の 3 byte を 1 token として数えた合計。`max_tokens` を超えません |
 | `budget.task` | `--task` を付けたときのタスク累計（`id`、`limit`、`used_before`、`used_after`。止まったときは `needed_tokens` も）。付けなければ null |
 | `mandatory` | 必須の件数、token 数、全部入ったか（`complete`）、ID の一覧 |
-| `records` | 必須のレコード、続いて任意のレコード。本文は含まず、要約、`applies_when`、`exceptions`、出典の locator と hash、`freshness`、`why_selected` だけです |
+| `records` | 必須のレコード、続いて任意のレコード。本文は含まず、要約、`applies_when`、`exceptions`、出典の locator と hash、`freshness`、`why_selected` だけです。出典から来た文字列は、fetch の枠と同じく制御文字、双方向制御文字、ゼロ幅文字を落とします |
 | `truncated` | 条件に合ったのに予算に入らなかった件数、ID、必要な token 数 |
 | `conflicts` | 返したレコードの中で矛盾しうる組と、その理由（`reason`）。`conflicts_with`（trace の関係）、`both_approved_same_subject`（同じ対象、つまり同じ `decision_id`、または scope と topic が同じ承認済みのレコード）、`mandatory_superseded_by_advisory`（必須のレコードを、承認済みで任意の後継が置換しようとしている。必須は必須の集合に残り、後継は query や予算で選ばれなかったときも ID を出します）の 3 つです。どちらが正しいかは決めません |
 | `freshness` | 返したレコードのうち `stale` と `unknown` の件数、成功していない出典の名前 |
@@ -608,7 +608,7 @@ $H knowledge fetch --principal workspace-b --id KN-07abfa76823a --generation 0
 | `source_unavailable` | 出典が無い、形の合わない locator、symlink、UTF-8 でない、行の範囲が外、`pr:` / `doc:` |
 | `hash_mismatch` | 読んだ原文の sha256 が記録（`content_sha256`）と違う。今の原文の hash だけを返します |
 | `too_large` | 原文が 256 KiB を超える。切り詰めません |
-| `secret_shape` | 原文に秘密情報の形か禁止語がある。`withheld` に形の名前（`github_token`、`deny_term` など）だけを書き、値は標準出力にも標準エラーにも出しません |
+| `secret_shape` | 原文に秘密情報の形か禁止語がある。読んだままの文、出力する形（不可視の文字を除いた形）、検査用の形（NFKC で正規化し、Default_Ignorable の文字、結合文字（Mn、Me）、制御・書式の文字（Cc、Cf。改行とタブは残す）を除いた形）のどれかに当たれば外します。全角で書いた形や、ゼロ幅・結合文字・異体字セレクタを挟んだ形も当たります。`withheld` に形の名前（`github_token`、`deny_term` など）だけを書き、値は標準出力にも標準エラーにも出しません |
 | `access_denied` | その principal が読めないレコード。存在しない ID と、索引から消えた（tombstone の）ID も同じ答えです |
 | `auth_missing` | 認証が要る出典。この版では使いません |
 
@@ -786,9 +786,9 @@ $H knowledge decision poll --workspace ws-b --head-sha 2222222222222222222222222
 - put は request を `outbox/<id>.json` に 1 回だけ書きます。書き終えたファイルを link で置くので、途中の状態は見えず、既存のファイルは置き換えません。ディレクトリは 0700、ファイルは 0600 で、queue の中の symlink は exit 3 です。
 - `revision` は、そのときの索引の generation、根拠レコードの content hash（task の principal のアクセスで読んだもの）、`--head-sha` です。根拠の ID は principal が読めるものだけで、読めない ID と存在しない ID は同じ文の exit 2 で拒否します。
 - `dedupe_key` は、task、正規化した質問（NFKC、大文字小文字、空白）、根拠 ID、revision の hash です。同じ key の request が取り下げ済みでも期限切れでもなければ `duplicate` で、既存の ID を返します。put は `queue.lock` の flock の下で決めて書くので、2 つの workspace が同時に put しても request は 1 つです（thread と別プロセスでテストしています）。
-- 質問は 500 文字、選択肢は 100 文字・2〜10 個までの 1 行です。制御文字と双方向制御文字は落とし、空白はまとめます。秘密情報の形があれば exit 2 です。`--expires-at` は任意で、その時刻を過ぎた未回答の request は `expired` になり、回答を受け付けません。
+- 質問は 500 文字、選択肢は 100 文字・2〜10 個までの 1 行です。制御文字と双方向制御文字は落とし、空白はまとめます。秘密情報の形が、入力のまま、記録する形、検査用の形（fetch の `secret_shape` と同じ）のどれかにあれば exit 2 です。cancel の `--reason` と、タスク累計の延長の `--reason` も同じ検査です。`--expires-at` は任意で、その時刻を過ぎた未回答の request は `expired` になり、回答を受け付けません。
 - status は書いたファイルから導きます。取り下げ済み（`cancelled`）、同じ task・同じ質問・同じ根拠のより新しい request がある（`superseded`）、回答済み（`answered`）、期限切れ（`expired`）、それ以外は `open` の順です。outbox のファイルは `open` のままです。
-- answer は `review approve` と同じく、stdin と stdout が TTY のときだけ動きます。画面に質問、選択肢、選んだもの、根拠、revision、再利用の範囲と `confirmation_sha256` を出し、その先頭 12 文字の入力を求めます。回答は `inbox/<id>.json` に 1 回だけ書き、2 回目は何も変えずに exit 1 です。`--responder` に AI や自動化の名前（`claude`、`ai`、`bot`、`agent`、`assistant`、`harness`、`gpt`、`llm` を語に含むもの）は exit 3 で、`AI_HARNESS_AUTOMATED` か `AI_HARNESS_ACTIVE` が設定された実行からも記録しません。autonomous-improvement の reviewer の規則と同じです。
+- answer は `review approve` と同じく、stdin と stdout が TTY のときだけ動きます。画面に質問、選択肢、選んだもの、根拠、revision、再利用の範囲と `confirmation_sha256` を出し、その先頭 12 文字の入力を求めます。回答は `inbox/<id>.json` に 1 回だけ書き、2 回目は何も変えずに exit 1 です。`--responder` に AI や自動化の名前（`claude`、`ai`、`bot`、`agent`、`assistant`、`harness`、`gpt`、`llm` を語に含むもの）は exit 3 で、名前を NFKC で正規化して結合文字などを除いた形でも語を調べます（`Ｃｌａｕｄｅ` も拒否します。語の一部として含む `claudebot` のような名前は、autonomous-improvement と同じく語に分かれないので拒否しません）。`AI_HARNESS_AUTOMATED` か `AI_HARNESS_ACTIVE` が設定された実行からも記録しません。autonomous-improvement の reviewer の規則と同じです。
 - poll は、その workspace が put した request（最初に put した workspace と、`duplicate` を受け取った workspace）だけを返します。ほかの workspace の request は返しません。`list` と `cancel` も `--workspace` が必須で、その workspace が put したか `duplicate` で待っている request だけを返し、取り下げられます。ほかの workspace の request の `cancel` は、無い request と同じ exit 2 です。`list` と `cancel` の出力の `revision` には、根拠の content hash（`content_hashes`）を出しません。回答は、workspace ごとに `delivered/<id>/<workspace>.json` に記録して 1 回だけ `responses` に入れ、2 回目からは `already_delivered` に入れます。
 - 回答を返す前に、request の revision と今の状態を比べます。根拠の content hash が変わった（`content_hash_changed`）、根拠が索引から消えたか読めなくなった（`evidence_unavailable`）、`--head-sha` が違う（`head_sha_changed`）か付いていない（`head_sha_not_given`）回答は、`stale` に入れて返さず、exit 1 です。generation だけが進んだ（ほかのレコードの更新）ときは stale にしません。同じ質問を新しい状態で put し直すと、古い request は `superseded` になり、stale には出なくなります。
 - 回答の再利用は、既定でその task の中だけです。`--reuse-scope project --reuse-until <時刻>` の回答も強制ルールにはなりません。poll は、質問、選んだ option、根拠 ID を `candidate_hints` に返すだけで、索引にも registry にも書きません。規則にするには、人が候補として既存の承認の流れ（`review generate` から `review approve`）に載せます。`decisions.py` が索引の writer と registry の書き込みを使わないことを、構文木のテストが確かめます。
