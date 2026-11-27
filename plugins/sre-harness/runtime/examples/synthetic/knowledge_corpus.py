@@ -18,8 +18,9 @@ What it holds:
 - 30 tasks. A task's `applicable` labels follow one rule: approved, readable by the task's
   principal, and scoped to the organization, the task's project (project level), its component
   (component level) or the task itself (task level). `mandatory` is the mandatory part of that;
-  it does not depend on the query. `mandatory_tokens` estimates each of those records as its
-  canonical JSON (3 UTF-8 bytes per token).
+  it does not depend on the query. `mandatory_tokens` is what `knowledge search` counts for
+  them (search.tokens of each record as it is returned, marked fresh), so the overflowing
+  task really stops at BUDGET.
 - Traps: a supersession chain of three (retention 30 -> 90 -> 400 days; only the last is
   approved), two approved records that contradict each other, a record whose source changed
   after it was recorded (stale), one whose source is gone (missing), a source text carrying an
@@ -41,7 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sre_harness import records
-from sre_harness.knowledge import model, terms
+from sre_harness.knowledge import model, search
 
 SEED = 20261127
 SIZES = (50, 300, 2000)
@@ -422,6 +423,13 @@ def _tasks(builder, settings, rejected_keys):
             "resource_types": [component],
         }
         holder = settings["principals"][principal]
+        request = search.Request(
+            project=project,
+            component=component,
+            task=task["task_id"],
+            paths=tuple(task["paths"]),
+            resource_types=tuple(task["resource_types"]),
+        )
         applicable, mandatory, tokens = [], [], 0
         for item in builder.items:
             if item["origin"]["key"] in rejected_keys or item["status"] != "approved":
@@ -432,7 +440,8 @@ def _tasks(builder, settings, rejected_keys):
             applicable.append(record["id"])
             if record["enforcement"] == "mandatory":
                 mandatory.append(record["id"])
-                tokens += terms.estimate_tokens(records.canonical(record))
+                shown = search.view(record, search.reasons(record, request), "fresh")
+                tokens += search.tokens(shown)
         task.update(
             applicable=sorted(applicable), mandatory=sorted(mandatory), mandatory_tokens=tokens
         )

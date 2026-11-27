@@ -146,7 +146,12 @@ SEARCH_RESULT = {
         "used_tokens": 1180,
         "task": {"id": "TASK-0001", "limit": 6000, "used_before": 0, "used_after": 1180},
     },
-    "mandatory": {"count": 2, "tokens": 410, "complete": True},
+    "mandatory": {
+        "count": 2,
+        "tokens": 410,
+        "complete": True,
+        "ids": ["KN-3f2a9c01b7de", "KN-000000000005"],
+    },
     "records": [
         {
             "id": "KN-3f2a9c01b7de",
@@ -170,6 +175,7 @@ SEARCH_RESULT = {
             "why_selected": ["mandatory", "path_match"],
         }
     ],
+    "proposed": [],
     "truncated": {"count": 1, "ids": ["KN-000000000001"], "tokens_needed": 2300},
     "unfetched": [],
     "conflicts": [
@@ -193,6 +199,8 @@ def test_the_design_example_of_a_search_result_is_valid():
         lambda v: v["records"][0]["scope"].update(level="galaxy"),
         lambda v: v["conflicts"][0].update(ids=["KN-000000000002"]),
         lambda v: v["unfetched"].append({"id": "KN-000000000005", "reason": "made_up"}),
+        lambda v: v.pop("proposed"),
+        lambda v: v["mandatory"].pop("ids"),
     ],
 )
 def test_a_search_result_outside_the_contract_is_invalid(change):

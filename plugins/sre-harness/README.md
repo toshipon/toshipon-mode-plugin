@@ -134,6 +134,7 @@ $H iac validate --plan "$D/iac/approver_is_implementer/plan.json" \
 | `runs list` | 保存先 | 標準出力だけ | なし | 保存先が git の作業ツリーの中なら 3 | ローカル |
 | `knowledge update` | `--source file --input <JSON>`、`knowledge/config.json` | `<ルート>/knowledge/index.sqlite3`（run は作りません。`--dry-run` は何も書きません） | なし | 設定が無い、置換の循環、FTS5 が無いは 2。別の writer が動いていれば何も書かずに 1 | ローカル |
 | `knowledge status` | 索引 | 標準出力だけ（generation、SQLite と FTS5、ソースの cursor、status 別の件数） | なし | 索引の schema version が違えば 2 | ローカル |
+| `knowledge search` | 索引、`knowledge/config.json`、`--principal`（必須）と scope・facet・query・予算 | 標準出力だけ（`knowledge-search-result` の JSON）。何も書きません | なし | 必須が予算に入らない（`mandatory_overflow`）、索引が今の設定に追随していない（`stale_index`）は 1。principal が不明か設定が無いと 3。索引が無い、引数の誤りは 2 | ローカル（読み取りだけ） |
 
 exit code の意味はすべての段で同じです。
 
@@ -189,6 +190,85 @@ run にはレビュー本文、diff、文書の section が入ります。消す
 - WAL を使うので、ローカルディスクに置いてください。ネットワークファイルシステムでは壊れることがあります。
 - Python の `sqlite3` に FTS5 が無いと、`knowledge update` は exit 2 で止まります。`knowledge status` の `fts5` で確かめられます。
 - アクセス区分（`access` の `classification` と `readers`、`config.json` の principal）は本人確認ではありません。同じ OS の利用者は SQLite のファイルを直接読めます。防げるのは、別 project の知識がうっかり結果に混ざることです。
+
+#### knowledge search
+
+`knowledge search` は、1 つの作業に当てはまる承認済みのレコードを、token の予算の中で返します。LLM もネットワークも使わず、結果のキャッシュも持ちません。同じ引数、同じ generation、同じ時刻なら、出力は byte 単位で同じです。
+
+合成データで試す手順です（「最初に試す手順」の準備を済ませた端末で実行します）。
+
+```bash
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.knowledge_corpus "$D/knowledge" --size 300
+install -d -m 700 "$AI_HARNESS_HOME/sre-harness/knowledge"
+install -m 600 "$D/knowledge/config.json" "$AI_HARNESS_HOME/sre-harness/knowledge/config.json"
+$H knowledge update --source file --input "$D/knowledge/corpus.json"
+$H knowledge search --principal workspace-a --project project-alpha --component queue \
+  --query "queue の保持期間" --path services/queue/main.tf --resource-type queue
+$H knowledge search --principal workspace-a --project project-beta --component audit-log \
+  --path services/audit-log/main.tf --resource-type audit-log
+$H knowledge search --principal workspace-a --project project-beta --component audit-log \
+  --path services/audit-log/main.tf --resource-type audit-log --max-tokens 4000
+```
+
+1 つ目は `status: ok` で exit 0 です。必須 3 件（639 token）と任意 4 件を返し、入らなかった 22 件を `truncated` に数えます。2 つ目は、必須 14 件（3702 token）が既定の 1500 token に入らないので、`status: mandatory_overflow` で exit 1 です。`records` は空で、`mandatory.ids` に 14 件の ID が並びます。3 つ目は上限を上げた呼び直しで、exit 0 です。`workspace-b` で `project-gamma` を検索すると、organization のレコードだけが返ります。
+
+引数は次のとおりです。
+
+- `--principal` は必須で、既定値はありません。`knowledge/config.json` に無い名前と、設定ファイルが無いときは exit 3 です。エラー文に既知の principal の名前は出しません。
+- scope は `--project`、`--component`（`--project` が要ります）、`--task` の連なりです。organization のレコードと、指定した段までのレコードだけが対象です。`--project` だけなら component と task のレコードは入りません。
+- `--repo`、`--path`（繰り返せます）、`--resource-type` は facet の照合です。レコードがその facet を持たないとき、または引数で指定しないときは、合うとみなします。path は `path_globs` と宣言的検査と同じ glob（`**` は directory をまたぎ、`*` はまたがない）で照合します。
+- `--query` は任意のレコードの順位付けと絞り込みにだけ使います。語の一致（`knowledge update` と同じ分かち書き）で、1 語でも合うレコードが残ります。FTS5 の構文や引用符を入れても、語として扱います。検索できる語が無い query（1 文字、記号だけ）は、query なしと同じです。
+- `--topic` と `--decision-id` は任意のレコードを絞ります。必須の集合は変えません。
+- `--include-proposed` は `proposed` のレコードを `proposed` の配列で別に返します。必須にはならず、`records` にも必須の集合にも入りません。予算は `records` の後に使います。
+- `--max-tokens`（既定 1500）は 1 回の search の上限です。`--stale-after-hours`（既定 168）は鮮度の閾値です。`--task` を付けても、この版ではタスクの累計は数えません（`budget.task` は常に null）。
+
+出力の読み方です。
+
+| 項目 | 意味 |
+|---|---|
+| `status` | `ok`、`mandatory_overflow`、`stale_index`。`ok` 以外は exit 1 |
+| `snapshot` | 読んだ索引の generation と更新時刻 |
+| `budget.used_tokens` | 返したレコード（`records` と `proposed`）の canonical JSON を、UTF-8 の 3 byte を 1 token として数えた合計。`max_tokens` を超えません |
+| `mandatory` | 必須の件数、token 数、全部入ったか（`complete`）、ID の一覧 |
+| `records` | 必須のレコード、続いて任意のレコード。本文は含まず、要約、`applies_when`、`exceptions`、出典の locator と hash、`freshness`、`why_selected` だけです |
+| `truncated` | 条件に合ったのに予算に入らなかった件数、ID、必要な token 数 |
+| `conflicts` | 返したレコードの中で矛盾しうる組。`conflicts_with` の関係か、同じ対象（同じ `decision_id`、または scope と topic が同じ）の承認済みのレコードです。どちらが正しいかは決めません |
+| `freshness` | 返したレコードのうち `stale` と `unknown` の件数、成功していない出典の名前 |
+| `superseded` | `--decision-id` に置換済みの決定を指定したときの後継の ID |
+
+止まる条件は次の 3 つです。どれも部分的な結果を `ok` として返しません。
+
+- 必須のレコードの合計が `--max-tokens` を超えた（`mandatory_overflow`、exit 1）。必須を黙って省かないので、続けるには上限を上げて呼び直します。
+- 索引を作ったときの `config.json` と今の `config.json` が違う（`stale_index`、exit 1）。読める範囲や、取り込みで外した reader が変わっているかもしれないので、何も返しません。`knowledge update` を実行し直してください。
+- principal が不明、設定が無い（exit 3）。索引が無い、引数の誤り（exit 2）。
+
+順位付けは次の順です。必須のレコードは query を使わずに同じ順で並べます。
+
+1. scope の具体性（task、component、project、organization の順）
+2. path と resource_type の一致の数
+3. FTS5 の `bm25`
+4. confidence（review の `strong / recurring / candidate` と spec の `high / medium / low` を、同じ 3 段に対応させます）
+5. 出典の更新時刻の新しい順
+6. ID
+
+予算は順位の順に詰め、最初に入らなかったレコードから後ろはすべて `truncated` です。順位の低いものが高いものを追い越して入ることはありません。
+
+置換の扱いです。読めるレコードの `supersedes` をたどり、承認済みのレコードで終わる連鎖の、末端だけを返します。出典が古い方を `approved` のままにしていても、承認済みの後継があれば返しません。後継が `proposed` や `rejected` なら置換になりません。`--decision-id` に置換済みの決定を指定すると、古い決定は返さず、`superseded` に末端の後継を返します。後継をその principal が読めないときは、後継があること自体を出しません。
+
+鮮度（`freshness`）は、レコードの出典の取り込みが最後に成功してからの経過で決めます。
+
+- `fresh`: `--stale-after-hours` 以内に成功している。部分的な取り込み（`complete: false`）の出典では、そのレコードを最後に書いた時刻（`indexed_at`）で数えます。
+- `stale`: それより前。
+- `unknown`: 成功の記録が無い、または時計が最後の成功より前を指している。
+
+search は出典を読みに行かないので、`fresh` は「出典の取り込みが最近成功した」という意味で、根拠の本文の hash を確かめたという意味ではありません。
+
+別の project の漏れについて。件数、ID、矛盾、置換の後継は、すべてアクセスの絞り込みを通った後のレコードから作ります。読めないレコードの件数、ID、要約は、出力のどこにもエラー文にも出ません。ただし `snapshot.generation` は索引全体で 1 つなので、読めない project の更新でも進みます。
+
+限界:
+
+- 語の一致なので、言い換えた query は拾いません（合成データの `paraphrase` の task がその例です）。必須のレコードは query に依存しないので、言い換えで必須が漏れることはありません。任意のレコードは漏れます。
+- token の数は見積もりで、実際の tokenizer の数とは違います。
 
 ### 認証
 
@@ -328,6 +408,7 @@ toshipon-mode plugin の Autonomous Improvement Harness v2（`plugins/toshipon-m
 - 実際の Slack と Confluence の export の全形式。読むのは下に書いた形だけで、Slack の channel ディレクトリ全体や Confluence の HTML export には対応していません。
 - patch の header 解析と git の `git apply` の解釈の一致。許可する形を狭く決めてそれ以外を拒否する作りで、確かめたのは git 2.54 と CI の git だけです。
 - bare リポジトリの fetch は `fetch.fsckObjects=true` で行います。古い履歴に fsck の警告（壊れた日付、tree の並び順など）がある実際のリポジトリで fetch が失敗するかは確かめていません。失敗したら default branch の fetch で exit 1 になります。
+- `knowledge search` の検索の質。合成データで確かめたのは、必須の集合がラベルと一致すること、予算と止まる条件、置換、漏れないことだけです。任意のレコードの recall と precision、既定の予算（1500 token）と鮮度の閾値（168 時間）が実際の作業で妥当かは測っていません。
 - `impact-report.md` の自動リンク対策（`www.`、`@`、`://` の文字参照化）が GitHub の Markdown 表示で実際にリンクにならないこと。テストは文字列に元の形が残らないことだけを確かめています。
 
 ## Review Learning: 収集と正規化

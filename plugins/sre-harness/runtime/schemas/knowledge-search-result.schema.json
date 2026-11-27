@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:sre-harness:knowledge-search-result",
   "title": "knowledge-search-result",
-  "description": "What `knowledge search` prints. Any status but ok exits 1; mandatory_overflow returns no records. Counts are taken after the access filter, so nothing about records the principal cannot read appears anywhere in it.",
+  "description": "What `knowledge search` prints. Any status but ok exits 1; mandatory_overflow and stale_index return no records. task_budget_exhausted is reserved for the task total that comes with fetch. Counts are taken after the access filter, so nothing about records the principal cannot read appears anywhere in it.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,6 +13,7 @@
     "budget",
     "mandatory",
     "records",
+    "proposed",
     "truncated",
     "unfetched",
     "conflicts",
@@ -61,15 +62,20 @@
     "mandatory": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["count", "tokens", "complete"],
+      "required": ["count", "tokens", "complete", "ids"],
       "properties": {
         "count": { "type": "integer", "minimum": 0 },
         "tokens": { "type": "integer", "minimum": 0 },
         "complete": { "type": "boolean" },
-        "ids": { "$ref": "#/$defs/ids" }
+        "ids": { "description": "The mandatory records, also when they did not fit (mandatory_overflow).", "$ref": "#/$defs/ids" }
       }
     },
     "records": { "type": "array", "items": { "$ref": "#/$defs/record" } },
+    "proposed": {
+      "description": "Proposed records, only with --include-proposed. Never mandatory and never part of `records`; they take what budget the records leave.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/record" }
+    },
     "truncated": {
       "type": "object",
       "additionalProperties": false,

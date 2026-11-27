@@ -15,6 +15,7 @@ import re
 
 from .. import guard
 from ..errors import InputError, QualityGateError
+from ..globs import path_matches
 
 MAX_PATTERN_LENGTH = guard.REGEX_MAX_PATTERN_LENGTH
 MAX_LINE_LENGTH = 4000
@@ -44,32 +45,6 @@ def check_problems(check):
         except re.error as error:
             problems.append(f"{key} is not a valid regular expression ({error.msg})")
     return problems
-
-
-def glob_regex(glob):
-    """`**` spans directories, `*` and `?` stay within one path segment."""
-    out, index = [], 0
-    while index < len(glob):
-        if glob.startswith("**/", index):
-            out.append("(?:.*/)?")
-            index += 3
-        elif glob.startswith("**", index):
-            out.append(".*")
-            index += 2
-        elif glob[index] == "*":
-            out.append("[^/]*")
-            index += 1
-        elif glob[index] == "?":
-            out.append("[^/]")
-            index += 1
-        else:
-            out.append(re.escape(glob[index]))
-            index += 1
-    return re.compile("".join(out))
-
-
-def path_matches(path, globs):
-    return any(glob_regex(glob).fullmatch(path) for glob in globs)
 
 
 def hunks(patch):

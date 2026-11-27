@@ -29,6 +29,7 @@ INDEX = "index.sqlite3"
 LOCK = "writer.lock"
 SCHEMA_VERSION = 1
 SUPERSEDES = "supersedes"
+CONFLICTS_WITH = "conflicts_with"
 TIMEOUT_SECONDS = 5
 
 _SCHEMA = [
@@ -493,6 +494,28 @@ class Reader:
             f"WHERE record_terms MATCH ? AND {clause} "
             "ORDER BY bm25(record_terms), record_terms.id",
             [" OR ".join(phrases), *params],
+        )
+        return [(row[0], row[1]) for row in rows]
+
+    def provenance(self, principal):
+        """{id: source} of the records `principal` may read."""
+        clause, params = access_clause(principal)
+        rows = self._connection.execute(
+            f"SELECT records.id, records.source FROM records WHERE {clause} ORDER BY records.id",
+            params,
+        )
+        return {row[0]: row[1] for row in rows}
+
+    def edges(self, principal, relation):
+        """(source id, target id) of the `relation` edges whose two ends `principal` may both
+        read. An edge to or from a record the principal cannot read is not returned at all."""
+        clause, params = access_clause(principal)
+        readable = f"SELECT records.id FROM records WHERE {clause}"
+        rows = self._connection.execute(
+            "SELECT source_id, target_id FROM edges WHERE relation = ? "
+            f"AND source_id IN ({readable}) AND target_id IN ({readable}) "
+            "ORDER BY source_id, target_id",
+            [relation, *params, *params],
         )
         return [(row[0], row[1]) for row in rows]
 
