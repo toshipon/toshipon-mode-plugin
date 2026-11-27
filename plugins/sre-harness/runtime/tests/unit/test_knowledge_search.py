@@ -588,3 +588,19 @@ def test_expansion_words_rank_advisory_records_and_leave_the_mandatory_ones():
     assert ids(plain["records"]) == [rid("must")]
     assert ids(widened["records"]) == [rid("must"), rid("hit")]
     assert "term_match" in widened["records"][1]["why_selected"]
+
+
+def test_a_long_successor_chain_is_followed_without_recursion():
+    length = 3000
+    rows = [
+        {
+            "id": f"K{n:05d}",
+            "status": "approved" if n == length - 1 else "superseded",
+            "enforcement": "advisory",
+            "supersedes": [f"K{n - 1:05d}"] if n else [],
+        }
+        for n in range(length)
+    ]
+    found = search.replacements(rows)
+    assert len(found) == length - 1
+    assert set(found.values()) == {(f"K{length - 1:05d}",)}

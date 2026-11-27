@@ -177,25 +177,40 @@ def _ends(rows):
             successors.setdefault(target, []).append(row["id"])
     ends = {}
 
-    def chain_ends(record_id):
-        if record_id not in ends:
+    def chained(record_id):
+        return [
+            successor
+            for successor in sorted(successors.get(record_id, ()))
+            if by_id[successor]["status"] in CHAIN_STATUSES
+        ]
+
+    # Depth first with a stack, not recursion: a chain may be longer than Python's recursion
+    # limit. A record is settled once every successor it chains to is. The store refuses a
+    # cycle; one in hand-made rows is cut where it closes, so this always ends.
+    for start in sorted(successors):
+        stack, open_ = [start], {start}
+        while stack:
+            record_id = stack[-1]
+            waiting = [s for s in chained(record_id) if s not in ends and s not in open_]
+            if waiting:
+                stack.extend(waiting)
+                open_.update(waiting)
+                continue
             found = set()
-            for successor in sorted(successors.get(record_id, ())):
-                status = by_id[successor]["status"]
-                if status not in CHAIN_STATUSES:
-                    continue
-                further = chain_ends(successor)
+            for successor in chained(record_id):
+                further = ends.get(successor, set())
                 if further:
                     found |= further
-                elif status == "approved":
+                elif by_id[successor]["status"] == "approved":
                     found.add(successor)
             ends[record_id] = found
-        return ends[record_id]
+            stack.pop()
+            open_.discard(record_id)
 
     return {
-        record_id: chain_ends(record_id)
+        record_id: ends[record_id]
         for record_id in sorted(successors)
-        if record_id in by_id and chain_ends(record_id)
+        if record_id in by_id and ends[record_id]
     }
 
 
