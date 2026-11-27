@@ -1,5 +1,5 @@
 """`sre-harness knowledge <stage>`: the knowledge index (`status`, `update`, `search`,
-`fetch`, `context`, `migrate`, `rollback`). With `--task`, search and fetch also add what they
+`fetch`, `context`, `check`, `migrate`, `rollback`). With `--task`, search and fetch also add what they
 return to the task total (`budget`), checked before anything is printed; `context` always does,
 for the task its task file names."""
 
@@ -9,7 +9,19 @@ import re
 
 from .. import paths, privacy, records
 from ..errors import EXIT_OK, InputError
-from . import adapters, budget, context, fetch, ingest, migrate, model, search, store, untrusted
+from . import (
+    adapters,
+    budget,
+    check,
+    context,
+    fetch,
+    ingest,
+    migrate,
+    model,
+    search,
+    store,
+    untrusted,
+)
 
 DECISION_ID_LENGTH = 64
 REASON_LENGTH = 200
@@ -123,6 +135,15 @@ def _context(args, env, out):
     task = _task(args, found["task_id"])
     request = context.request(found, query=args.query or "", max_tokens=args.max_tokens)
     return _searched(env, found["principal"], request, task, out)
+
+
+def _check(args, env, out):
+    """The approved declarative checks of the task, applied to the patch (`knowledge.check`)."""
+    found = context.load(args.task_file)
+    patch = check.read(args.patch)
+    result = check.run(paths.state_root(env), found, patch, env=env)
+    print(json.dumps(result, indent=2, ensure_ascii=False), file=out)
+    return check.exit_code(result)
 
 
 def _searched(env, principal, request, task, out):
@@ -256,6 +277,15 @@ def _register_context(stages):
     found.set_defaults(handler=_context)
 
 
+def _register_check(stages):
+    checked = stages.add_parser(
+        "check", help="the task's approved declarative checks, applied to a unified diff"
+    )
+    checked.add_argument("--task-file", required=True, help="a task-context JSON file (only read)")
+    checked.add_argument("--patch", required=True, help="a unified diff file (only read)")
+    checked.set_defaults(handler=_check)
+
+
 def _register_fetch(stages):
     fetched = stages.add_parser(
         "fetch", help="the source text behind one record's evidence, a page at a time"
@@ -279,7 +309,7 @@ def register(groups):
     knowledge = groups.add_parser(
         "knowledge",
         help="knowledge index: approved norms by scope and access (status, update, search, fetch, "
-        "context, migrate, rollback)",
+        "context, check, migrate, rollback)",
     )
     stages = knowledge.add_subparsers(dest="stage", required=True)
 
@@ -301,6 +331,7 @@ def register(groups):
     _register_search(stages)
     _register_fetch(stages)
     _register_context(stages)
+    _register_check(stages)
 
     migrating = stages.add_parser(
         "migrate",

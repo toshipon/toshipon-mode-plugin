@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:knowledge-check-result",
+  "title": "knowledge-check-result",
+  "description": "What `knowledge check` prints: the approved declarative checks that apply to a task (the records `knowledge search` would consider, after the access filter), applied to a patch. It holds ids, paths, line numbers and counts, never a line of the patch or of a source. Any status but ok exits 1. `not_checked` lists the rules without a declarative check, for a reader in another context; this command does not judge them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "snapshot",
+    "principal",
+    "task_id",
+    "patch",
+    "applied",
+    "violations",
+    "counts",
+    "not_checked",
+    "unfetched",
+    "failed"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "status": { "enum": ["ok", "violations", "incomplete", "stale_index"] },
+    "snapshot": { "$ref": "urn:sre-harness:knowledge-search-result#/properties/snapshot" },
+    "principal": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+    "task_id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+    "patch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files", "hunks", "sha256"],
+      "properties": {
+        "files": { "type": "integer", "minimum": 0 },
+        "hunks": { "type": "integer", "minimum": 0 },
+        "sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" }
+      }
+    },
+    "applied": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "enforcement", "skipped_long_lines"],
+        "properties": {
+          "id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/record_id" },
+          "enforcement": { "$ref": "urn:sre-harness:knowledge-record#/$defs/enforcement" },
+          "skipped_long_lines": {
+            "description": "Added lines over the interpreter's line limit, not matched.",
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "violations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "enforcement", "path", "line", "check"],
+        "properties": {
+          "id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/record_id" },
+          "enforcement": { "$ref": "urn:sre-harness:knowledge-record#/$defs/enforcement" },
+          "path": { "$ref": "urn:sre-harness:task-context#/$defs/path" },
+          "line": { "type": "integer", "minimum": 0 },
+          "check": { "enum": ["added_line_pattern", "added_line_pattern_and_absent_pattern"] }
+        }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mandatory", "advisory"],
+      "properties": {
+        "mandatory": { "type": "integer", "minimum": 0 },
+        "advisory": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "not_checked": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "reason"],
+        "properties": {
+          "id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/record_id" },
+          "reason": { "const": "prose" }
+        }
+      }
+    },
+    "unfetched": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "reason"],
+        "properties": {
+          "id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/record_id" },
+          "reason": {
+            "enum": ["source_unavailable", "too_large", "hash_mismatch", "content_mismatch", "not_a_check"]
+          }
+        }
+      }
+    },
+    "failed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "reason"],
+        "properties": {
+          "id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/record_id" },
+          "reason": { "enum": ["invalid_check", "regex_timeout", "regex_failed"] }
+        }
+      }
+    }
+  }
+}
