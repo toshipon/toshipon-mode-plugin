@@ -499,6 +499,18 @@ def test_offsets_run_across_the_evidence_of_one_record(home, tmp_path):
     assert inner(fragment["text"]) == "b2\nb3\n" and fragment["start_line"] == 2
 
 
+def test_an_empty_source_text_adds_no_line_and_ends_no_page(home, tmp_path):
+    first = registry_evidence(home, "RG-0001", "a\nb\n")
+    empty = registry_evidence(home, "RG-0002", "")
+    index(
+        home, tmp_path, [item("R1", evidence=[first, empty]), item("R2", evidence=[empty, first])]
+    )
+    for key in ("R1", "R2"):
+        result = run(home, key)
+        assert result["status"] == "ok" and result["next_offset"] is None, key
+        assert [inner(f["text"]) for f in result["fragments"]] == ["a\nb\n"], key
+
+
 def test_an_offset_past_the_end_is_an_input_error(home, tmp_path):
     index(home, tmp_path, [item("R1", evidence=[registry_evidence(home, "RG-0001", "a\nb\n")])])
     with pytest.raises(InputError):

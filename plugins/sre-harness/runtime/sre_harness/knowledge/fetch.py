@@ -120,8 +120,8 @@ def page(kept, offset, max_tokens):
     fragments, left, position = [], max_tokens, 0
     for evidence, lines in kept:
         start, position = position, position + len(lines)
-        if offset >= position:
-            continue
+        if not lines or offset >= position:
+            continue  # an empty text has no line to page, and ends no page
         first = max(offset - start, 0)
         label = _label(evidence)
         size, taken = untrusted.overhead_bytes(label), first
