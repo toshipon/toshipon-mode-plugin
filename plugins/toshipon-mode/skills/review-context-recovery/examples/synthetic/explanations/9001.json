@@ -1,0 +1,46 @@
+{
+  "intent": {
+    "original": "負荷試験の p99（12 秒）に合わせて visibility timeout を 30 秒に縮め、失敗したメッセージの再試行を早める",
+    "current": "visibility timeout は 30 秒になるが、worker の処理は最長 40 秒かかる"
+  },
+  "concern": "処理が 30 秒を超えたメッセージは、処理中に再配信される",
+  "failure_scenario": "35 秒かかる注文が 30 秒の時点で別の worker に再配信され、最初の処理が ledger に記録する前に 2 つ目が課金する",
+  "blast_radius": "処理が 30 秒を超える注文だけ。件数は記録が無く不明",
+  "proposed_fix": "visibility timeout を最長処理時間より長い値（45 秒）に戻す",
+  "alternatives": [
+    {"option": "30 秒のまま、処理中に visibility を延長する", "tradeoff": "worker に延長の呼び出しが増え、延長に失敗したときの扱いが要る"},
+    {"option": "課金を message id で冪等にする", "tradeoff": "ledger の確認と記録を 1 つの操作にする変更が要り、この PR の範囲を超える"}
+  ],
+  "claims": [
+    {
+      "id": "C1", "status": "confirmed",
+      "text": "レビュアーは、30 秒だと処理中に再配信される懸念を挙げている",
+      "references": [{"locator": "pr:42#comment-9001", "revision": "{{HEAD}}", "excerpt": "途中でメッセージが再配信されませんか"}]
+    },
+    {
+      "id": "C2", "status": "confirmed",
+      "text": "PR は visibility timeout を 45 秒から 30 秒に変える",
+      "references": [
+        {"locator": "git:infra/queue.tf#L4", "revision": "{{BASE}}", "excerpt": "visibility_timeout_seconds = 45"},
+        {"locator": "git:infra/queue.tf#L4", "revision": "{{HEAD}}", "excerpt": "visibility_timeout_seconds = 30"}
+      ]
+    },
+    {
+      "id": "C3", "status": "confirmed",
+      "text": "worker の処理は最長 40 秒",
+      "references": [{"locator": "git:src/worker.py#L3", "revision": "{{HEAD}}", "excerpt": "MAX_PROCESSING_SECONDS = 40"}]
+    },
+    {
+      "id": "C4", "status": "inferred",
+      "text": "30 秒を超える処理では二重課金が起きうる",
+      "uncertainty": "ledger.seen と ledger.mark の間に別の worker が入るという読み取り。実際に起きた記録は無い",
+      "references": [{"locator": "git:src/worker.py#L8-L11", "revision": "{{HEAD}}", "excerpt": "ledger.charge(message.order_id, message.amount)"}]
+    },
+    {
+      "id": "C5", "status": "unknown",
+      "text": "もとの 45 秒を選んだ理由",
+      "searched": ["docs/adr/", "docs/meetings/", "git log -- infra/queue.tf"]
+    }
+  ],
+  "check_question": "処理に 35 秒かかる注文は、この PR のあと何回課金されうるでしょうか？"
+}

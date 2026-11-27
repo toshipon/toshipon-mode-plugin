@@ -1,0 +1,6 @@
+[
+  {"category": "git", "available": true, "tool": "git", "note": "作業ツリーと履歴"},
+  {"category": "pull_requests", "available": true, "tool": "gh", "note": "PR の本文とレビューコメント"},
+  {"category": "documents", "available": false, "tool": "", "note": "Confluence / Google Drive の接続がこのセッションに無い"},
+  {"category": "meeting_notes", "available": true, "tool": "git", "note": "docs/meetings/ にある分だけ"}
+]

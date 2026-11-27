@@ -1,0 +1,68 @@
+{
+  "note": "合成データ。{{BASE}} と {{HEAD}} は合成リポジトリの commit に置き換える。expected は手作業のラベルで、引用が出典のその revision に実在するかを示す。",
+  "claims": [
+    {
+      "id": "C1", "status": "confirmed", "expected": "supported",
+      "text": "PR の前、orders queue の保持期間は 7 日だった",
+      "references": [{"locator": "git:infra/queue.tf#L3", "revision": "{{BASE}}", "excerpt": "message_retention_days     = 7"}]
+    },
+    {
+      "id": "C2", "status": "confirmed", "expected": "supported",
+      "text": "PR は visibility timeout を 30 秒にする",
+      "references": [{"locator": "git:infra/queue.tf#L4", "revision": "{{HEAD}}", "excerpt": "visibility_timeout_seconds = 30"}]
+    },
+    {
+      "id": "C3", "status": "confirmed", "expected": "supported",
+      "text": "worker の処理は最長 40 秒かかる",
+      "references": [{"locator": "git:src/worker.py#L3", "revision": "{{HEAD}}", "excerpt": "MAX_PROCESSING_SECONDS = 40"}]
+    },
+    {
+      "id": "C4", "status": "conflict", "expected": "supported",
+      "text": "保持期間について、承認済みの決定が 7 日と 14 日で食い違っている",
+      "uncertainty": "DEC-0002 が DEC-0001 を置き換えるのかは、どちらの文書にも書かれていない",
+      "references": [
+        {"locator": "git:docs/adr/0001-retention.md", "revision": "{{HEAD}}", "excerpt": "保持期間は 7 日とする"},
+        {"locator": "git:docs/adr/0002-audit-replay.md", "revision": "{{HEAD}}", "excerpt": "保持期間は 14 日とする"}
+      ]
+    },
+    {
+      "id": "C5", "status": "inferred", "expected": "supported",
+      "text": "visibility timeout を 30 秒にすると、処理中のメッセージが再配信されうる",
+      "uncertainty": "30 秒 < 40 秒という 2 つの値からの読み取り。再配信が起きた記録は無い",
+      "references": [
+        {"locator": "git:infra/queue.tf#L4", "revision": "{{HEAD}}", "excerpt": "visibility_timeout_seconds = 30"},
+        {"locator": "git:src/worker.py#L3", "revision": "{{HEAD}}", "excerpt": "MAX_PROCESSING_SECONDS = 40"}
+      ]
+    },
+    {
+      "id": "C6", "status": "confirmed", "expected": "supported",
+      "text": "受信回数 5 の理由は定例の記録にある",
+      "references": [{"locator": "git:docs/meetings/2026-03-02-queue.md", "revision": "{{HEAD}}", "excerpt": "一時的な障害が 3 回までの再試行で収まった記録があるため"}]
+    },
+    {
+      "id": "C7", "status": "unknown", "expected": "not_asserting",
+      "text": "visibility timeout を 45 秒にした理由",
+      "searched": ["docs/adr/", "docs/meetings/", "git log -- infra/queue.tf"]
+    },
+    {
+      "id": "C8", "status": "confirmed", "expected": "unsupported",
+      "text": "visibility timeout は負荷試験の p99 に合わせて 45 秒にした（作られた引用）",
+      "references": [{"locator": "git:docs/adr/0001-retention.md", "revision": "{{HEAD}}", "excerpt": "visibility timeout は負荷試験の p99 に合わせて 45 秒とする"}]
+    },
+    {
+      "id": "C9", "status": "confirmed", "expected": "unsupported",
+      "text": "PR の前から保持期間は 14 日だった（引用は head にしか無い）",
+      "references": [{"locator": "git:infra/queue.tf#L3", "revision": "{{BASE}}", "excerpt": "message_retention_days     = 14"}]
+    },
+    {
+      "id": "C10", "status": "confirmed", "expected": "unsupported",
+      "text": "worker の処理時間の定義（行の指定が違う）",
+      "references": [{"locator": "git:src/worker.py#L9-L11", "revision": "{{HEAD}}", "excerpt": "MAX_PROCESSING_SECONDS = 40"}]
+    },
+    {
+      "id": "C11", "status": "confirmed", "expected": "unsupported",
+      "text": "運用手順書は再配信時の手動返金を定めている（文書は取得できていない）",
+      "references": [{"locator": "doc:confluence:RUNBOOK-7", "revision": "v3", "excerpt": "再配信で二重課金が起きた場合は手動で返金する"}]
+    }
+  ]
+}

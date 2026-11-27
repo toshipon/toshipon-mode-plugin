@@ -54,6 +54,8 @@ APM は plugin を skill・command・agent に分解して配置するので、`
 - `autonomous-improvement`: 成果物を、仮説・実行・評価・採否の台帳を残しながら反復改善します。採否は決定論的な評価で決め、停滞と完了時には独立監査にかけます。使い方は [専用 README](plugins/toshipon-mode/skills/autonomous-improvement/README.md) を参照してください。
 - `harness-evolution`: 実行記録に繰り返し現れる失敗から Skill・指示・評価の改善候補を作り、現行版と同じ条件で比較して、ローカルのレビュー用提案にします。公開とマージは人の承認が要ります。
 - `insight-discovery`: 作業に残った摩擦・やり直し・失敗から業務をまたぐ共通構造を探し、反証可能な仮説と最小実験を付けた研究課題の候補を最大 3 件出します。独立監査を通し、新規性は調べた範囲でしか述べません。使い方は [専用 README](plugins/toshipon-mode/skills/insight-discovery/README.md) を参照してください。
+- `review-context-recovery`: PR のレビューコメントを 1 件ずつ、もとの意図・懸念・失敗のシナリオ・影響範囲・直し方と代案を出典と revision 付きで説明し、理解を 1 問で確かめて 3 行にまとめます。読み取り専用です。使い方は [専用 README](plugins/toshipon-mode/skills/review-context-recovery/README.md) を参照してください。
+- `project-context-explorer`: プロジェクトの entity を metadata だけの索引にし、問いに関係する原資料だけを取りに行って、概要・深掘り・学習用の問い・context packet・ローカルの HTML explorer を出します。読み取り専用です。使い方は [専用 README](plugins/toshipon-mode/skills/project-context-explorer/README.md) を参照してください。
 - `nfr-design`: 議事録・Confluence・現行 AWS 構成から前提と要件を整理し、矛盾・承認・変更の影響を追跡します。承認済み要件から非機能要件定義書と AWS 方式設計書を生成、検証します。使い方は [専用 README](plugins/toshipon-mode/skills/nfr-design/README.md) を参照してください。
 - `toshipon-mode`: 非自明なタスクの標準エントリポイント。playbook を逐語コピーして todolist 化し、principles を適用し、証拠で検証してから完了を宣言します。
 - `how`: サブエージェントでコードベースを調査し、サブシステムの動作を解説します。
@@ -112,7 +114,7 @@ APM でインストールした場合は、公開されている取得元があ�
 
 ## 注意: skill の二重ロードについて
 
-このプラグインが収録している skill と同名の skill が、すでに `~/.claude/skills/` 配下にインストールされているマシンでは、両方が二重にロードされます。該当する skill 名（`autonomous-improvement`、`harness-evolution`、`insight-discovery`、`nfr-design`、`toshipon-mode`、`how`、`why`、`unslop`、`technical-writing`、`show-me-your-work`、`arena`、`interrogate`、`blast-radius`、`web-perf`、`tdd`、`commit-rules`、`verification-loop`、`create-verification-skill`、`create-formal-verification-skill`、`maintain-formal-verification-skill`、`e2e-replay`、`typescript-best-practices`、`japanese-writing`、`japanese-tech-writing`）が個人設定側にもある場合は、どちらか片方を削除してください。
+このプラグインが収録している skill と同名の skill が、すでに `~/.claude/skills/` 配下にインストールされているマシンでは、両方が二重にロードされます。該当する skill 名（`autonomous-improvement`、`harness-evolution`、`insight-discovery`、`review-context-recovery`、`project-context-explorer`、`nfr-design`、`toshipon-mode`、`how`、`why`、`unslop`、`technical-writing`、`show-me-your-work`、`arena`、`interrogate`、`blast-radius`、`web-perf`、`tdd`、`commit-rules`、`verification-loop`、`create-verification-skill`、`create-formal-verification-skill`、`maintain-formal-verification-skill`、`e2e-replay`、`typescript-best-practices`、`japanese-writing`、`japanese-tech-writing`）が個人設定側にもある場合は、どちらか片方を削除してください。
 
 ## 成果物と Harness の継続改善
 
@@ -127,6 +129,16 @@ APM でインストールした場合は、公開されている取得元があ�
 `/toshipon-mode:insight-discovery` は、成果物でも作業手法でもなく、問題設定を扱います。作業メモ、土台の実行記録、レビュー指摘、Claude Code `/insights` が残した構造化項目を証拠として取り込み、異なる業務に共通する形を探して、前提を疑う仮説を作ります。モデルが返すのは各段の JSON だけで、証拠 ID の実在、引用が原文にあること、複数の業務にまたがること、反証条件があることを script が検査します。独立監査が「既存の手法で足りる」とした候補は autonomous-improvement / harness-evolution 宛てのメモとして引き渡し、研究課題だけを最大 3 件残します。
 
 週次では、利用者が自分の仮説を先に書いてから生成された仮説を読み、実験を 1 件だけ選びます。既存手法の外部検索は、対話で実行ごとに承認したときだけ行い、調べていない候補は「未調査」と表示します。日次・週次の実行は autonomous-improvement の scheduler に載せられますが、既定では何も自動起動しません。手順、入力の形式、制限は [insight-discovery README](plugins/toshipon-mode/skills/insight-discovery/README.md) にあります。
+
+## 文脈の回復
+
+AI のセッションを切り替えたとき、PR のレビューに戻ったとき、大きなプロジェクトに戻ったときに、理解し直すのにかかる時間を短くするための skill が 2 つあります。どちらも読み取り専用で、文書を増やすのではなく、必要な分だけ原資料を取りに行きます。
+
+`/toshipon-mode:review-context-recovery <PR 番号>` は、レビューコメントを 1 件ずつ扱います。agent が、もとの意図と今の実装の違い、レビュアーの懸念、失敗のシナリオ、影響範囲、直し方と代案を、ファイル・revision・コメントを引いて説明し、理解を確かめる問いを 1 つ出して、利用者の答えを待ちます。script は、説明の引用が出典のその revision に実在するかを照合し、まとめが記録されるまで次のコメントに進ませません。コメントの resolve、コードの変更、デプロイは行いません。
+
+`/toshipon-mode:project-context-explorer` は、entity の id・種類・1 行の説明・設定の path・出典の locator・revision・hash・関係だけを索引にします。問いが来たら関係を上限付きでたどり、取得手順を返します。理由を書いた出典が無い設定値、食い違う決定、索引を作ったあとに変わった参照は、埋めずに欠落として出します。Overview、Deep Dive、Learning の 3 つの mode があり、新しいセッションに貼る context packet と、通信をしない 1 ファイルの HTML explorer を作れます。sre-harness の Decision / Requirement Registry があれば、決定と要求はそこから取り込みます。
+
+索引と記録は repository の外（既定 `~/.local/state/ai-harness/`）に置きます。Python 3.10 以上と git があれば動き、追加の package は要りません。合成データで試す手順、測定の結果と測っていないもの、制約は [review-context-recovery README](plugins/toshipon-mode/skills/review-context-recovery/README.md) と [project-context-explorer README](plugins/toshipon-mode/skills/project-context-explorer/README.md) にあります。
 
 ## レビューの学習と仕様の整合性（sre-harness plugin）
 
