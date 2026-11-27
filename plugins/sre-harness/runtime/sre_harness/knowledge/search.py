@@ -184,17 +184,21 @@ def _ends(rows):
             if by_id[successor]["status"] in CHAIN_STATUSES
         ]
 
-    # Depth first with a stack, not recursion: a chain may be longer than Python's recursion
-    # limit. A record is settled once every successor it chains to is. The store refuses a
-    # cycle; one in hand-made rows is cut where it closes, so this always ends.
+    # Depth first with a stack of (record, its successors still to visit), not recursion: a
+    # chain may be longer than Python's recursion limit. A record is settled only after every
+    # successor it chains to is, so `path` holds the ancestors of the record in hand and
+    # nothing else. The store refuses a cycle; one in hand-made rows is cut where it closes on
+    # an ancestor, so this always ends.
     for start in sorted(successors):
-        stack, open_ = [start], {start}
+        if start in ends:
+            continue
+        stack, path = [(start, iter(chained(start)))], {start}
         while stack:
-            record_id = stack[-1]
-            waiting = [s for s in chained(record_id) if s not in ends and s not in open_]
-            if waiting:
-                stack.extend(waiting)
-                open_.update(waiting)
+            record_id, pending = stack[-1]
+            deeper = next((s for s in pending if s not in ends and s not in path), None)
+            if deeper is not None:
+                stack.append((deeper, iter(chained(deeper))))
+                path.add(deeper)
                 continue
             found = set()
             for successor in chained(record_id):
@@ -205,7 +209,7 @@ def _ends(rows):
                     found.add(successor)
             ends[record_id] = found
             stack.pop()
-            open_.discard(record_id)
+            path.discard(record_id)
 
     return {
         record_id: ends[record_id]
