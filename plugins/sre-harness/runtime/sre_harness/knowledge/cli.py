@@ -1,19 +1,21 @@
 """`sre-harness knowledge <stage>`: the knowledge index (`status`, `update`, `search`,
-`fetch`, `context`, `check`, `migrate`, `rollback`). With `--task`, search and fetch also add what they
+`fetch`, `context`, `check`, `decision`, `migrate`, `rollback`). With `--task`, search and fetch also add what they
 return to the task total (`budget`), checked before anything is printed; `context` always does,
 for the task its task file names."""
 
 import argparse
 import json
 import re
+import sys
 
 from .. import paths, privacy, records
-from ..errors import EXIT_OK, InputError
+from ..errors import EXIT_OK, EXIT_QUALITY, BoundaryError, InputError
 from . import (
     adapters,
     budget,
     check,
     context,
+    decisions,
     fetch,
     ingest,
     migrate,
@@ -26,6 +28,7 @@ from . import (
 DECISION_ID_LENGTH = 64
 REASON_LENGTH = 200
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")  # knowledge-record $defs/name
+_HEAD = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 # The clock `search` measures freshness with and the task total stamps calls with; tests
 # replace it.
@@ -144,6 +147,79 @@ def _check(args, env, out):
     result = check.run(paths.state_root(env), found, patch, env=env)
     print(json.dumps(result, indent=2, ensure_ascii=False), file=out)
     return check.exit_code(result)
+
+
+def _print(value, out):
+    print(json.dumps(value, indent=2, ensure_ascii=False), file=out)
+
+
+def _decision_put(args, env, out):
+    result = decisions.put(
+        paths.state_root(env),
+        context.load(args.task_file),
+        question=args.question,
+        options=args.option,
+        evidence_ids=args.evidence,
+        risk=args.risk,
+        now=clock(),
+        head_sha=args.head_sha,
+        expires_at=args.expires_at,
+    )
+    _print(result, out)
+    return EXIT_OK
+
+
+def _is_terminal(stream):
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _decision_answer(args, env, out):
+    # As for `review approve`: a person at a terminal, with no flag or variable that skips it.
+    # A pty passes; it proves neither that a person is there nor who they are.
+    if not (_is_terminal(sys.stdin) and _is_terminal(out)):
+        raise BoundaryError(
+            "knowledge decision answer needs a terminal on stdin and stdout; it does not run "
+            "from a pipe or a non-interactive shell. Nothing was recorded."
+        )
+    root, now = paths.state_root(env), clock()
+    response = decisions.answer(
+        root,
+        args.request,
+        option=args.option,
+        responder=args.responder,
+        reuse=decisions.reuse_of(args.reuse_scope, args.reuse_until, now),
+        now=now,
+        ask=input,
+        show=lambda text: print(text, file=out),
+        env=env,
+    )
+    _print(response, out)
+    return EXIT_OK
+
+
+def _decision_poll(args, env, out):
+    result = decisions.poll(
+        paths.state_root(env),
+        args.workspace,
+        now=clock(),
+        task_id=args.task,
+        head_sha=args.head_sha,
+    )
+    _print(result, out)
+    return EXIT_OK if result["status"] == "ok" else EXIT_QUALITY
+
+
+def _decision_list(args, env, out):
+    _print(decisions.listing(paths.state_root(env), clock(), args.status), out)
+    return EXIT_OK
+
+
+def _decision_cancel(args, env, out):
+    _print(decisions.cancel(paths.state_root(env), args.request, args.reason, clock()), out)
+    return EXIT_OK
 
 
 def _searched(env, principal, request, task, out):
@@ -286,6 +362,63 @@ def _register_check(stages):
     checked.set_defaults(handler=_check)
 
 
+def _pattern(compiled, what):
+    def parse(text):
+        if not compiled.fullmatch(text):
+            raise argparse.ArgumentTypeError(f"needs {what}")
+        return text
+
+    return parse
+
+
+def _register_decision(stages):
+    decision = stages.add_parser(
+        "decision", help="the reference decision queue: files under knowledge/decisions/"
+    )
+    steps = decision.add_subparsers(dest="step", required=True)
+    request_id = _pattern(decisions.REQUEST_ID, "DR- and 12 lower-case hex digits")
+    head = _pattern(_HEAD, "40 or 64 lower-case hex digits")
+
+    put = steps.add_parser("put", help="ask a person; accepted, or a duplicate of the same ask")
+    put.add_argument("--task-file", required=True, help="a task-context JSON file (only read)")
+    put.add_argument("--question", required=True, help="one line, the question for a person")
+    put.add_argument("--option", action="append", required=True, help="repeat: 2-10 options")
+    put.add_argument(
+        "--evidence", action="append", required=True, type=_record_id, help="repeat: KN-..."
+    )
+    put.add_argument("--risk", required=True, choices=decisions.RISKS)
+    put.add_argument("--head-sha", type=head, help="the head the question is about")
+    put.add_argument("--expires-at", help="a UTC time after which the request takes no answer")
+    put.set_defaults(handler=_decision_put)
+
+    answering = steps.add_parser("answer", help="a person's answer, at a terminal, recorded once")
+    answering.add_argument("--request", required=True, type=request_id)
+    answering.add_argument("--option", required=True, help="one of the request's options")
+    answering.add_argument("--responder", required=True, help="the person who answers")
+    answering.add_argument("--reuse-scope", choices=decisions.REUSE_SCOPES, default="task")
+    answering.add_argument("--reuse-until", help="until when (a UTC time); project needs it")
+    answering.set_defaults(handler=_decision_answer)
+
+    polling = steps.add_parser("poll", help="a workspace's requests and its answers, once each")
+    polling.add_argument("--workspace", required=True, type=_name)
+    polling.add_argument("--task", type=_name, help="only the requests of this task")
+    polling.add_argument(
+        "--head-sha", type=head, help="the head now; an answer for another is stale"
+    )
+    polling.set_defaults(handler=_decision_poll)
+
+    listing = steps.add_parser("list", help="every request with its status now")
+    listing.add_argument(
+        "--status", choices=("open", "answered", "cancelled", "expired", "superseded")
+    )
+    listing.set_defaults(handler=_decision_list)
+
+    cancelling = steps.add_parser("cancel", help="withdraw a request that is not answered")
+    cancelling.add_argument("--request", required=True, type=request_id)
+    cancelling.add_argument("--reason", required=True, help="one line, recorded")
+    cancelling.set_defaults(handler=_decision_cancel)
+
+
 def _register_fetch(stages):
     fetched = stages.add_parser(
         "fetch", help="the source text behind one record's evidence, a page at a time"
@@ -309,7 +442,7 @@ def register(groups):
     knowledge = groups.add_parser(
         "knowledge",
         help="knowledge index: approved norms by scope and access (status, update, search, fetch, "
-        "context, check, migrate, rollback)",
+        "context, check, decision, migrate, rollback)",
     )
     stages = knowledge.add_subparsers(dest="stage", required=True)
 
@@ -332,6 +465,7 @@ def register(groups):
     _register_fetch(stages)
     _register_context(stages)
     _register_check(stages)
+    _register_decision(stages)
 
     migrating = stages.add_parser(
         "migrate",

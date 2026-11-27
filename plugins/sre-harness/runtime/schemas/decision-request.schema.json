@@ -100,7 +100,7 @@
       "properties": {
         "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
         "status": { "enum": ["accepted", "duplicate"] },
-        "request": { "$ref": "#" }
+        "request": { "$ref": "urn:sre-harness:decision-request" }
       }
     },
     "list_result": {
@@ -111,7 +111,7 @@
       "properties": {
         "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
         "now": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
-        "requests": { "type": "array", "items": { "$ref": "#" } }
+        "requests": { "type": "array", "items": { "$ref": "urn:sre-harness:decision-request" } }
       }
     },
     "poll_result": {
@@ -141,7 +141,7 @@
           "properties": { "generation": { "type": "integer", "minimum": 0 } }
         },
         "now": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
-        "requests": { "type": "array", "items": { "$ref": "#" } },
+        "requests": { "type": "array", "items": { "$ref": "urn:sre-harness:decision-request" } },
         "responses": {
           "type": "array",
           "items": {
@@ -200,7 +200,7 @@
               "request_id": { "$ref": "#/$defs/request_id" },
               "question": { "$ref": "#/$defs/question" },
               "option": { "$ref": "#/$defs/option" },
-              "evidence_ids": { "$ref": "#/properties/evidence_ids" },
+              "evidence_ids": { "$ref": "urn:sre-harness:decision-request#/properties/evidence_ids" },
               "reuse": { "$ref": "urn:sre-harness:decision-response#/$defs/reuse" }
             }
           }
