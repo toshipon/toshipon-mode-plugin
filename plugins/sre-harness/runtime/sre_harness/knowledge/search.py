@@ -268,7 +268,7 @@ def _budget(request, used):
         "estimator": terms.ESTIMATOR,
         "max_tokens": request.max_tokens,
         "used_tokens": used,
-        "task": None,  # the task total comes with `knowledge fetch`
+        "task": None,  # the CLI fills in the task total when --task is given
     }
 
 
