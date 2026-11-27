@@ -1,0 +1,11 @@
+# The image takes the runtime only (container/Dockerfile). Everything is left out except
+# what the Dockerfile copies; caches never go in.
+*
+!container/constraints.txt
+!runtime/requirements.txt
+!runtime/sre_harness_main.py
+!runtime/container_state.py
+!runtime/schemas/
+!runtime/sre_harness/
+**/__pycache__
+**/*.pyc
