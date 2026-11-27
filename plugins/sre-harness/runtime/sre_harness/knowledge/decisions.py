@@ -11,7 +11,8 @@ a user may write for another queue:
     decisions/outbox/<id>.json                 a request (decision-request), status open
     decisions/inbox/<id>.json                  its answer (decision-response)
     decisions/cancelled/<id>.json              {request_id, reason, cancelled_at}
-    decisions/waiters/<id>/<workspace>.json    a workspace that put the request
+    decisions/waiters/<id>/<workspace>.json    a workspace that put the request, and the
+                                               principal of the task it put it for
     decisions/delivered/<id>/<workspace>.json  {request_id, workspace_id, delivered_at,
                                                response_sha256}: the answer reached it
 
@@ -22,8 +23,9 @@ and a symlink anywhere in the queue is refused (exit 3).
 Rules this module decides:
 
     dedupe key   sha256 of [task, normalized question, sorted evidence ids, revision]. A put
-                 whose key matches a request that is not cancelled or expired is a duplicate
-                 of it, from whichever workspace; that workspace becomes one of its waiters.
+                 whose key matches a request that is open or answered is a duplicate of it,
+                 from whichever workspace; that workspace becomes one of its waiters. A key
+                 that matches only cancelled, expired or superseded requests makes a new one.
     revision     the index generation, {evidence id: content_hash} read with the putting
                  principal's access, and --head-sha. Only the content hashes and the head
                  decide staleness; a generation that moved for other records does not.
@@ -33,19 +35,25 @@ Rules this module decides:
     status       cancelled, else superseded, else answered, else expired (now is at or past
                  expires_at), else open. The outbox file always says open; this is derived.
     stale        an answer about to be delivered whose evidence no longer has the recorded
-                 content hash (content_hash_changed) or cannot be read with the request's
-                 principal any more (evidence_unavailable), or whose head differs from
+                 content hash (content_hash_changed) or cannot be read any more
+                 (evidence_unavailable) with the principal of the workspace it is delivered
+                 to (the one its waiter file names; the request's, for a waiter file that
+                 names none), or whose head differs from
                  --head-sha (head_sha_changed) or is not given (head_sha_not_given). It is not
                  delivered, and poll exits 1.
     delivered    a workspace gets an answer once; after that it is `already_delivered` and is
                  not checked for staleness again (it was applied already).
+    workspace    list and cancel take the workspace and see only the requests it put or
+                 waits for. The name is trusted as given: whoever names a workspace reads its
+                 requests. It is not authentication.
     reuse        task by default. An answer reused beyond its task is returned as a
                  `candidate_hint` for a person to take through the approval flow; nothing here
                  writes the index or the registry, and an answer never becomes a rule.
 
 A responder must name a person: AI and automation names are refused, as autonomous-improvement
-refuses them for reviewers (the same words, the same splitting), and so is a run marked as
-automated. It is not authentication.
+refuses them for reviewers (the same words, the same splitting, whole words only), also in the
+name's examined form (`privacy.examined`), and so is a run marked as automated. It is not
+authentication.
 """
 
 import fcntl
@@ -77,7 +85,9 @@ CONFIRM_LENGTH = 12
 MAX_FILE_BYTES = 64 * 1024
 RISKS = ("low", "medium", "high")
 REUSE_SCOPES = ("task", "project")
-LIVE = frozenset({"open", "answered", "superseded"})  # a put with the same key joins these
+# A put with the same key joins these. Not a superseded one: the state it was asked in came
+# back after another (head A, then B, then A again), and the put asks again on it.
+LIVE = frozenset({"open", "answered"})
 # autonomous-improvement's human gate (ai_harness/store.py), kept here: the plugins install apart.
 RESERVED_NAMES = ("claude", "ai", "bot", "agent", "assistant", "harness", "gpt", "llm")
 AUTOMATED_ENV, ACTIVE_ENV = "AI_HARNESS_AUTOMATED", "AI_HARNESS_ACTIVE"
@@ -172,6 +182,7 @@ class Queue:
     responses: dict = field(default_factory=dict)  # id -> response
     cancelled: dict = field(default_factory=dict)  # id -> cancellation
     waiters: dict = field(default_factory=dict)  # id -> {workspace}
+    principals: dict = field(default_factory=dict)  # id -> {workspace: principal it put for}
     delivered: dict = field(default_factory=dict)  # id -> {workspace: delivery}
 
 
@@ -208,7 +219,12 @@ def load(root):
                 if value.get("id", value.get("request_id")) != path.stem:
                     raise InputError(f"the queue file {path} names another request.")
                 kept[path.stem] = value
-    queue.waiters = {key: set(rows) for key, rows in _per_workspace(base / WAITERS).items()}
+    waiting = _per_workspace(base / WAITERS)
+    queue.waiters = {key: set(rows) for key, rows in waiting.items()}
+    queue.principals = {
+        key: {name: row["principal"] for name, row in rows.items() if "principal" in row}
+        for key, rows in waiting.items()
+    }
     queue.delivered = _per_workspace(base / DELIVERED)
     return queue
 
@@ -249,7 +265,11 @@ def require_person(responder, env=None):
     if env.get(AUTOMATED_ENV) or env.get(ACTIVE_ENV):
         raise BoundaryError("an answer cannot be recorded from an automated run.")
     name = text(responder, RESPONDER_LENGTH, "--responder")
-    words = [word.lower() for word in _WORDS.findall(name)]
+    # The words of the name as given and of its examined form (NFKC, no combining or ignorable
+    # characters), so neither a full-width letter nor a joiner splits a reserved word.
+    words = [
+        word.casefold() for form in (name, privacy.examined(name)) for word in _WORDS.findall(form)
+    ]
     if any(word in RESERVED_NAMES for word in words):
         raise BoundaryError("--responder must name a person; AI and automation names are refused.")
     return name
@@ -257,7 +277,7 @@ def require_person(responder, env=None):
 
 def reason_text(reason):
     value = text(reason, REASON_LENGTH, "--reason")
-    if privacy.find_secrets(value):
+    if privacy.find_secrets(privacy.forms(reason + "\n" + value)):
         raise InputError("--reason has the shape of a secret; it was not recorded.")
     return value
 
@@ -312,11 +332,12 @@ def view(request, queue, now, superseded):
 
 
 def _checked(question, options, evidence_ids, risk):
+    given = [question, *options]
     question = text(question, QUESTION_LENGTH, "--question")
     options = [text(option, OPTION_LENGTH, "--option") for option in options]
     if not MIN_OPTIONS <= len(options) <= MAX_OPTIONS or len(set(options)) != len(options):
         raise InputError(f"give {MIN_OPTIONS}-{MAX_OPTIONS} different --option values.")
-    if privacy.find_secrets("\n".join([question, *options])):
+    if privacy.find_secrets(privacy.forms("\n".join([*given, question, *options]))):
         raise InputError("the question or an option has the shape of a secret; nothing was put.")
     evidence = sorted(set(evidence_ids))
     if not 1 <= len(evidence) <= MAX_EVIDENCE:
@@ -334,10 +355,12 @@ def _revision(root, task, evidence, head_sha):
         raise BoundaryError("no knowledge/config.json, so no principal can be resolved.")
     principal = config.principal(settings, task["principal"])
     with store.reader(root) as reader:
-        if reader.meta()["config_hash"] != config.config_hash(settings):
+        stale = reader.stale_sources(config.config_hash(settings))
+        if stale:
             raise QualityGateError(
-                "the knowledge index was built with another knowledge/config.json; run "
-                "`sre-harness knowledge update` first. Nothing was put."
+                "stale_index: these sources were taken in with another knowledge/config.json: "
+                f"{', '.join(stale)}; run `sre-harness knowledge update` for each of them first. "
+                "Nothing was put."
             )
         found = {row["id"]: row["content_hash"] for row in reader.records(principal, evidence)}
         generation = reader.generation
@@ -349,13 +372,18 @@ def _revision(root, task, evidence, head_sha):
     return {"generation": generation, "content_hashes": found, "head_sha": head_sha}
 
 
-def _wait(root, request_id, workspace, now):
+def _wait(root, request_id, workspace, principal, now):
     folder = _folder(root, WAITERS, request_id)
     try:
         _create(
             folder,
             f"{workspace}.json",
-            {"request_id": request_id, "workspace_id": workspace, "at": now},
+            {
+                "request_id": request_id,
+                "workspace_id": workspace,
+                "principal": principal,
+                "at": now,
+            },
         )
     except FileExistsError:
         pass
@@ -376,7 +404,7 @@ def put(root, task, *, question, options, evidence_ids, risk, now, head_sha=None
         joined = [r for r in same if status(r, queue, now, superseded) in LIVE]
         if joined:
             request = min(joined, key=_order)
-            _wait(root, request["id"], workspace, now)
+            _wait(root, request["id"], workspace, task["principal"], now)
             queue.waiters.setdefault(request["id"], set()).add(workspace)
             shown = view(request, queue, now, superseded)
             return {
@@ -403,7 +431,7 @@ def put(root, task, *, question, options, evidence_ids, risk, now, head_sha=None
             request["expires_at"] = expires_at
         records.validate("decision-request", request)
         _create(_folder(root, OUTBOX), f"{request['id']}.json", request)
-        _wait(root, request["id"], workspace, now)
+        _wait(root, request["id"], workspace, task["principal"], now)
     return {"schema_version": records.SCHEMA_VERSION, "status": "accepted", "request": request}
 
 
@@ -499,15 +527,22 @@ def answer(root, request_id, *, option, responder, reuse, now, ask, show, env=No
 # poll --------------------------------------------------------------------------------------
 
 
-def _current_hashes(root, requests):
-    """(generation, {principal: {id: content_hash}}) of the evidence of `requests`, each read
-    with its request's principal. A principal no longer in the config reads nothing."""
+def reader_of(request, queue, workspace):
+    """The principal whose access the answer to `request` is checked with for `workspace`: the
+    one its waiter file names, else (a file written before waiters named one) the request's."""
+    return queue.principals.get(request["id"], {}).get(workspace, request["principal"])
+
+
+def _current_hashes(root, wanted_by):
+    """(generation, {principal: {id: content_hash}}) of the evidence in `wanted_by`
+    [(principal, evidence ids)], each read with its principal. A principal no longer in the
+    config reads nothing."""
     settings = config.load(root)
     if settings is None:
         raise BoundaryError("no knowledge/config.json, so no principal can be resolved.")
     wanted = {}
-    for request in requests:
-        wanted.setdefault(request["principal"], set()).update(request["evidence_ids"])
+    for name, ids in wanted_by:
+        wanted.setdefault(name, set()).update(ids)
     found = {}
     with store.reader(root) as reader:
         for name, ids in sorted(wanted.items()):
@@ -550,7 +585,9 @@ def poll(root, workspace, *, now, task_id=None, head_sha=None):
             key=lambda request: (request["created_at"], request["id"]),
         )
         answered = [r for r in mine if status(r, queue, now, superseded) == "answered"]
-        generation, hashes = _current_hashes(root, answered)
+        generation, hashes = _current_hashes(
+            root, [(reader_of(r, queue, workspace), r["evidence_ids"]) for r in answered]
+        )
         result = {
             "schema_version": records.SCHEMA_VERSION,
             "status": "ok",
@@ -575,7 +612,7 @@ def poll(root, workspace, *, now, task_id=None, head_sha=None):
                     }
                 )
                 continue
-            reasons = stale_reasons(request, hashes[request["principal"]], head_sha)
+            reasons = stale_reasons(request, hashes[reader_of(request, queue, workspace)], head_sha)
             if reasons:
                 result["stale"].append({"request_id": request_id, "reasons": reasons})
                 continue
@@ -605,13 +642,25 @@ def poll(root, workspace, *, now, task_id=None, head_sha=None):
 # list and cancel ---------------------------------------------------------------------------
 
 
-def listing(root, now, wanted=None):
-    """Every request with its status now, oldest first; only `wanted` when given."""
+def _listed(shown):
+    """A request as list and cancel print it: the revision without the content hashes of the
+    evidence (the state of records is the index's to say, through its access filter)."""
+    revision = {
+        name: value for name, value in shown["revision"].items() if name != "content_hashes"
+    }
+    return {**shown, "revision": revision}
+
+
+def listing(root, now, wanted=None, workspace=None):
+    """The requests `workspace` put or waits for (a duplicate put), with their status now,
+    oldest first; only `wanted` when given. Without a workspace, every request: for the
+    operator's own counts, never from the command line."""
     queue = load(root)
     superseded = replaced(queue)
     shown = [
-        view(request, queue, now, superseded)
+        _listed(view(request, queue, now, superseded))
         for request in sorted(queue.requests.values(), key=lambda r: (r["created_at"], r["id"]))
+        if workspace is None or workspace in queue.waiters.get(request["id"], ())
     ]
     return {
         "schema_version": records.SCHEMA_VERSION,
@@ -620,14 +669,16 @@ def listing(root, now, wanted=None):
     }
 
 
-def cancel(root, request_id, reason, now):
-    """Withdraw an open, expired or superseded request. An answered one stays answered."""
+def cancel(root, request_id, reason, now, workspace):
+    """Withdraw an open, expired or superseded request that `workspace` put or waits for. An
+    answered one stays answered. A request of another workspace gets the answer of a missing
+    one."""
     reason = reason_text(reason)
     with _locked(root):
         queue = load(root)
         request = queue.requests.get(request_id)
-        if request is None:
-            raise InputError(f"there is no decision request {request_id}.")
+        if request is None or workspace not in queue.waiters.get(request_id, ()):
+            raise InputError(f"there is no decision request {request_id} for {workspace}.")
         state = status(request, queue, now, replaced(queue))
         if state in {"cancelled", "answered"}:
             raise QualityGateError(f"{request_id} is {state}; nothing was changed.")
@@ -639,5 +690,5 @@ def cancel(root, request_id, reason, now):
         queue.cancelled[request_id] = cancellation
         return {
             "schema_version": records.SCHEMA_VERSION,
-            "request": view(request, queue, now, replaced(queue)),
+            "request": _listed(view(request, queue, now, replaced(queue))),
         }

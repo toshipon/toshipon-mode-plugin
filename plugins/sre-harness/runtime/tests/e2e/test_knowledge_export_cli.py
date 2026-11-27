@@ -235,3 +235,33 @@ def test_no_index_is_an_input_error(home):
     write_config(home)
     assert not (knowledge_dir(home) / store.INDEX).exists()
     assert export(home, "--principal", "workspace-a", *FORMAT)[:2] == (2, "")
+
+
+def test_a_successor_replaces_only_where_it_applies_and_advisory_never_replaces_mandatory(
+    home, tmp_path
+):
+    settings = json.loads(json.dumps(CONFIG))
+    settings["projects"]["project-beta"] = {
+        "repos": ["example-org/beta"],
+        "default_access": {"classification": "internal", "readers": ["team-alpha"]},
+        "components": {},
+    }
+    write_config(home, settings)
+    organization = {
+        "level": "organization",
+        "project_id": None,
+        "component_id": None,
+        "task_id": None,
+    }
+    beta = {"level": "project", "project_id": "project-beta", "component_id": None, "task_id": None}
+    old = item("ORG", scope=organization, enforcement="mandatory")
+    successor = item("BETA", scope=beta, supersedes=[{"kind": "synthetic", "key": "ORG"}])
+    assert update(home, write_input(tmp_path / "in.json", [old, successor]))[0] == 0
+    org_id, beta_id = model.record_id("synthetic", "ORG"), model.record_id("synthetic", "BETA")
+    for project in ("project-alpha", "project-beta"):
+        _, _, entities = export(home, "--principal", "workspace-a", "--project", project, *FORMAT)
+        assert org_id in {entity["id"] for entity in entities}, project
+    _, _, entities = export(
+        home, "--principal", "workspace-a", "--project", "project-beta", *FORMAT
+    )
+    assert beta_id in {entity["id"] for entity in entities}

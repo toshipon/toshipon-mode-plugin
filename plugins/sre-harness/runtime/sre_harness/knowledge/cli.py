@@ -15,6 +15,7 @@ from . import (
     adapters,
     budget,
     check,
+    config,
     context,
     decisions,
     export,
@@ -53,6 +54,8 @@ def _status(args, env, out):
         "records": {},
     }
     if store.exists(root):
+        settings = config.load(root)
+        current = None if settings is None else config.config_hash(settings)
         with store.reader(root) as reader:
             meta = reader.meta()
             value.update(
@@ -60,11 +63,19 @@ def _status(args, env, out):
                 generation=meta["generation"],
                 schema_version=meta["schema_version"],
                 updated_at=meta["updated_at"],
-                sources=reader.sources(),
+                sources=[_followed(row, current) for row in reader.sources()],
                 records=reader.status_counts(),
             )
     print(json.dumps(value, indent=2, ensure_ascii=False), file=out)
     return EXIT_OK
+
+
+def _followed(row, current):
+    """A source as status shows it: whether it was last taken in under the config in place
+    (None without a config), not the config's hash."""
+    shown = {name: value for name, value in row.items() if name != "config_hash"}
+    shown["config_current"] = None if current is None else row["config_hash"] == current
+    return shown
 
 
 def _update(args, env, out):
@@ -94,7 +105,7 @@ def _task(args, task_id):
         raise InputError(
             f"--reason must be one line of 1-{REASON_LENGTH} characters without control characters."
         )
-    if privacy.find_secrets(reason):
+    if privacy.find_secrets(privacy.forms(reason)):
         raise InputError("--reason has the shape of a secret; it was not recorded.")
     return budget.Task(task_id, extend, reason)
 
@@ -122,6 +133,11 @@ def _expansion(args):
 def _search(args, env, out):
     if args.component and not args.project:
         raise InputError("--component needs --project: a component belongs to one project.")
+    if args.task and args.project and not args.component:
+        raise InputError(
+            "--task with --project needs --component: a task record belongs to one component, "
+            "and without it no task record could be returned."
+        )
     task = _task(args, args.task)
     request = search.Request(
         project=args.project,
@@ -224,12 +240,14 @@ def _decision_poll(args, env, out):
 
 
 def _decision_list(args, env, out):
-    _print(decisions.listing(paths.state_root(env), clock(), args.status), out)
+    root = paths.state_root(env)
+    _print(decisions.listing(root, clock(), args.status, workspace=args.workspace), out)
     return EXIT_OK
 
 
 def _decision_cancel(args, env, out):
-    _print(decisions.cancel(paths.state_root(env), args.request, args.reason, clock()), out)
+    root = paths.state_root(env)
+    _print(decisions.cancel(root, args.request, args.reason, clock(), args.workspace), out)
     return EXIT_OK
 
 
@@ -436,13 +454,17 @@ def _register_decision(stages):
     )
     polling.set_defaults(handler=_decision_poll)
 
-    listing = steps.add_parser("list", help="every request with its status now")
+    listing = steps.add_parser(
+        "list", help="the requests a workspace put or waits for, with their status now"
+    )
+    listing.add_argument("--workspace", required=True, type=_name)
     listing.add_argument(
         "--status", choices=("open", "answered", "cancelled", "expired", "superseded")
     )
     listing.set_defaults(handler=_decision_list)
 
     cancelling = steps.add_parser("cancel", help="withdraw a request that is not answered")
+    cancelling.add_argument("--workspace", required=True, type=_name)
     cancelling.add_argument("--request", required=True, type=request_id)
     cancelling.add_argument("--reason", required=True, help="one line, recorded")
     cancelling.set_defaults(handler=_decision_cancel)

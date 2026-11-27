@@ -9,11 +9,18 @@ is not on the harness's path; `scripts/sre-harness-container volume ...` starts 
                    file or its WAL meanwhile. The -shm, the lock and temporary files are left
                    out; SQLite rebuilds the -shm from the WAL when the index is opened again.
                    The volume can be mounted read-only: flock takes no write access.
-    restore ROOT   a tar from stdin into a state root that is absent or empty.
+    restore ROOT   a tar from stdin into a state root that is absent or empty. A restored
+                   knowledge/ gets an empty writer.lock again (a backup leaves the lock out),
+                   so that the next backup of that volume holds the lock as well.
     import  ROOT   a tar from stdin that holds only knowledge/config.json, registry/, runs/ and
                    cache/git/, as a host state root has them. Files of the same name are
-                   replaced, under the writer lock. The index is never imported: it is rebuilt
-                   with `knowledge update`.
+                   replaced, under the writer lock. Every target is checked before any is
+                   replaced (no symlink on its way, no directory where a file goes, no file
+                   where a directory goes), so such a tar replaces nothing. The replacing is
+                   one rename per file, not one for all: a failure in the middle of it (a full
+                   disk) leaves the files renamed so far replaced and the rest as they were;
+                   run the import again. The index is never imported: it is rebuilt with
+                   `knowledge update`.
 
 A tar member is extracted only when it is a regular file or a directory whose name is relative
 and has no `..`; a link, a device or any other member stops the command with exit 3 and
@@ -185,6 +192,29 @@ def _staging(parent, prefix):
     return path
 
 
+def _checked_target(root, name):
+    """Where the file `name` goes, once nothing on its way stops it (exit 3 for a symlink,
+    exit 2 for a directory or a file in the wrong place). Nothing is changed here."""
+    target = root.joinpath(*name.parts)
+    for parent in [*reversed(target.relative_to(root).parents)][1:]:
+        path = root / parent
+        _no_symlink(path)
+        if path.exists() and not path.is_dir():
+            raise Stop(EXIT_INPUT, f"refused to import {name}: {parent} is not a directory.")
+    _no_symlink(target)
+    if target.is_dir():
+        raise Stop(EXIT_INPUT, f"refused to import {name}: a directory is there.")
+    return target
+
+
+def _lock_file(root):
+    """An empty knowledge/writer.lock (0600) when knowledge/ is there without one."""
+    folder = root / LOCK.parent
+    if folder.is_dir() and not folder.is_symlink() and not (root / LOCK).exists():
+        path = root / LOCK
+        os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
+
+
 def restore(root, stream):
     _no_symlink(root)
     if root.exists() and (not root.is_dir() or any(root.iterdir())):
@@ -199,6 +229,7 @@ def restore(root, stream):
             root.rmdir()
         os.replace(staging, root)
         os.chmod(root, 0o700)
+        _lock_file(root)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -215,11 +246,8 @@ def import_state(root, stream):
         files = _unpack(stream, staging, allowed=_importable)
         if not files:
             raise Stop(EXIT_INPUT, "the tar holds no file to import; nothing was imported.")
-        for name in files:
-            target = root.joinpath(*name.parts)
-            for parent in [*reversed(target.relative_to(root).parents)][1:]:
-                _no_symlink(root / parent)
-            _no_symlink(target)
+        targets = [(name, _checked_target(root, name)) for name in files]  # all, first
+        for name, target in targets:
             _private_parents(root, target.parent)
             os.replace(staging.joinpath(*name.parts), target)
         print(f"imported {len(files)} files into {root}", file=sys.stderr)

@@ -40,7 +40,7 @@ from . import model, terms
 DIRECTORY = "knowledge"
 INDEX = "index.sqlite3"
 LOCK = "writer.lock"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SUPERSEDES = "supersedes"
 CONFLICTS_WITH = "conflicts_with"
 TIMEOUT_SECONDS = 5
@@ -91,7 +91,7 @@ _SCHEMA = [
     )""",
     """CREATE TABLE sources (
         name TEXT PRIMARY KEY, adapter TEXT NOT NULL, cursor TEXT, state TEXT NOT NULL,
-        last_success_at TEXT NOT NULL
+        last_success_at TEXT NOT NULL, config_hash TEXT
     )""",
 ]
 
@@ -225,9 +225,24 @@ def _meta(connection):
     return {
         "schema_version": version,
         "generation": int(rows["generation"]),
-        "config_hash": rows.get("config_hash"),
         "updated_at": rows.get("updated_at"),
     }
+
+
+@contextmanager
+def _intact(path):
+    """A file SQLite cannot read as a database (not one, or damaged) is an input error with
+    the way to rebuild it, not a traceback. A busy or locked database is not this."""
+    try:
+        yield
+    except sqlite3.OperationalError:
+        raise
+    except sqlite3.DatabaseError as error:
+        raise InputError(
+            f"knowledge/{path.name} cannot be read as a knowledge index ({error}). The index "
+            f"can be rebuilt: delete knowledge/{INDEX} and run `sre-harness knowledge update` "
+            "again."
+        ) from None
 
 
 def _has_schema(connection):
@@ -263,6 +278,7 @@ class _Plan:
     updated: list
     unchanged: int
     deletes: dict  # id -> (origin, reason)
+    foreign: list  # incoming ids another source holds: not written
 
     @property
     def advanced(self):
@@ -280,6 +296,7 @@ class _Plan:
             "inserted": sorted(self.inserted),
             "updated": sorted(self.updated),
             "unchanged": self.unchanged,
+            "owned_by_other_source": sorted(self.foreign),
             "tombstoned": [
                 {"id": record_id, "reason": reason}
                 for record_id, (_, reason) in sorted(self.deletes.items())
@@ -289,8 +306,13 @@ class _Plan:
 
 def _plan(connection, batch):
     """What `batch` would change, read inside the caller's transaction. Refuses (exit 2) an
-    update after which `supersedes` would have a cycle."""
+    update after which `supersedes` would have a cycle. A record whose id another source holds
+    is not written (`foreign`): a source changes only its own records, and an id becomes free
+    for another source once its owner has dropped it."""
     meta = _meta(connection)
+    followed = connection.execute(
+        "SELECT config_hash FROM sources WHERE name = ?", (batch.source,)
+    ).fetchone()
     current = {
         row[0]: {"source": row[1], "hash": row[2], "origin": {"kind": row[3], "key": row[4]}}
         for row in connection.execute(
@@ -298,12 +320,15 @@ def _plan(connection, batch):
         )
     }
     incoming = {record["id"]: record for record in batch.records}
-    upserts, inserted, updated, unchanged = [], [], [], 0
+    upserts, inserted, updated, unchanged, foreign = [], [], [], 0, []
     for record_id, record in sorted(incoming.items()):
         now = current.get(record_id)
         if now is None:
             inserted.append(record_id)
-        elif now["hash"] != model.record_hash(record) or now["source"] != batch.source:
+        elif now["source"] != batch.source:
+            foreign.append(record_id)  # another source holds it: never overwritten from here
+            continue
+        elif now["hash"] != model.record_hash(record):
             updated.append(record_id)
         else:
             unchanged += 1
@@ -344,12 +369,13 @@ def _plan(connection, batch):
         )
     return _Plan(
         before=meta["generation"],
-        config_changed=meta["config_hash"] != batch.config_hash,
+        config_changed=(followed[0] if followed else None) != batch.config_hash,
         upserts=upserts,
         inserted=inserted,
         updated=updated,
         unchanged=unchanged,
         deletes=deletes,
+        foreign=foreign,
     )
 
 
@@ -428,7 +454,6 @@ def _write(connection, batch, plan, now):
         "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
         [
             ("generation", str(generation)),
-            ("config_hash", batch.config_hash or ""),
             ("updated_at", now),
         ],
     )
@@ -450,14 +475,16 @@ class Writer:
             if plan.advanced:
                 _write(connection, batch, plan, now)
             connection.execute(
-                "INSERT OR REPLACE INTO sources (name, adapter, cursor, state, last_success_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO sources "
+                "(name, adapter, cursor, state, last_success_at, config_hash) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     batch.source,
                     batch.adapter,
                     batch.cursor,
                     "complete" if batch.complete else "partial",
                     now,
+                    batch.config_hash,
                 ),
             )
             connection.execute("COMMIT")
@@ -486,27 +513,47 @@ def _take_lock(folder):
     return descriptor
 
 
-@contextmanager
-def writer(root):
-    """The only way to change the index. Exit 1 at once if another writer is running."""
-    require_fts5()
-    folder = directory(root, create=True)
-    lock = _take_lock(folder)
-    try:
-        path = _file(folder, INDEX)
+class Locked:
+    """The writer lock, held: what is read under it (a source, the index through `reader`)
+    does not change under a writer, and `writer()` opens the index (made when there is none)."""
+
+    def __init__(self, folder):
+        self._folder = folder
+
+    @contextmanager
+    def writer(self):
+        path = _file(self._folder, INDEX)
         if not path.exists():
             os.close(_create_private(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL))
         connection = _connect(path)
         try:
-            connection.execute("PRAGMA journal_mode = WAL")
-            if not _has_schema(connection):
-                _create_schema(connection)
-            _meta(connection)
-            yield Writer(connection)
+            with _intact(path):
+                connection.execute("PRAGMA journal_mode = WAL")
+                if not _has_schema(connection):
+                    _create_schema(connection)
+                _meta(connection)
+                yield Writer(connection)
         finally:
             connection.close()
+
+
+@contextmanager
+def locked(root):
+    """The writer lock alone. Exit 1 at once if another writer is running."""
+    require_fts5()
+    folder = directory(root, create=True)
+    lock = _take_lock(folder)
+    try:
+        yield Locked(folder)
     finally:
         os.close(lock)
+
+
+@contextmanager
+def writer(root):
+    """The only way to change the index. Exit 1 at once if another writer is running."""
+    with locked(root) as held, held.writer() as opened:
+        yield opened
 
 
 class Reader:
@@ -580,10 +627,20 @@ class Reader:
 
     def sources(self):
         rows = self._connection.execute(
-            "SELECT name, adapter, cursor, state, last_success_at FROM sources ORDER BY name"
+            "SELECT name, adapter, cursor, state, last_success_at, config_hash FROM sources "
+            "ORDER BY name"
         )
-        names = ("name", "adapter", "cursor", "state", "last_success_at")
+        names = ("name", "adapter", "cursor", "state", "last_success_at", "config_hash")
         return [dict(zip(names, row)) for row in rows]
+
+    def stale_sources(self, config_hash):
+        """Names of the sources last taken in under another config than `config_hash`. Each
+        source keeps the config it was last taken in with: while one of them is behind, who
+        may read its records (and which readers it had rejected) may have changed under it."""
+        rows = self._connection.execute(
+            "SELECT name FROM sources WHERE config_hash IS NOT ? ORDER BY name", (config_hash,)
+        )
+        return [row[0] for row in rows]
 
     def cursor(self, source):
         row = self._connection.execute(
@@ -622,9 +679,10 @@ def reader(root):
         path.as_uri() + "?mode=ro", uri=True, isolation_level=None, timeout=TIMEOUT_SECONDS
     )
     try:
-        connection.execute("BEGIN")
-        meta = _meta(connection)  # the first read fixes the snapshot
-        yield Reader(connection, meta)
+        with _intact(path):
+            connection.execute("BEGIN")
+            meta = _meta(connection)  # the first read fixes the snapshot
+            yield Reader(connection, meta)
     finally:
         if connection.in_transaction:
             connection.execute("ROLLBACK")
@@ -860,7 +918,8 @@ class Stage:
 def _generation_in_place(index):
     connection = _open_quiet(index)
     try:
-        return _meta(connection)["generation"]
+        with _intact(index):
+            return _meta(connection)["generation"]
     finally:
         connection.close()
 
@@ -933,8 +992,9 @@ def peek(root):
     try:
         connection = _open_quiet(index)
         try:
-            connection.execute("BEGIN")
-            yield Reader(connection, _meta(connection))
+            with _intact(index):
+                connection.execute("BEGIN")
+                yield Reader(connection, _meta(connection))
         finally:
             if connection.in_transaction:
                 connection.execute("ROLLBACK")

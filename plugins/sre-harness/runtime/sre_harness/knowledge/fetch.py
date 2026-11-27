@@ -2,8 +2,8 @@
 
 No model, no network, no cache. The steps:
 
-    1. resolve the principal (unknown or no config: exit 3) and stop with stale_index when the
-       index was built with another knowledge/config.json
+    1. resolve the principal (unknown or no config: exit 3) and stop with stale_index when a
+       source was last taken in with another knowledge/config.json
     2. read the record through the store's access filter. A record the principal cannot read,
        one that never existed and one that left the index (a tombstone) all get the same
        answer, so the answer says nothing about which it was
@@ -57,9 +57,10 @@ def split_lines(text):
 
 def withheld_shapes(text, deny_terms):
     """Names of what keeps a text back: secret shapes and `deny_term`, looked for in the text
-    as it was read and as it is printed (without invisible characters, so a zero-width space
-    cannot hide either). Never the text itself."""
-    examined = text + "\n" + untrusted.clean(text)
+    as it was read, as it is printed (without invisible characters, so a zero-width space
+    cannot hide either) and in its examined form (`privacy.examined`: NFKC, without combining
+    and default-ignorable characters). Never the text itself."""
+    examined = "\n".join([text, untrusted.clean(text), privacy.examined(text)])
     shapes = privacy.find_secrets(examined)
     if privacy.find_deny_terms(examined, deny_terms):
         shapes.append(DENY_TERM)
@@ -119,8 +120,8 @@ def page(kept, offset, max_tokens):
     fragments, left, position = [], max_tokens, 0
     for evidence, lines in kept:
         start, position = position, position + len(lines)
-        if offset >= position:
-            continue
+        if not lines or offset >= position:
+            continue  # an empty text has no line to page, and ends no page
         first = max(offset - start, 0)
         label = _label(evidence)
         size, taken = untrusted.overhead_bytes(label), first
@@ -216,8 +217,9 @@ def run(root, name, request, read=sources.read):
             "principal": principal.name,
             "id": request.record_id,
         }
-        if meta["config_hash"] != config.config_hash(settings):
-            return answer(head, request, "stale_index")
+        stale = reader.stale_sources(config.config_hash(settings))
+        if stale:
+            return {**answer(head, request, "stale_index"), "stale_sources": stale}
         found = reader.records(principal, ids=[request.record_id])
     if not found:
         return answer(head, request, "incomplete", unfetched=[{"reason": "access_denied"}])

@@ -146,7 +146,7 @@
         "required": ["ids", "reason"],
         "properties": {
           "ids": { "$ref": "#/$defs/ids", "minItems": 2 },
-          "reason": { "enum": ["conflicts_with", "both_approved_same_subject"] }
+          "reason": { "enum": ["conflicts_with", "both_approved_same_subject", "mandatory_superseded_by_advisory"] }
         }
       }
     },
@@ -162,6 +162,12 @@
           "items": { "type": "string", "minLength": 1 }
         }
       }
+    },
+    "stale_sources": {
+      "description": "Only with stale_index: the sources last taken in with another knowledge/config.json. Each has to be taken in again (`knowledge update`) before any record is returned.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
     },
     "superseded": {
       "type": "array",

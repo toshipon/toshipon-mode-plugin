@@ -2,12 +2,18 @@
 the store in one transaction. No model is called; the same input and config give the same
 index.
 
-An item is listed in `rejected`, and kept out of the index, when it
+An item is listed in `rejected`, and kept out of the index, when it (`detail` names JSON paths
+and the checks they fail, never a value of the input)
 
     schema_invalid      does not match knowledge-record `$defs/item`
     access_missing      has no `access` (scope is not access: nothing is readable by default)
     unknown_reader      names a reader no principal in knowledge/config.json holds
     invariant_violated  breaks model.problems (approval, mandatory, scope ids)
+    invalid_glob        has a path glob that could make matching slow (globs.problem)
+    origin_kind_reserved  has an origin kind that only another adapter may give
+                        (RESERVED_KINDS: a file cannot pose as the review registry or a run)
+    owned_by_other_source  has the id of a record another source holds (the store's plan);
+                        that record is left as it is
 
 Items from different origins with the same content hash are listed in `duplicates` and both
 indexed; nothing is merged automatically.
@@ -15,9 +21,17 @@ indexed; nothing is merged automatically.
 
 from dataclasses import dataclass
 
-from .. import records
+from .. import globs, records
 from ..errors import InputError
 from . import config, model, store
+
+# origin kinds only one adapter gives: a record of these kinds comes from its approval flow
+RESERVED_KINDS = {
+    "review-registry": "review-registry",
+    "decision": "spec-run",
+    "requirement": "spec-run",
+}
+OWNED_ELSEWHERE = "owned_by_other_source"
 
 
 def _origin(item):
@@ -37,8 +51,9 @@ def _rejection(index, origin, reason, detail):
     }
 
 
-def check(items, known_readers, now):
-    """(accepted records, rejected entries) for the items of one update."""
+def check(items, known_readers, now, adapter=None):
+    """(accepted records, rejected entries) for the items of one update from `adapter` (its
+    name; RESERVED_KINDS are refused from any other)."""
     seen = {}
     for index, item in enumerate(items):
         origin = _origin(item)
@@ -55,18 +70,34 @@ def check(items, known_readers, now):
     accepted, rejected = [], []
     for index, item in enumerate(items):
         origin = _origin(item)
-        problems = records.violations("knowledge-record", item, "item")
+        problems = records.violation_paths("knowledge-record", item, "item")
         if problems:
             rejected.append(_rejection(index, origin, "schema_invalid", "; ".join(problems[:5])))
+            continue
+        if any(globs.problem(glob) for glob in item.get("facets", {}).get("path_globs", ())):
+            detail = (
+                f"a path glob is longer than {globs.MAX_GLOB_LENGTH} characters or has more "
+                f"than {globs.MAX_DOUBLE_STARS} '**'"
+            )
+            rejected.append(_rejection(index, origin, globs.INVALID, detail))
+            continue
+        owner = RESERVED_KINDS.get(item["origin"]["kind"])
+        if owner is not None and owner != adapter:
+            detail = f"this origin kind is given only by the {owner} source"
+            rejected.append(_rejection(index, origin, "origin_kind_reserved", detail))
             continue
         if "access" not in item:
             detail = "the item has no access block, so no principal could read it"
             rejected.append(_rejection(index, origin, "access_missing", detail))
             continue
         record = model.normalize(item, now)
-        unknown = sorted(set(record["access"]["readers"]) - known_readers)
+        unknown = [
+            f"access/readers/{position}"
+            for position, reader in enumerate(item["access"]["readers"])
+            if reader not in known_readers
+        ]
         if unknown:
-            detail = "readers not held by any principal: " + ", ".join(unknown)
+            detail = "readers not held by any principal at " + ", ".join(unknown)
             rejected.append(_rejection(index, origin, "unknown_reader", detail))
             continue
         broken = model.problems(record)
@@ -127,7 +158,7 @@ def settings(root):
 def prepare(adapter, found, previous, now):
     """Ask `adapter` for its changes since the cursor `previous` and check every item."""
     changes = adapter.changes(previous)
-    accepted, rejected = check(changes.items, config.known_readers(found), now)
+    accepted, rejected = check(changes.items, config.known_readers(found), now, adapter.name)
     left_out = {entry["id"] for entry in changes.skipped or () if entry["id"] is not None}
     batch = store.Batch(
         source=adapter.source,
@@ -142,9 +173,25 @@ def prepare(adapter, found, previous, now):
     return Prepared(changes, accepted, rejected, batch)
 
 
+def _held_elsewhere(items, held):
+    """The rejected entries of the items whose ids another source holds."""
+    found = []
+    for index, item in enumerate(items):
+        origin = _origin(item)
+        if origin is not None and model.record_id(origin["kind"], origin["key"]) in held:
+            detail = "another source holds this record id; the item was not written"
+            found.append(_rejection(index, origin, OWNED_ELSEWHERE, detail))
+    return found
+
+
 def report(prepared, summary, dry_run):
     """The update's answer, from what was prepared and what the store did (or would do)."""
-    batch, accepted, rejected = prepared.batch, prepared.accepted, prepared.rejected
+    batch, accepted = prepared.batch, prepared.accepted
+    held = set(summary["owned_by_other_source"])
+    rejected = sorted(
+        prepared.rejected + _held_elsewhere(prepared.changes.items, held),
+        key=lambda entry: entry["index"],
+    )
     found = duplicates(accepted)
     answer = {
         "source": batch.source,
@@ -156,7 +203,7 @@ def report(prepared, summary, dry_run):
         "config_changed": summary["config_changed"],
         "counts": {
             "items": len(prepared.changes.items),
-            "indexed": len(accepted),
+            "indexed": len(accepted) - len(held),
             "inserted": len(summary["inserted"]),
             "updated": len(summary["updated"]),
             "unchanged": summary["unchanged"],
@@ -174,18 +221,27 @@ def report(prepared, summary, dry_run):
 
 
 def update(root, adapter, *, dry_run=False, now=None):
-    """Bring the index in line with `adapter`'s source. With `dry_run`, only report."""
+    """Bring the index in line with `adapter`'s source. With `dry_run`, only report.
+
+    The source is read under the writer lock, so a writer that holds it (a `volume import`
+    replacing the registry, another update) is never read half way; a dry run takes no lock
+    and reads the source as it is."""
     store.require_fts5()
     found = settings(root)
     now = now or records.iso()
-    previous = None
-    if store.exists(root):
-        with store.reader(root) as reader:
-            previous = reader.cursor(adapter.source)
-    prepared = prepare(adapter, found, previous, now)
     if dry_run:
-        summary = store.plan(root, prepared.batch)
-    else:
-        with store.writer(root) as writer:
+        previous = None
+        if store.exists(root):
+            with store.reader(root) as reader:
+                previous = reader.cursor(adapter.source)
+        prepared = prepare(adapter, found, previous, now)
+        return report(prepared, store.plan(root, prepared.batch), dry_run)
+    with store.locked(root) as held:
+        previous = None
+        if store.exists(root):
+            with store.reader(root) as reader:
+                previous = reader.cursor(adapter.source)
+        prepared = prepare(adapter, found, previous, now)
+        with held.writer() as writer:
             summary = writer.apply(prepared.batch, now)
     return report(prepared, summary, dry_run)

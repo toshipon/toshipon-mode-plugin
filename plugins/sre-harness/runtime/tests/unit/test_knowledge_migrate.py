@@ -1,6 +1,7 @@
 """`knowledge migrate` and `knowledge rollback`: back up, take the registry in on a copy, check
 it against `registry.active_rules`, put it in place in one rename; and go back."""
 
+import json
 import os
 import stat
 
@@ -343,3 +344,14 @@ def test_the_backup_list_holds_only_names_the_harness_makes(root, made, indexed)
     (folder / "index-20261127T000000Z-g0009.sqlite3").symlink_to(folder / "notes.txt")
     (folder / "index-20261127T000000Z-g0008.sqlite3").mkdir()
     assert [entry["name"] for entry in migrate.backups(root)] == [migrated["backup"]["name"]]
+
+
+def test_a_repo_two_projects_hold_is_left_out_of_the_check_with_its_reason(root, made):
+    settings = json.loads(json.dumps(rr.CONFIG))
+    settings["projects"]["project-gamma"]["repos"].append(rr.ALPHA)
+    paths.write_private(root / "knowledge" / "config.json", records.canonical(settings))
+    result = migrate.run(root, now=NOW)
+    assert result["replaced"] is True and migrate.exit_code(result) == 0
+    assert rr.ALPHA not in {row["repo"] for row in result["check"]["repos"]}
+    assert result["check"]["excluded"] == [{"repo": rr.ALPHA, "reason": "repo_in_several_projects"}]
+    assert migrate.run(root, now=NOW)["check"]["ok"] is True

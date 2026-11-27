@@ -317,6 +317,25 @@ def _requirements(run, relations):
     return items, left_out
 
 
+def _within(items):
+    """`items` with only the relations and supersessions whose target is one of them: an entry
+    left out (evidence_unresolved) is in no edge, so nothing points at a record not indexed."""
+    kept = {(item["origin"]["kind"], item["origin"]["key"]) for item in items}
+
+    def held(ref):
+        return (ref["kind"], ref["key"]) in kept
+
+    for item in items:
+        if "supersedes" in item:
+            item["supersedes"] = [ref for ref in item["supersedes"] if held(ref)]
+        rows = [row for row in item.get("relations", []) if held(row["target"])]
+        if rows:
+            item["relations"] = rows
+        else:
+            item.pop("relations", None)
+    return items
+
+
 class SpecRunAdapter:
     name = NAME
 
@@ -344,8 +363,9 @@ class SpecRunAdapter:
         relations, unlinked = run.relations()
         decisions, left_decisions = _decisions(run, relations)
         requirements, left_requirements = _requirements(run, relations)
+        items = _within(decisions + requirements)
         return Changes(
-            items=decisions + requirements,
+            items=items,
             tombstones=[],
             cursor=f"{self.run_id}:sha256:{run.digest}",
             complete=True,

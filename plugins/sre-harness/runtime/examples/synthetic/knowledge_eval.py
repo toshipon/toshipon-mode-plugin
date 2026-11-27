@@ -136,8 +136,9 @@ SYNTHETIC_NOTE = (
 # What each metric may claim (the design's table, section 9.2). Every metric printed has one.
 SCOPES = {
     "input_tokens": (
-        "合成データでの見積もり（UTF-8 の 3 byte を 1 token）の分布。全量は件数に比例し、検索は予算で"
-        "頭打ちになるので、差は規模で決まる。1 つの比率を成果にしない。実際の tokenizer の数と、"
+        "合成データでの見積もり（UTF-8 の 3 byte を 1 token）の分布。全量は件数に比例し、1 回の search "
+        "は予算で頭打ちになるので、差は規模で決まる。必須が入らず上限を上げて呼び直した task では予算を"
+        "超える（最大値）。1 つの比率を成果にしない。実際の tokenizer の数と、"
         "セッション全体の消費（呼び出しの回数、追加のターン、prompt cache）は含まない"
     ),
     "retrieval": (

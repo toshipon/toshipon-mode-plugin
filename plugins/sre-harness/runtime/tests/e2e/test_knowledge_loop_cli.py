@@ -204,7 +204,8 @@ def test_the_loop_across_workspaces_projects_and_principals(loop, monkeypatch, c
     assert changed["responses"] == []
     assert [r["request_id"] for r in changed["already_delivered"]] == [request_id]
 
-    # the queue as an operator sees it
-    code, listed, _ = knowledge(env, "decision", "list")
+    # the queue as one workspace sees it: only the requests it put or waits for
+    code, listed, _ = knowledge(env, "decision", "list", "--workspace", "ws-alpha-1")
     status = {row["id"]: row["status"] for row in listed["requests"]}
     assert status == {request_id: "answered", later_id: "answered"}
+    assert knowledge(env, "decision", "list")[0] == 2

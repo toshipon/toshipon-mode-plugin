@@ -7,8 +7,9 @@ does. The harness never reads the explorer's index: it holds descriptions an age
 approved norms.
 
     records       approved, readable by the principal (the store's access filter), and not
-                  replaced by an approved successor (`search.replacements`); with --project,
-                  the organization's and that project's
+                  replaced by an approved successor (`search.replacements`, over the records
+                  exported: with --project, a successor of another project replaces nothing);
+                  with --project, the organization's and that project's
     id            the record id (KN-...), which the explorer's id pattern takes
     type          decision for a decision, requirement for the rest (a rule, a requirement
                   and a policy check all say what a change must satisfy)
@@ -72,11 +73,12 @@ def entity(record, exported):
 
 def entities(rows, project=None):
     """The entities of the readable `rows`, by id. Pure."""
+    rows = [row for row in rows if _in_project(row, project)]
     replaced = search.replacements(rows)
     kept = [
         row
         for row in sorted(rows, key=lambda row: row["id"])
-        if row["status"] == "approved" and row["id"] not in replaced and _in_project(row, project)
+        if row["status"] == "approved" and row["id"] not in replaced
     ]
     exported = {row["id"] for row in kept}
     return [entity(row, exported) for row in kept]
@@ -88,9 +90,11 @@ def run(root, name, project=None):
         raise BoundaryError("no knowledge/config.json, so no principal can be resolved.")
     principal = config.principal(settings, name)
     with store.reader(root) as reader:
-        if reader.meta()["config_hash"] != config.config_hash(settings):
+        stale = reader.stale_sources(config.config_hash(settings))
+        if stale:
             raise QualityGateError(
-                "stale_index: the index was built with another knowledge/config.json; run "
-                "`sre-harness knowledge update` first. Nothing was exported."
+                "stale_index: these sources were taken in with another knowledge/config.json: "
+                f"{', '.join(stale)}; run `sre-harness knowledge update` for each of them first. "
+                "Nothing was exported."
             )
         return entities(reader.records(principal), project)

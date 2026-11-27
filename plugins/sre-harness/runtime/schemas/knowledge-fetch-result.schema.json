@@ -126,6 +126,12 @@
         }
       }
     },
+    "stale_sources": {
+      "description": "Only with stale_index: the sources last taken in with another knowledge/config.json. Each has to be taken in again (`knowledge update`) before any record is returned.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    },
     "withheld": {
       "type": "array",
       "items": {
@@ -137,7 +143,7 @@
           "shapes": {
             "type": "array",
             "minItems": 1,
-            "items": { "type": "string", "pattern": "^[a-z_]{1,40}$" }
+            "items": { "type": "string", "pattern": "^[a-z_]{1,40}(?![\\s\\S])" }
           }
         }
       }

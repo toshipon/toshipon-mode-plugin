@@ -199,3 +199,31 @@ def test_a_writer_in_another_process_is_refused_with_exit_1(home, tmp_path):
     free = subprocess.run(argv, env=env, cwd=RUNTIME, capture_output=True, text=True, timeout=60)
     assert free.returncode == 0, free.stderr
     assert json.loads(free.stdout)["generation"] == {"before": 1, "after": 2}
+
+
+def test_a_damaged_index_is_an_input_error_with_how_to_rebuild(home, tmp_path, capsys):
+    write_config(home)
+    index = knowledge_dir(home) / "index.sqlite3"
+    index.write_bytes(b"not a database at all" * 100)
+    os.chmod(index, 0o600)
+    for argv in (["status"], ["search", "--principal", "workspace-a"]):
+        assert run_cli(["knowledge", *argv], home) == (2, None), argv
+        assert "index.sqlite3" in capsys.readouterr().err
+    assert update(home, write_input(tmp_path / "in.json", [item("R1")]))[0] == 2
+    assert "knowledge update" in capsys.readouterr().err
+
+
+def test_a_task_without_its_component_is_refused_instead_of_finding_nothing(home, tmp_path, capsys):
+    write_config(home)
+    task_scope = {
+        "level": "task",
+        "project_id": "project-alpha",
+        "component_id": "queue",
+        "task_id": "TASK-0001",
+    }
+    assert update(home, write_input(tmp_path / "in.json", [item("T1", scope=task_scope)]))[0] == 0
+    argv = ["knowledge", "search", "--principal", "workspace-a", "--project", "project-alpha"]
+    assert run_cli([*argv, "--task", "TASK-0001"], home) == (2, None)
+    assert "--component" in capsys.readouterr().err
+    code, found = run_cli([*argv, "--component", "queue", "--task", "TASK-0001"], home)
+    assert code == 0 and len(found["records"]) == 1

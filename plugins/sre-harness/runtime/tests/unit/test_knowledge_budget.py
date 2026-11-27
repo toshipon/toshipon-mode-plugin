@@ -149,6 +149,17 @@ def test_a_damaged_ledger_stops_instead_of_guessing(root):
         rows(root)
 
 
+def test_a_ledger_line_that_is_not_utf8_is_a_damaged_line(root):
+    charge(root, 10)
+    path = budget.ledger(root, "TASK-0001", "workspace-a")
+    with open(path, "ab") as stream:
+        stream.write(b'{"event": "call", "tokens": 5, "command": "search\xff"}\n')
+    with pytest.raises(InputError, match="damaged"):
+        rows(root)
+    with pytest.raises(InputError, match="damaged"):
+        charge(root, 10)
+
+
 def test_no_ledger_yet_means_nothing_used(root):
     assert rows(root) == []
 

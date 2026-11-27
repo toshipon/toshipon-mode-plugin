@@ -4,7 +4,7 @@ supersession, conflicts and freshness. Records are synthetic and built in memory
 import pytest
 
 from sre_harness import records
-from sre_harness.knowledge import model, search, terms
+from sre_harness.knowledge import model, search, terms, untrusted
 from sre_harness.review import markdown
 from tests.knowledge_helpers import item
 
@@ -328,6 +328,61 @@ def test_asking_for_a_superseded_decision_returns_its_successor():
     assert ids(live["records"]) == [rid("v3")] and live["superseded"] == []
 
 
+BETA = scope("project", "project-beta")
+HEAD = {
+    "schema_version": 1,
+    "snapshot": {"generation": 1, "updated_at": NOW},
+    "principal": "workspace-a",
+    "retrieval": {"method": "fts5", "query_terms": 0, "expansion": None},
+}
+
+
+def ref(key):
+    return {"kind": "synthetic", "key": key}
+
+
+def test_a_successor_that_does_not_apply_to_the_request_replaces_nothing():
+    old = rec("org", scope=ORG, enforcement="mandatory")
+    other = rec("beta", scope=BETA, enforcement="mandatory", supersedes=[ref("org")])
+    request = search.Request(project="project-alpha")
+    narrowed = search.narrow([old, other], request)
+    assert narrowed.replaced == {} and ids(narrowed.live) == [rid("org")]
+    result = select([old, other], request)
+    assert result["mandatory"]["ids"] == [rid("org")] and ids(result["records"]) == [rid("org")]
+    # In project-beta the successor applies, and replaces the organization's record.
+    beta = select([old, other], search.Request(project="project-beta"))
+    assert beta["mandatory"]["ids"] == [rid("beta")] and ids(beta["records"]) == [rid("beta")]
+
+
+def test_an_advisory_successor_does_not_take_a_record_out_of_the_mandatory_set():
+    old = rec("org", scope=ORG, enforcement="mandatory")
+    advisory = rec("beta", scope=BETA, supersedes=[ref("org")])
+    request = search.Request(project="project-beta")
+    narrowed = search.narrow([old, advisory], request)
+    assert narrowed.replaced == {} and ids(narrowed.live) == sorted([rid("beta"), rid("org")])
+    result = select([old, advisory], request)
+    assert result["mandatory"]["ids"] == [rid("org")]
+    assert ids(result["records"]) == [rid("org"), rid("beta")]
+    assert {"ids": sorted([rid("org"), rid("beta")]), "reason": search.ADVISORY_SUCCESSOR} in (
+        result["conflicts"]
+    )
+    assert records.violations("knowledge-search-result", {**HEAD, **result}) == []
+    # A mandatory successor still replaces it.
+    mandatory = rec("beta", scope=BETA, enforcement="mandatory", supersedes=[ref("org")])
+    again = select([old, mandatory], request)
+    assert again["mandatory"]["ids"] == [rid("beta")] and again["conflicts"] == []
+
+
+def test_a_superseded_decision_is_answered_only_with_successors_that_apply():
+    old = rec("old", scope=ORG, facets={"decision_id": "ADR-0001"})
+    new = rec("new", scope=BETA, supersedes=[ref("old")])
+    asked = search.Request(project="project-alpha", decision_id="ADR-0001")
+    result = select([old, new], asked)
+    assert result["superseded"] == [] and ids(result["records"]) == [rid("old")]
+    beta = select([old, new], search.Request(project="project-beta", decision_id="ADR-0001"))
+    assert beta["superseded"] == [{"asked": "ADR-0001", "by": [rid("new")]}]
+
+
 def test_a_successor_the_principal_cannot_read_is_not_revealed():
     # The reader only hands over readable records, so the successor is simply absent.
     first, second, _ = chain()
@@ -459,7 +514,8 @@ def test_the_view_drops_ids_below_the_level_and_cleans_control_characters():
     }
     text = records.canonical(view)
     assert not markdown._CONTROL.search(text)
-    assert view["summary"] == markdown.clean(row["summary"])
+    assert view["summary"] == "保持期間[31m は 14 日" == untrusted.clean(row["summary"])
+    assert view["applies_when"] == ["キューを作る"] and view["exceptions"] == ["例外"]
     assert set(view) == set(
         records.schema("knowledge-search-result")["$defs"]["record"]["required"]
     )
@@ -532,3 +588,36 @@ def test_expansion_words_rank_advisory_records_and_leave_the_mandatory_ones():
     assert ids(plain["records"]) == [rid("must")]
     assert ids(widened["records"]) == [rid("must"), rid("hit")]
     assert "term_match" in widened["records"][1]["why_selected"]
+
+
+def test_a_long_successor_chain_is_followed_without_recursion():
+    length = 3000
+    rows = [
+        {
+            "id": f"K{n:05d}",
+            "status": "approved" if n == length - 1 else "superseded",
+            "enforcement": "advisory",
+            "supersedes": [f"K{n - 1:05d}"] if n else [],
+        }
+        for n in range(length)
+    ]
+    found = search.replacements(rows)
+    assert len(found) == length - 1
+    assert set(found.values()) == {(f"K{length - 1:05d}",)}
+
+
+def test_a_successor_reached_by_two_chains_keeps_its_own_end():
+    # A is replaced by C, C by P and by Q, Q by P, and P (still approved in its source) by D:
+    # every chain ends in D. The walk meets P from Q while P is only waiting to be visited; a
+    # waiting successor is not a settled one, so P must not be taken as an end.
+    def row(name, supersedes, status="superseded"):
+        return {"id": name, "status": status, "enforcement": "advisory", "supersedes": supersedes}
+
+    rows = [
+        row("A", []),
+        row("C", ["A"]),
+        row("P", ["C", "Q"], "approved"),
+        row("Q", ["C"]),
+        row("D", ["P"], "approved"),
+    ]
+    assert search.replacements(rows) == {"A": ("D",), "C": ("D",), "P": ("D",), "Q": ("D",)}

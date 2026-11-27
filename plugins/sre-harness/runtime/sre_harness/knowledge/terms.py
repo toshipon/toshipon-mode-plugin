@@ -21,6 +21,7 @@ def terms(text):
 
 
 def estimate_tokens(text):
-    """A deliberately high estimate: 3 UTF-8 bytes per token, rounded up."""
+    """An estimate: 3 UTF-8 bytes per token, rounded up. How far it is from a real tokenizer's
+    count, and in which direction, has not been measured."""
     data = text if isinstance(text, bytes) else text.encode("utf-8")
     return math.ceil(len(data) / 3)

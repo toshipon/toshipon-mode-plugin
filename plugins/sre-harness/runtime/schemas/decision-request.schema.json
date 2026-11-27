@@ -61,19 +61,19 @@
     }
   },
   "$defs": {
-    "request_id": { "type": "string", "pattern": "^DR-[0-9a-f]{12}$" },
+    "request_id": { "type": "string", "pattern": "^DR-[0-9a-f]{12}(?![\\s\\S])" },
     "status": { "enum": ["open", "answered", "cancelled", "expired", "superseded"] },
     "question": {
       "type": "string",
       "minLength": 1,
       "maxLength": 500,
-      "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+      "pattern": "^[^\\u0000-\\u001f\\u007f]*(?![\\s\\S])"
     },
     "option": {
       "type": "string",
       "minLength": 1,
       "maxLength": 100,
-      "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+      "pattern": "^[^\\u0000-\\u001f\\u007f]*(?![\\s\\S])"
     },
     "revision": {
       "type": "object",
@@ -88,7 +88,7 @@
           "additionalProperties": { "$ref": "urn:sre-harness:common#/$defs/sha256" }
         },
         "head_sha": {
-          "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$" }, { "type": "null" }]
+          "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?(?![\\s\\S])" }, { "type": "null" }]
         }
       }
     },
@@ -103,15 +103,46 @@
         "request": { "$ref": "urn:sre-harness:decision-request" }
       }
     },
+    "listed": {
+      "description": "A request as `knowledge decision list` and `cancel` print it: the request with its status now, its revision without the content hashes of the evidence.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "id", "task_id", "workspace_id", "principal", "question", "options", "evidence_ids", "risk", "status", "revision", "dedupe_key", "created_at"],
+      "properties": {
+        "schema_version": { "$ref": "#/properties/schema_version" },
+        "id": { "$ref": "#/properties/id" },
+        "task_id": { "$ref": "#/properties/task_id" },
+        "workspace_id": { "$ref": "#/properties/workspace_id" },
+        "principal": { "$ref": "#/properties/principal" },
+        "question": { "$ref": "#/properties/question" },
+        "options": { "$ref": "#/properties/options" },
+        "evidence_ids": { "$ref": "#/properties/evidence_ids" },
+        "risk": { "$ref": "#/properties/risk" },
+        "status": { "$ref": "#/properties/status" },
+        "revision": { "$ref": "#/$defs/listed_revision" },
+        "dedupe_key": { "$ref": "#/properties/dedupe_key" },
+        "created_at": { "$ref": "#/properties/created_at" },
+        "expires_at": { "$ref": "#/properties/expires_at" }
+      }
+    },
+    "listed_revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation", "head_sha"],
+      "properties": {
+        "generation": { "$ref": "#/$defs/revision/properties/generation" },
+        "head_sha": { "$ref": "#/$defs/revision/properties/head_sha" }
+      }
+    },
     "list_result": {
-      "description": "What `knowledge decision list` prints: every request, with its status now.",
+      "description": "What `knowledge decision list --workspace W` prints: the requests W put or waits for (a duplicate put), with their status now.",
       "type": "object",
       "additionalProperties": false,
       "required": ["schema_version", "now", "requests"],
       "properties": {
         "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
         "now": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
-        "requests": { "type": "array", "items": { "$ref": "urn:sre-harness:decision-request" } }
+        "requests": { "type": "array", "items": { "$ref": "#/$defs/listed" } }
       }
     },
     "poll_result": {

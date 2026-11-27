@@ -188,6 +188,7 @@ def test_the_source_cursor_moves_even_when_nothing_else_does(root):
         "cursor": "k2",
         "state": "complete",
         "last_success_at": LATER,
+        "config_hash": "c1",
     }
 
 
@@ -275,6 +276,20 @@ def test_a_changed_config_advances_the_next_writer(root):
     assert summary["generation"] == {"before": 1, "after": 2}
     again = apply(root, batch([rec("R1")], config_hash="c2"))
     assert again["advanced"] is False and again["config_changed"] is False
+
+
+def test_the_config_is_followed_per_source(root):
+    apply(root, batch([rec("R1")], config_hash="c1"))
+    apply(root, batch([rec("O1")], source="file:other", config_hash="c1"))
+    other = apply(root, batch([rec("O1")], source="file:other", config_hash="c2"))
+    assert other["config_changed"] is True
+    with store.reader(root) as reader:
+        assert reader.stale_sources("c2") == ["file:synthetic"]
+        assert reader.stale_sources("c1") == ["file:other"]
+    first = apply(root, batch([rec("R1")], config_hash="c2"))
+    assert first["advanced"] is True and first["config_changed"] is True
+    with store.reader(root) as reader:
+        assert reader.stale_sources("c2") == []
 
 
 def test_a_supersession_cycle_writes_nothing(root):

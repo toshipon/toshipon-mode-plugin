@@ -4,7 +4,7 @@ import json
 import pytest
 
 from sre_harness import paths, records
-from sre_harness.errors import InputError
+from sre_harness.errors import InputError, QualityGateError
 from sre_harness.knowledge import config, ingest, model, store
 from sre_harness.knowledge.adapters import Changes, build
 from sre_harness.knowledge.adapters import file as file_adapter
@@ -128,7 +128,8 @@ def test_a_record_naming_an_unknown_reader_is_rejected(root, tmp_path):
     )
     result = run(root, write_input(tmp_path / "in.json", [item("R1"), stranger]))
     (rejected,) = result["rejected"]
-    assert rejected["reason"] == "unknown_reader" and "team-x" in rejected["detail"]
+    assert rejected["reason"] == "unknown_reader" and "access/readers/1" in rejected["detail"]
+    assert "team-x" not in rejected["detail"]
     assert set(indexed(root)) == {"R1"}
 
 
@@ -152,6 +153,16 @@ def test_a_record_breaking_an_invariant_is_rejected(root, tmp_path, changes):
     result = run(root, write_input(tmp_path / "in.json", [item("R1"), item("R2", **changes)]))
     assert [r["reason"] for r in result["rejected"]] == ["invariant_violated"]
     assert set(indexed(root)) == {"R1"}
+
+
+def test_a_rejection_names_paths_and_checks_but_never_echoes_the_input(root, tmp_path):
+    marker = "MARKER-0123456789"
+    broken = item("R2", status=marker, summary=marker + "\n" + marker)
+    result = run(root, write_input(tmp_path / "in.json", [item("R1"), broken]))
+    (rejected,) = result["rejected"]
+    assert rejected["reason"] == "schema_invalid"
+    assert marker not in rejected["detail"]
+    assert "status: enum" in rejected["detail"] and "summary: pattern" in rejected["detail"]
 
 
 def test_a_malformed_item_is_rejected_and_the_rest_indexed(root, tmp_path):
@@ -281,3 +292,59 @@ def test_the_adapter_is_given_the_cursor_it_returned_last_time(root, tmp_path):
     ingest.update(root, Recording(), now=NOW)
     ingest.update(root, Recording(), now=NOW)
     assert seen == [None, "c1"]
+
+
+# Ownership of a record id -------------------------------------------------------------------
+
+
+def test_a_record_id_another_source_holds_is_rejected_and_left_as_it_is(root, tmp_path):
+    first = write_input(tmp_path / "a.json", [item("K1")], source="alpha")
+    assert run(root, first)["counts"]["inserted"] == 1
+    hijack = item("K1", summary="K1 from beta", enforcement="mandatory")
+    second = write_input(tmp_path / "b.json", [hijack, item("K2")], source="beta")
+    result = run(root, second)
+    (entry,) = result["rejected"]
+    assert entry["reason"] == "owned_by_other_source" and entry["index"] == 0
+    assert entry["id"] == model.record_id("synthetic", "K1")
+    assert result["counts"]["indexed"] == 1 and result["counts"]["inserted"] == 1
+    assert result["counts"]["rejected"] == 1 and result["counts"]["updated"] == 0
+    kept = indexed(root)["K1"]
+    assert kept["summary"] == item("K1")["summary"] and kept["enforcement"] == "advisory"
+    again = run(root, second)
+    assert (
+        again["advanced"] is False and again["generation"]["before"] == again["generation"]["after"]
+    )
+    assert [row["reason"] for row in again["rejected"]] == ["owned_by_other_source"]
+    dry = ingest.update(root, build("file", {"input": second}), now=NOW, dry_run=True)
+    assert [row["reason"] for row in dry["rejected"]] == ["owned_by_other_source"]
+
+
+def test_a_record_its_owner_dropped_can_be_taken_by_another_source(root, tmp_path):
+    run(root, write_input(tmp_path / "a.json", [item("K1")], source="alpha"))
+    run(root, write_input(tmp_path / "a2.json", [], source="alpha"))
+    taken = run(root, write_input(tmp_path / "b.json", [item("K1", summary="K1 b")], source="beta"))
+    assert taken["rejected"] == [] and taken["counts"]["inserted"] == 1
+    assert indexed(root)["K1"]["summary"] == "K1 b"
+
+
+@pytest.mark.parametrize("kind", ["review-registry", "decision", "requirement"])
+def test_a_file_source_cannot_use_an_origin_kind_another_adapter_owns(root, tmp_path, kind):
+    reserved = item("RG-9002", origin={"kind": kind, "key": "RG-9002"})
+    result = run(root, write_input(tmp_path / "in.json", [reserved, item("K1")]))
+    (entry,) = result["rejected"]
+    assert entry["reason"] == "origin_kind_reserved" and entry["index"] == 0
+    assert result["counts"]["indexed"] == 1 and set(indexed(root)) == {"K1"}
+
+
+def test_the_source_is_read_under_the_writer_lock_and_a_dry_run_reads_without_it(root, tmp_path):
+    adapter = build("file", {"input": write_input(tmp_path / "in.json", [item("R1")])})
+    calls = []
+    original = adapter.changes
+    adapter.changes = lambda cursor: calls.append(cursor) or original(cursor)
+    with store.writer(root):
+        with pytest.raises(QualityGateError):
+            ingest.update(root, adapter, now=NOW)
+        assert calls == []
+        assert ingest.update(root, adapter, now=NOW, dry_run=True)["dry_run"] is True
+    assert len(calls) == 1
+    assert ingest.update(root, adapter, now=NOW)["counts"]["inserted"] == 1

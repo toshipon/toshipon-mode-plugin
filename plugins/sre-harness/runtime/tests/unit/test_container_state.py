@@ -197,6 +197,49 @@ def test_import_refuses_to_write_through_a_symlink(tmp_path):
     assert run("import", root, tar_of([("registry/RG-0001/v0001.md", b"x")]))[0] == 3
 
 
+def test_import_checks_every_target_before_it_replaces_any(tmp_path):
+    root = tmp_path / "volume" / "sre-harness"
+    (root / "runs" / "zz").mkdir(parents=True)  # a directory where the tar has a file
+    old = root / "registry" / "RG-0001"
+    old.mkdir(parents=True)
+    (old / "v0001.json").write_text("OLD json")
+    data = tar_of(
+        [
+            ("registry/RG-0001/v0001.json", b"NEW json"),
+            ("runs/zz", b"file"),
+            ("registry/RG-0001/v0002.json", b"NEW"),
+        ]
+    )
+    assert run("import", root, data)[0] == 2
+    assert (old / "v0001.json").read_text() == "OLD json"
+    assert not (old / "v0002.json").exists()
+    assert sorted(p.name for p in root.iterdir()) == ["knowledge", "registry", "runs"]
+
+
+def test_import_refuses_a_symlink_on_the_way_to_any_target_before_replacing(tmp_path):
+    root = tmp_path / "volume" / "sre-harness"
+    (root / "registry").mkdir(parents=True)
+    (root / "runs").symlink_to(tmp_path)
+    data = tar_of([("registry/RG-0001/v0001.md", b"x"), ("runs/r/documents.jsonl", b"{}")])
+    assert run("import", root, data)[0] == 3
+    assert not (root / "registry" / "RG-0001").exists()
+
+
+def test_a_restored_index_gets_its_writer_lock_back(indexed, tmp_path):
+    code, data = run("backup", root_of(indexed))
+    assert code == 0
+    restored = tmp_path / "restored" / "sre-harness"
+    restored.parent.mkdir()
+    assert run("restore", restored, data)[0] == 0
+    lock = restored / "knowledge" / "writer.lock"
+    assert lock.is_file() and lock.stat().st_size == 0
+    assert lock.stat().st_mode & 0o777 == 0o600
+    # A backup of the restored volume now holds the lock, as one of the original volume does.
+    descriptor = container_state._lock(restored, create=False)
+    assert descriptor is not None
+    os.close(descriptor)
+
+
 def test_a_tar_that_is_not_one_is_exit_2(tmp_path):
     root = tmp_path / "volume" / "sre-harness"
     root.parent.mkdir()
