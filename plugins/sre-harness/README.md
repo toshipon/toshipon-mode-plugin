@@ -134,7 +134,8 @@ $H iac validate --plan "$D/iac/approver_is_implementer/plan.json" \
 | `runs list` | 保存先 | 標準出力だけ | なし | 保存先が git の作業ツリーの中なら 3 | ローカル |
 | `knowledge update` | `--source file --input <JSON>`、`knowledge/config.json` | `<ルート>/knowledge/index.sqlite3`（run は作りません。`--dry-run` は何も書きません） | なし | 設定が無い、置換の循環、FTS5 が無いは 2。別の writer が動いていれば何も書かずに 1 | ローカル |
 | `knowledge status` | 索引 | 標準出力だけ（generation、SQLite と FTS5、ソースの cursor、status 別の件数） | なし | 索引の schema version が違えば 2 | ローカル |
-| `knowledge search` | 索引、`knowledge/config.json`、`--principal`（必須）と scope・facet・query・予算 | 標準出力だけ（`knowledge-search-result` の JSON）。何も書きません | なし | 必須が予算に入らない（`mandatory_overflow`）、索引が今の設定に追随していない（`stale_index`）は 1。principal が不明か設定が無いと 3。索引が無い、引数の誤りは 2 | ローカル（読み取りだけ） |
+| `knowledge search` | 索引、`knowledge/config.json`、`--principal`（必須）と scope・facet・query・予算 | 標準出力（`knowledge-search-result` の JSON）。`--task` を付けたときだけ `<ルート>/knowledge/tasks/<hash>.jsonl` に追記します | なし | 必須が予算に入らない（`mandatory_overflow`）、索引が今の設定に追随していない（`stale_index`）、タスク累計を超える（`task_budget_exhausted`）は 1。principal が不明か設定が無いと 3。索引が無い、引数の誤りは 2 | ローカル（読み取りだけ） |
+| `knowledge fetch` | 索引、`knowledge/config.json`、`--principal` と `--id`（必須）、レコードの出典（registry の artifact、run の `documents.jsonl`、bare リポジトリ） | 標準出力（`knowledge-fetch-result` の JSON）。`--task` を付けたときだけタスク累計に追記します | なし | 取得できない出典がある（`incomplete`）、取り下げ済み（`withdrawn`）、1 行も入らない（`max_tokens_too_small`）、`stale_index`、`task_budget_exhausted` は 1。principal が不明か設定が無いと 3。ID の形の誤り、`--offset` が末尾より後ろ、索引が無いは 2 | ローカル（読み取りだけ。git は bare リポジトリの object を読むだけで fetch しません） |
 
 exit code の意味はすべての段で同じです。
 
@@ -174,7 +175,7 @@ exit code の意味はすべての段で同じです。
 | run | `<ルート>/runs/<run_id>/`。毎回新しいディレクトリで、既存の run は上書きしません |
 | 承認の記録 | `<ルート>/registry/<RG-id>/`。版は追記だけです |
 | bare リポジトリ | `<ルート>/cache/git/`。run をまたいで使います |
-| knowledge index | `<ルート>/knowledge/`。`config.json`（人が書く設定）、`index.sqlite3`（索引）、`writer.lock` |
+| knowledge index | `<ルート>/knowledge/`。`config.json`（人が書く設定）、`index.sqlite3`（索引）、`writer.lock`、`tasks/<hash>.jsonl`（タスク累計の記録） |
 | 権限 | ディレクトリ 0700、ファイル 0600 |
 
 run にはレビュー本文、diff、文書の section が入ります。消すときは `runs/<run_id>/` を、bare リポジトリは `cache/git/` を削除してください（次の実行で作り直します）。ホームディレクトリを git で管理している場合、既定の場所は拒否されます。`AI_HARNESS_HOME` にリポジトリの外のディレクトリを指定してください。
@@ -193,7 +194,7 @@ run にはレビュー本文、diff、文書の section が入ります。消す
 
 #### knowledge search
 
-`knowledge search` は、1 つの作業に当てはまる承認済みのレコードを、token の予算の中で返します。LLM もネットワークも使わず、結果のキャッシュも持ちません。同じ引数、同じ generation、同じ時刻なら、出力は byte 単位で同じです。
+`knowledge search` は、1 つの作業に当てはまる承認済みのレコードを、token の予算の中で返します。LLM もネットワークも使わず、結果のキャッシュも持ちません。同じ引数、同じ generation、同じ時刻なら、出力は byte 単位で同じです（`--task` を付けたときは、`budget.task` の累計だけが呼び出しごとに進みます）。
 
 合成データで試す手順です（「最初に試す手順」の準備を済ませた端末で実行します）。
 
@@ -210,7 +211,7 @@ $H knowledge search --principal workspace-a --project project-beta --component a
   --path services/audit-log/main.tf --resource-type audit-log --max-tokens 4000
 ```
 
-1 つ目は `status: ok` で exit 0 です。必須 3 件（639 token）と任意 4 件を返し、入らなかった 22 件を `truncated` に数えます。2 つ目は、必須 14 件（3702 token）が既定の 1500 token に入らないので、`status: mandatory_overflow` で exit 1 です。`records` は空で、`mandatory.ids` に 14 件の ID が並びます。3 つ目は上限を上げた呼び直しで、exit 0 です。`workspace-b` で `project-gamma` を検索すると、organization のレコードだけが返ります。
+1 つ目は `status: ok` で exit 0 です。必須 3 件（685 token）と任意 3 件を返し、入らなかった 23 件を `truncated` に数えます。2 つ目は、必須 14 件（3909 token）が既定の 1500 token に入らないので、`status: mandatory_overflow` で exit 1 です。`records` は空で、`mandatory.ids` に 14 件の ID が並びます。3 つ目は上限を上げた呼び直しで、exit 0 です。`workspace-b` で `project-gamma` を検索すると、organization のレコードだけが返ります。
 
 引数は次のとおりです。
 
@@ -220,15 +221,17 @@ $H knowledge search --principal workspace-a --project project-beta --component a
 - `--query` は任意のレコードの順位付けと絞り込みにだけ使います。語の一致（`knowledge update` と同じ分かち書き）で、1 語でも合うレコードが残ります。FTS5 の構文や引用符を入れても、語として扱います。検索できる語が無い query（1 文字、記号だけ）は、query なしと同じです。
 - `--topic` と `--decision-id` は任意のレコードを絞ります。必須の集合は変えません。
 - `--include-proposed` は `proposed` のレコードを `proposed` の配列で別に返します。必須にはならず、`records` にも必須の集合にも入りません。予算は `records` の後に使います。
-- `--max-tokens`（既定 1500）は 1 回の search の上限です。`--stale-after-hours`（既定 168）は鮮度の閾値です。`--task` を付けても、この版ではタスクの累計は数えません（`budget.task` は常に null）。
+- `--max-tokens`（既定 1500）は 1 回の search の上限です。`--stale-after-hours`（既定 168）は鮮度の閾値です。
+- `--task` を付けると、scope の絞り込みに加えて、返した分をタスク累計に足します（下の「タスク累計」）。`--task` を付けなければ累計は数えず、`budget.task` は null です。task の名前は英数字と `.` `_` `-` の 64 文字までです。
 
 出力の読み方です。
 
 | 項目 | 意味 |
 |---|---|
-| `status` | `ok`、`mandatory_overflow`、`stale_index`。`ok` 以外は exit 1 |
+| `status` | `ok`、`mandatory_overflow`、`stale_index`、`task_budget_exhausted`。`ok` 以外は exit 1 |
 | `snapshot` | 読んだ索引の generation と更新時刻 |
 | `budget.used_tokens` | 返したレコード（`records` と `proposed`）の canonical JSON を、UTF-8 の 3 byte を 1 token として数えた合計。`max_tokens` を超えません |
+| `budget.task` | `--task` を付けたときのタスク累計（`id`、`limit`、`used_before`、`used_after`。止まったときは `needed_tokens` も）。付けなければ null |
 | `mandatory` | 必須の件数、token 数、全部入ったか（`complete`）、ID の一覧 |
 | `records` | 必須のレコード、続いて任意のレコード。本文は含まず、要約、`applies_when`、`exceptions`、出典の locator と hash、`freshness`、`why_selected` だけです |
 | `truncated` | 条件に合ったのに予算に入らなかった件数、ID、必要な token 数 |
@@ -236,10 +239,11 @@ $H knowledge search --principal workspace-a --project project-beta --component a
 | `freshness` | 返したレコードのうち `stale` と `unknown` の件数、成功していない出典の名前 |
 | `superseded` | `--decision-id` に置換済みの決定を指定したときの後継の ID |
 
-止まる条件は次の 3 つです。どれも部分的な結果を `ok` として返しません。
+止まる条件は次の 4 つです。どれも部分的な結果を `ok` として返しません。
 
 - 必須のレコードの合計が `--max-tokens` を超えた（`mandatory_overflow`、exit 1）。必須を黙って省かないので、続けるには上限を上げて呼び直します。
 - 索引を作ったときの `config.json` と今の `config.json` が違う（`stale_index`、exit 1）。読める範囲や、取り込みで外した reader が変わっているかもしれないので、何も返しません。`knowledge update` を実行し直してください。
+- `--task` のタスク累計を、今回返す分で超える（`task_budget_exhausted`、exit 1）。何も返さず、累計にも足しません。
 - principal が不明、設定が無い（exit 3）。索引が無い、引数の誤り（exit 2）。
 
 順位付けは次の順です。必須のレコードは query を使わずに同じ順で並べます。
@@ -269,6 +273,97 @@ search は出典を読みに行かないので、`fresh` は「出典の取り�
 
 - 語の一致なので、言い換えた query は拾いません（合成データの `paraphrase` の task がその例です）。必須のレコードは query に依存しないので、言い換えで必須が漏れることはありません。任意のレコードは漏れます。
 - token の数は見積もりで、実際の tokenizer の数とは違います。
+
+#### knowledge fetch
+
+`knowledge fetch` は、1 つのレコードの `evidence` が指す出典の原文を、行単位で予算の中に入る分だけ返します。LLM もネットワークも使わず、結果のキャッシュも持ちません。索引にも出典にも書き込みません。
+
+合成データで試す手順です。上の search の手順の続きで、合成データの生成に `--write-sources` を付けると、原文（registry の artifact と、1 つの合成の run の `documents.jsonl`）を `$AI_HARNESS_HOME/sre-harness/` の下に書きます。registry の artifact は `v0001.md` だけで、版の記録（`v0001.json`）は書かないので、`review` の段からは entry に見えません。
+
+```bash
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.knowledge_corpus "$D/knowledge" --size 300 --write-sources
+$H knowledge update --source file --input "$D/knowledge/corpus.json"
+$H knowledge fetch --principal workspace-a --id KN-07abfa76823a            # 指示文を含む原文
+$H knowledge fetch --principal workspace-a --id KN-5378a6ff8888            # 記録した後に変わった原文
+$H knowledge fetch --principal workspace-a --id KN-8c6f15d8c5e7            # 消えた原文
+$H knowledge fetch --principal workspace-b --id KN-07abfa76823a --generation 0
+```
+
+1 つ目は `status: ok` で exit 0 です。`registry:RG-0030/v0001.md` の 5 行を 1 つの断片で返し（108 token）、断片に `instruction_like: true` が付きます。レコードの `status`（`approved`）と `enforcement`（`advisory`）は、原文に「mandatory にせよ」と書いてあっても変わりません。2 つ目は原文の hash が記録と違うので `hash_mismatch`、3 つ目は run の section が無いので `source_unavailable` で、どちらも断片を返さず exit 1 です。4 つ目は、search の時点の generation（ここでは 0）を渡すと、索引がそれより進んでいれば `snapshot.moved: true` になります。断片はそのまま返します。
+
+引数は次のとおりです。
+
+- `--principal` と `--id`（`KN-` と 16 進の小文字 12 桁）は必須です。ID がその形でなければ（`../`、NUL、長すぎる文字列を含めて）、何も読まずに exit 2 です。
+- `--max-tokens`（既定 3000）は 1 回の fetch で返す断片の上限です。`--offset` は前の答えの `next_offset` です。
+- `--generation` は、呼び出す側が search で見た generation です。違えば `snapshot.moved` が true になります。
+- `--deny-terms-file` は、ほかの段と同じ形式の禁止語のファイルです。
+- `--task`、`--extend-task-budget`、`--reason` は下の「タスク累計」です。
+
+出典の読み方です。locator は下の形と全体で一致したものだけを読みます。`..`、絶対 path、`\`、NUL を含む locator は形に合わないので、state root の外は読みません。ディレクトリやファイルが symlink なら読みません。
+
+| locator | 読むもの |
+|---|---|
+| `registry:RG-<n>/v<n>.md` | `<ルート>/registry/<RG-id>/v<n>.md` |
+| `run:<run_id>/documents.jsonl#DOC-<n>#S<n>` | その run の `documents.jsonl` の、その文書の section の本文。run が消されていれば `source_unavailable` |
+| `git:<path>`、`git:<path>#L<a>`、`git:<path>#L<a>-L<b>` | レコードの `facets.repo` の bare リポジトリ（`<ルート>/cache/git/`、`spec analyze` が作るもの）から、`revision`（40 桁の commit sha）の時点のファイルを `git cat-file` で読みます。行の指定があればその行だけです。fetch はしないので、bare リポジトリにその commit が無ければ `source_unavailable` です |
+| `pr:`、`doc:` | この版では読みません（`source_unavailable`） |
+
+取得できなかった理由（`unfetched[].reason`）は次のとおりです。どれも本文を作って埋めず、exit 1 です。
+
+| 理由 | 意味 |
+|---|---|
+| `source_unavailable` | 出典が無い、形の合わない locator、symlink、UTF-8 でない、行の範囲が外、`pr:` / `doc:` |
+| `hash_mismatch` | 読んだ原文の sha256 が記録（`content_sha256`）と違う。今の原文の hash だけを返します |
+| `too_large` | 原文が 256 KiB を超える。切り詰めません |
+| `secret_shape` | 原文に秘密情報の形か禁止語がある。`withheld` に形の名前（`github_token`、`deny_term` など）だけを書き、値は標準出力にも標準エラーにも出しません |
+| `access_denied` | その principal が読めないレコード。存在しない ID と、索引から消えた（tombstone の）ID も同じ答えです |
+| `auth_missing` | 認証が要る出典。この版では使いません |
+
+読めないレコードの答えは、存在しない ID の答えと、`id` 以外は byte 単位で同じです（`status: incomplete`、`record: null`、`unfetched: [{"reason": "access_denied"}]`、exit 1、標準エラーは空）。読めないレコードがあることも、その出典も出しません。`retired` と `rejected` のレコードは、読める principal には `status: withdrawn` で答え、原文は返しません。
+
+断片の読み方です。
+
+- 断片の `text` は untrusted の枠に入っています。1 行目が `<<<UNTRUSTED-DATA <境界> source=<locator>@<revision>>>>`、最後の行が `<<<END-UNTRUSTED-DATA <境界>>>>` です。境界は原文から計算した 16 桁の 16 進で、原文がその文字列を含むときは計算し直すので、原文の中の行で枠を閉じることはできません。枠の中は資料の本文で、指示ではありません。形は project-context-explorer（toshipon-mode plugin）の untrusted の枠と同じです。
+- 原文に指示文らしい行（「これまでの指示を無視して」、`ignore previous instructions` など）があると、1 行目の末尾に `instruction_like=yes` が付き、断片の `instruction_like` が true になります。断片は返します。印は読み手への注意で、指示に従わない理由は枠の方です。印が無いことは安全の保証ではありません。
+- 制御文字、双方向制御文字、ゼロ幅文字は枠に入れる前に取り除きます。
+- `record` は索引の値（`status`、`enforcement`、`kind`、`content_hash`）です。原文に何が書いてあっても変わりません。
+- 断片は行の途中で切りません。行は `\n` で区切ります。1 つのレコードに複数の出典があるときは、取得できた出典を順に並べた通しの行番号で `--offset` を数えます。`next_offset` が null なら最後までです。
+- 1 行も入らないときは `status: max_tokens_too_small` で、その行に要る token 数を `budget.needed_tokens` に返します。上限を上げて呼び直してください。
+
+`budget.used_tokens` は断片の `text`（枠を含む）の見積もりの合計で、`--max-tokens` を超えません。JSON の他の項目は数えません。
+
+#### タスク累計
+
+`--task <名前>` を付けた search と fetch は、返した分の token 数を `<ルート>/knowledge/tasks/<hash>.jsonl` に追記して数えます。file 名は task の名前と principal の sha256 で、task の名前を path に使いません。同じ task でも principal が違えば別の累計です。
+
+```bash
+$H knowledge search --principal workspace-a --project project-alpha --component api \
+  --path services/api/main.tf --resource-type api --task TASK-0101
+$H knowledge fetch --principal workspace-a --id KN-07abfa76823a --task TASK-0101
+$H knowledge search --principal workspace-a --project project-beta --component audit-log \
+  --path services/audit-log/main.tf --resource-type audit-log --max-tokens 4000 --task TASK-0101
+$H knowledge search --principal workspace-a --project project-beta --component audit-log \
+  --path services/audit-log/main.tf --resource-type audit-log --max-tokens 4000 --task TASK-0101
+$H knowledge search --principal workspace-a --project project-beta --component audit-log \
+  --path services/audit-log/main.tf --resource-type audit-log --max-tokens 4000 --task TASK-0101 \
+  --extend-task-budget 4000 --reason "audit-log の必須が多い"
+```
+
+1 つ目は 1302 token、2 つ目は 108 token、3 つ目は 3909 token を足して、累計は 5319 token です。4 つ目は、同じ 3909 token を足すと既定の上限 6000 を超えるので、`status: task_budget_exhausted` で exit 1 です。何も返さず、累計にも足しません。`budget.task` に `used_before: 5319`、`used_after: 5319`、`needed_tokens: 3909` が入ります。5 つ目は上限を 4000 上げて（10000）通り、累計は 9228 になります。
+
+止め方の規則です。「今回返す分を足すと上限を超える」ときに止めます。累計がちょうど上限でも、返すものが 0 token の呼び出しは通ります。黙って縮めて上限に収めることはしません。
+
+- 上限は既定 6000 と、それまでの延長の合計です。
+- `--extend-task-budget <N> --reason <理由>` で延長します。`--task` と `--reason` の両方が要り、どちらかが欠けると何も書かずに exit 2 です。理由は 1 行 200 文字までで、制御文字と秘密情報の形を含むものは exit 2 で拒否します（理由の文は表示しません）。延長は記録に残り、取り消せません。
+- 記録の 1 行は、呼び出し（`command`、返したレコードの ID、足した token 数、必要だった token 数、足したかどうか、generation、時刻、principal）か、延長（いくつ、理由、principal、時刻）です。要約や原文や query は書きません。
+- 2 つのセッションが同じ task に同時に追記しても、行は壊れず、数え漏れません。読んで、決めて、追記するまでを file の flock の下で行い、1 回の write で追記するからです。
+- 記録の行が壊れていたら、推測せずに exit 2 で止まります。file を移せば、その task の累計は 0 からになります。
+
+限界:
+
+- harness が数えられるのは、この CLI を `--task` 付きで通った分だけです。セッションがファイルを直接読んだ分や、`--task` を付けなかった呼び出しは数えません。
+- 見積もりは UTF-8 の 3 byte を 1 token とする高めの値です。実際の tokenizer の数とは違います。入力 token や利用枠が減るかは測っていません。
+- 延長は理由を記録するだけで、誰が延長してよいかは決めません。principal は本人確認ではありません。
 
 ### 認証
 
@@ -408,6 +503,7 @@ toshipon-mode plugin の Autonomous Improvement Harness v2（`plugins/toshipon-m
 - 実際の Slack と Confluence の export の全形式。読むのは下に書いた形だけで、Slack の channel ディレクトリ全体や Confluence の HTML export には対応していません。
 - patch の header 解析と git の `git apply` の解釈の一致。許可する形を狭く決めてそれ以外を拒否する作りで、確かめたのは git 2.54 と CI の git だけです。
 - bare リポジトリの fetch は `fetch.fsckObjects=true` で行います。古い履歴に fsck の警告（壊れた日付、tree の並び順など）がある実際のリポジトリで fetch が失敗するかは確かめていません。失敗したら default branch の fetch で exit 1 になります。
+- `knowledge fetch` の `git:` の locator を、`spec analyze` が実際に作った bare リポジトリで読むこと。テストはローカルで作った合成の bare リポジトリだけを通ります。`pr:` と `doc:` の出典は読みません。タスク累計の既定値（6000）と fetch の既定の上限（3000）が実際の作業で妥当かも測っていません。
 - `knowledge search` の検索の質。合成データで確かめたのは、必須の集合がラベルと一致すること、予算と止まる条件、置換、漏れないことだけです。任意のレコードの recall と precision、既定の予算（1500 token）と鮮度の閾値（168 時間）が実際の作業で妥当かは測っていません。
 - `impact-report.md` の自動リンク対策（`www.`、`@`、`://` の文字参照化）が GitHub の Markdown 表示で実際にリンクにならないこと。テストは文字列に元の形が残らないことだけを確かめています。
 
