@@ -44,20 +44,6 @@ UNMAPPED = "unmapped"
 INVALID = "invalid"
 
 
-def project_of(settings, repo):
-    """(project id, project) holding `repo`, or (None, the reason it has none)."""
-    found = [
-        (name, project)
-        for name, project in settings["projects"].items()
-        if repo in project["repos"]
-    ]
-    if not found:
-        return None, "repo_not_in_config"
-    if len(found) > 1:
-        return None, "repo_in_several_projects"
-    return found[0]
-
-
 def norms(latest, project_id, project):
     """Scope, access, enforcement, applies_when and exceptions of one entry.
 
@@ -180,7 +166,7 @@ class ReviewRegistryAdapter:
         items, left_out = [], []
         for versions in found.values():
             latest = versions[-1]
-            project_id, project = project_of(settings, latest["repo"])
+            project_id, project = config.project_of(settings, latest["repo"])
             if project_id is None:
                 left_out.append(skipped(latest, UNMAPPED, project))
                 continue
