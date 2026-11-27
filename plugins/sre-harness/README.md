@@ -40,6 +40,13 @@ export SRE_HARNESS_PYTHON=~/.venvs/sre-harness/bin/python
 "${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" runs list
 ```
 
+Python は 3.10 以上で、`sqlite3` が FTS5 を持つ build を使ってください（knowledge index が使います）。launcher は `SRE_HARNESS_PYTHON` を、無ければ PATH の先頭の `python3` を起動します。macOS の `/usr/bin/python3`（Xcode Command Line Tools のもの）は 3.10 より古いことがあり、その場合は対応しません。`sqlite3` に `enable_load_extension` が無い build もあります。対応する Python は、たとえば次のどちらかで入手できます。版は 3.10 以上なら固定しません。
+
+- uv: `uv venv --python '>=3.10' ~/.venvs/sre-harness` で venv を作り、`uv pip install --python ~/.venvs/sre-harness/bin/python -r "${CLAUDE_PLUGIN_ROOT}/runtime/requirements.txt"` で依存を入れます。
+- Homebrew: `brew install python` で入る `python3` で、上の `python3 -m venv` の手順を実行します。
+
+入れた後に `"${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" knowledge status` を実行すると、`python_version`、`sqlite_version`、`fts5`（FTS5 があるか）、`extension_loading`（`sqlite3` が SQLite の拡張を読み込めるか。判定するだけで、何も読み込みません）が出ます。`fts5` が `false` なら `knowledge update` と `knowledge search` は exit 2 で止まります。`extension_loading` が `false` でも、今の版はどの段も止まりません（ベクトル検索などの拡張を使っていないためです）。
+
 コマンドは launcher `scripts/sre-harness <group> <stage>` で実行します。launcher は `SRE_HARNESS_PYTHON`（無ければ `python3`）を `-I`（isolated mode）で起動して `runtime/sre_harness_main.py` を実行し、`runtime/` だけを `sys.path` に足します。作業ディレクトリ、`PYTHONPATH` などの `PYTHON*` 環境変数、user site-packages は読みません。利用者のリポジトリを作業ディレクトリにして実行しても、そこにある `argparse.py` や `json.py` は harness の中で import されません。`python3 -m sre_harness` で直接起動すると作業ディレクトリが `sys.path` の先頭に入るので、launcher を使ってください。
 
 ## 最初に試す手順（合成データ。認証もネットワークも要りません）
@@ -171,7 +178,7 @@ update は 2 回とも exit 0 で、registry の 5 件が入ります（`RG-9006
 | `iac validate` | plan、証跡ディレクトリ、delivery の記録 | `transition-check.json`、`risk.json` | なし | 契約違反は 1。入力が読めないなら run を作らず 2 | ローカルの読み取り。opa は同梱 policy だけ |
 | `runs list` | 保存先 | 標準出力だけ | なし | 保存先が git の作業ツリーの中なら 3 | ローカル |
 | `knowledge update` | `--source file --input <JSON>`、`--source review-registry`（`<ルート>/registry/` を読むだけ）か `--source spec-run --run <run_id> --project <project>`（run の `decisions.json`、`requirements.json`、`trace.json`、`documents.jsonl` を読むだけ）、`knowledge/config.json` | `<ルート>/knowledge/index.sqlite3`（run は作りません。`--dry-run` は索引を書きません） | なし | 設定が無い、置換の循環、FTS5 が無い、`review-registry` と `spec-run` に `--input` を付けた、`spec-run` 以外に `--run` か `--project` を付けた、`spec-run` の project が設定に無い、run の台帳が schema か不変条件に反するは 2。別の writer が動いていれば何も書かずに 1 | ローカル。registry と run は読むだけ |
-| `knowledge status` | 索引 | 標準出力だけ（generation、SQLite と FTS5、ソースの cursor、status 別の件数） | なし | 索引の schema version が違えば 2 | ローカル |
+| `knowledge status` | 索引 | 標準出力だけ（generation、Python と SQLite の版、FTS5 と拡張の読み込みの可否、ソースの cursor、status 別の件数） | なし | 索引の schema version が違えば 2 | ローカル |
 | `knowledge search` | 索引、`knowledge/config.json`、`--principal`（必須）と scope・facet・query・予算 | 標準出力（`knowledge-search-result` の JSON）。`--task` を付けたときだけ `<ルート>/knowledge/tasks/<hash>.jsonl` に追記します | なし | 必須が予算に入らない（`mandatory_overflow`）、索引が今の設定に追随していない（`stale_index`）、タスク累計を超える（`task_budget_exhausted`）は 1。principal が不明か設定が無いと 3。索引が無い、引数の誤りは 2 | ローカル（読み取りだけ） |
 | `knowledge fetch` | 索引、`knowledge/config.json`、`--principal` と `--id`（必須）、レコードの出典（registry の artifact、run の `documents.jsonl`、bare リポジトリ） | 標準出力（`knowledge-fetch-result` の JSON）。`--task` を付けたときだけタスク累計に追記します | なし | 取得できない出典がある（`incomplete`）、取り下げ済み（`withdrawn`）、1 行も入らない（`max_tokens_too_small`）、`stale_index`、`task_budget_exhausted` は 1。principal が不明か設定が無いと 3。ID の形の誤り、`--offset` が末尾より後ろ、索引が無いは 2 | ローカル（読み取りだけ。git は bare リポジトリの object を読むだけで fetch しません） |
 | `knowledge context` | `--task-file`（schema `task-context`）、索引、`knowledge/config.json` | 標準出力（`knowledge-search-result` の JSON）。task file の `task_id` のタスク累計に追記します | なし | search と同じ（`mandatory_overflow`、`stale_index`、`task_budget_exhausted` は 1、principal が不明か設定が無いと 3）。task file が schema に通らない、JSON でない、256 KiB を超える、無いは 2 | ローカル（task file は読むだけ） |
@@ -233,7 +240,7 @@ run にはレビュー本文、diff、文書の section が入ります。消す
 - `complete: false`（部分的な取り込み）では、入力に無いレコードを消しません。`complete: true` のときだけ、消えたものを tombstone にします。
 - `access` の無いレコードと、どの principal も持たない reader を名指しするレコードは、索引に入れずに `rejected` に理由を付けて出します。
 - WAL を使うので、ローカルディスクに置いてください。ネットワークファイルシステムでは壊れることがあります。
-- Python の `sqlite3` に FTS5 が無いと、`knowledge update` は exit 2 で止まります。`knowledge status` の `fts5` で確かめられます。
+- Python の `sqlite3` に FTS5 が無いと、`knowledge update` は exit 2 で止まります。`knowledge status` の `fts5` で確かめられます。`knowledge status` の `extension_loading` は、`sqlite3` が SQLite の拡張を読み込めるか（接続に `enable_load_extension` があり、呼べるか）です。索引は拡張を使わないので、`false` でも止まりません。
 - アクセス区分（`access` の `classification` と `readers`、`config.json` の principal）は本人確認ではありません。同じ OS の利用者は SQLite のファイルを直接読めます。防げるのは、別 project の知識がうっかり結果に混ざることです。
 - **必須（`mandatory`）にするのは人の操作だけです。** レコードが `mandatory` になるのは、人が `review approve` の `--knowledge-enforcement mandatory` で明示し、その entry の最新版が承認のときだけです。`review-registry` の既定、`spec-run` の取り込み、移行したレコードは、どれも `advisory` です。文書に「approved」と書いてあっても必須にはなりません。
 
@@ -303,6 +310,7 @@ $H knowledge search --principal workspace-a --project project-beta --component a
 - scope は `--project`、`--component`（`--project` が要ります）、`--task` の連なりです。organization のレコードと、指定した段までのレコードだけが対象です。`--project` だけなら component と task のレコードは入りません。
 - `--repo`、`--path`（繰り返せます）、`--resource-type` は facet の照合です。レコードがその facet を持たないとき、または引数で指定しないときは、合うとみなします。path は `path_globs` と宣言的検査と同じ glob（`**` は directory をまたぎ、`*` はまたがない）で照合します。
 - `--query` は任意のレコードの順位付けと絞り込みにだけ使います。語の一致（`knowledge update` と同じ分かち書き）で、1 語でも合うレコードが残ります。FTS5 の構文や引用符を入れても、語として扱います。検索できる語が無い query（1 文字、記号だけ）は、query なしと同じです。
+- `--expand`（繰り返せます）は、呼び出し側が広げた言い換え語です。各語を `--query` と同じ分かち書きで検索の語にし、`--query` の語と合わせて語の OR で一致させます。使うのは任意のレコードの絞り込みと順位付けだけで、必須の集合と必須の token は変えません。語は集合として扱うので、順序と重複は出力を変えません。1 回の呼び出しで 32 語まで、1 語 64 文字までで、超えると exit 2 です。制御文字と書式文字は落とし、FTS5 の構文や引用符は語として扱います。`--query` を付けずに `--expand` だけでも呼べます。索引は変えません。`knowledge context` も同じ `--expand` を受けます。
 - `--topic` と `--decision-id` は任意のレコードを絞ります。必須の集合は変えません。
 - `--include-proposed` は `proposed` のレコードを `proposed` の配列で別に返します。必須にはならず、`records` にも必須の集合にも入りません。予算は `records` の後に使います。
 - `--max-tokens`（既定 1500）は 1 回の search の上限です。`--stale-after-hours`（既定 168）は鮮度の閾値です。
@@ -314,6 +322,7 @@ $H knowledge search --principal workspace-a --project project-beta --component a
 |---|---|
 | `status` | `ok`、`mandatory_overflow`、`stale_index`、`task_budget_exhausted`。`ok` 以外は exit 1 |
 | `snapshot` | 読んだ索引の generation と更新時刻 |
+| `retrieval` | 任意のレコードを一致させた方式。`method`（この版は `fts5` だけ）、`query_terms`（`--query` の検索の語の数）、`expansion`（`--expand` が無ければ null、あれば `source: caller` と言い換え語の検索の語の数）。予算には数えません |
 | `budget.used_tokens` | 返したレコード（`records` と `proposed`）の canonical JSON を、UTF-8 の 3 byte を 1 token として数えた合計。`max_tokens` を超えません |
 | `budget.task` | `--task` を付けたときのタスク累計（`id`、`limit`、`used_before`、`used_after`。止まったときは `needed_tokens` も）。付けなければ null |
 | `mandatory` | 必須の件数、token 数、全部入ったか（`complete`）、ID の一覧 |
@@ -355,7 +364,7 @@ search は出典を読みに行かないので、`fresh` は「出典の取り�
 
 限界:
 
-- 語の一致なので、言い換えた query は拾いません（合成データの `paraphrase` の task がその例で、下の「評価」に言い換えのある task と無い task の recall を分けて載せています）。必須のレコードは query に依存しないので、言い換えで必須が漏れることはありません。任意のレコードは漏れます。
+- 語の一致なので、言い換えた query は拾いません（合成データの `paraphrase` の task がその例で、下の「評価」に言い換えのある task と無い task の recall と、言い換えの case の値を載せています）。必須のレコードは query に依存しないので、言い換えで必須が漏れることはありません。任意のレコードは漏れます。言い換え語を `--expand` で渡すと、その語に一致するレコードは拾えます。
 - token の数は見積もりで、実際の tokenizer の数とは違います。
 
 #### knowledge fetch
@@ -851,6 +860,61 @@ cd "${CLAUDE_PLUGIN_ROOT}/runtime"
 
 見積もりと実際の tokenizer の差は CI では測りません。測るときは、合成データの task のうち数件について、`knowledge context` と `knowledge fetch` の標準出力を Anthropic の token counting API（`messages/count_tokens`）か利用中の tokenizer に渡し、`budget.used_tokens` と並べます。言えるのは、測った文字列の範囲のことだけです。この README には実測値を書いていません。
 
+### 言い換えの case
+
+`--paraphrase` は、語の一致で拾えない言い換えを、検索の仕方ごとに測ります。合成データの言い換えの case（`knowledge_corpus.py` の `PARAPHRASES`）は 36 個で、3 つの区分に 12 個ずつあります。
+
+- `ja`: レコードも query も日本語で、語が違う（例: 「保持期間」に対して「どれくらい残しておくか」）。
+- `en`: レコードも query も英語で、語が違う（例: 「request deadline」に対して「maximum wait before a call gives up」）。
+- `cross`: レコードと query の言語が違う（例: 日本語の「暗号化」に対して「scrambling stored contents so outsiders cannot read them」、英語の「least privilege」に対して「必要な分だけ許可を渡す」）。
+
+どの query も、元の語とも、索引のどのレコードとも検索の語（英数字の語と日本語の 2 文字の並び）を 1 つも共有しないように書いてあります（`tests/unit/test_knowledge_corpus.py` が確かめます）。case のためのレコードは、既存の規模（50 / 300 / 2000 件）の corpus の後ろに足します（どの規模でも 86 件で、表の規模の列は「50 件 + 言い換え 86 件」と書きます）。既存のレコード、task、上の表の値は変わりません。
+
+定義です。
+
+- 正解: case の topic の、case に適用される承認済みの任意のレコード（scope、facet、principal が読める、置換されていない）。必須のレコードは query に関係なく返るので、正解からも返した集合からも除きます。
+- recall: 区分の case をまとめて、返した正解の数 / 正解の数。precision: 返した正解の数 / 返した任意のレコードの数（0 件なら `-`）。
+- 検索の仕方: `fts5-paraphrase` は言い換えの query をそのまま、`fts5-literal` は同じ case を元の語（レコードの言い回し）で検索します。`fts5-literal` は、query が良くなったときの上限の目安です。`caller-expansion` は、言い換えの query に外から渡した言い換え語を `--expand` として付けます（下の手順）。
+- 予算: 既定の 1500 token と、予算で頭打ちにならない 20000 token の両方で出します（`--max-tokens` で変えられます）。
+
+```bash
+cd "${CLAUDE_PLUGIN_ROOT}/runtime"
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.knowledge_eval --paraphrase --size 50 --size 300 --size 2000 --format markdown
+# 言い換え語に広げる側に渡す入力（case の ID と言い換えの query だけ。元の語、正解、レコードの内容は入れません）
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.knowledge_eval --write-expansion-input "$D/expansion-input.json"
+# 広げた語のファイル（{"model": "...", "run": 1, "terms": {"PARA-0001": ["語", ...]}}）を 1 つ以上渡す
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.knowledge_eval --paraphrase --expansions run1.json --expansions run2.json --format markdown
+```
+
+script は LLM を呼ばず、言い換え語のファイルも作りません。ファイルを複数渡すと、ファイルごとの値と、平均・最小・最大・標準偏差を出します。
+
+<!-- 次の表は `--paraphrase --size 50 --size 300 --size 2000 --format markdown` の出力の表です。各列は recall / precision / 返した任意のレコードの数 -->
+
+| 規模 | 予算 | 区分 | case | 正解 | fts5-paraphrase | fts5-literal |
+|---|---|---|---|---|---|---|
+| 50 件 + 言い換え 86 件 | 1500 | ja | 12 | 41 | 0.0000 / - / 0 | 0.9024 / 0.9737 / 38 |
+| 50 件 + 言い換え 86 件 | 1500 | en | 12 | 36 | 0.0000 / - / 0 | 1.0000 / 1.0000 / 36 |
+| 50 件 + 言い換え 86 件 | 1500 | cross | 12 | 40 | 0.0000 / - / 0 | 0.9500 / 1.0000 / 38 |
+| 50 件 + 言い換え 86 件 | 20000 | ja | 12 | 41 | 0.0000 / - / 0 | 1.0000 / 0.9111 / 45 |
+| 50 件 + 言い換え 86 件 | 20000 | en | 12 | 36 | 0.0000 / - / 0 | 1.0000 / 1.0000 / 36 |
+| 50 件 + 言い換え 86 件 | 20000 | cross | 12 | 40 | 0.0000 / - / 0 | 1.0000 / 1.0000 / 40 |
+| 300 件 + 言い換え 86 件 | 1500 | ja | 12 | 85 | 0.0000 / - / 0 | 0.3882 / 0.9167 / 36 |
+| 300 件 + 言い換え 86 件 | 1500 | en | 12 | 36 | 0.0000 / - / 0 | 1.0000 / 1.0000 / 36 |
+| 300 件 + 言い換え 86 件 | 1500 | cross | 12 | 70 | 0.0000 / - / 0 | 0.5286 / 1.0000 / 37 |
+| 300 件 + 言い換え 86 件 | 20000 | ja | 12 | 85 | 0.0000 / - / 0 | 1.0000 / 0.7870 / 108 |
+| 300 件 + 言い換え 86 件 | 20000 | en | 12 | 36 | 0.0000 / - / 0 | 1.0000 / 1.0000 / 36 |
+| 300 件 + 言い換え 86 件 | 20000 | cross | 12 | 70 | 0.0000 / - / 0 | 1.0000 / 1.0000 / 70 |
+| 2000 件 + 言い換え 86 件 | 1500 | ja | 12 | 400 | 0.0000 / - / 0 | 0.0900 / 1.0000 / 36 |
+| 2000 件 + 言い換え 86 件 | 1500 | en | 12 | 36 | 0.0000 / - / 0 | 1.0000 / 1.0000 / 36 |
+| 2000 件 + 言い換え 86 件 | 1500 | cross | 12 | 273 | 0.0000 / - / 0 | 0.1319 / 1.0000 / 36 |
+| 2000 件 + 言い換え 86 件 | 20000 | ja | 12 | 400 | 0.0000 / - / 0 | 0.9625 / 0.8499 / 453 |
+| 2000 件 + 言い換え 86 件 | 20000 | en | 12 | 36 | 0.0000 / - / 0 | 1.0000 / 1.0000 / 36 |
+| 2000 件 + 言い換え 86 件 | 20000 | cross | 12 | 273 | 0.0000 / - / 0 | 1.0000 / 1.0000 / 273 |
+
+主張できる範囲: 合成データでの値です。言い換えはこの corpus の作者が書いた 36 個で、人が書く query の分布は再現しません。`fts5-paraphrase` が任意のレコードを 1 件も返さないのは、そうなるように query を書いたためです。`fts5-literal` の `ja` で precision が 1 にならないのは、既存の topic の語「アラート通知」と「レート制限」が 2 文字の並び「ート」を共有するためです。予算 1500 token で recall が規模とともに下がるのは、正解が増えても予算で頭打ちになるためです。2000 件の `ja` が 20000 token でも 1 にならない（0.9625）のは、「ート」で一致した別の topic のレコードが予算を使い、`alerting` と `rate-limit` の case で正解の一部が予算に入らないためです。
+
+検索方式の比較は測定の後に追記します。
+
 ## 未検証
 
 確かめたこと:
@@ -884,7 +948,7 @@ cd "${CLAUDE_PLUGIN_ROOT}/runtime"
 確かめたのは、合成データで仕組みが動くことだけです（上の「Knowledge Retrieval（V2）の完了条件」と「評価」）。次のことは確かめていません。
 
 - 実際の Claude での消費。入力 token は合成データで見積もった分布だけで、実際の tokenizer の数とも、セッション全体の消費（search と fetch の呼び出し、追加のターン、prompt cache の効き方）とも比べていません。Claude Code の利用枠が減ることは保証しません。知識の入力 token が減っても、全体の消費は増えることも減ることもあります。測るなら、同じ task を 2 つの方式で実際に実行し、呼び出しごとの usage を回数とばらつきを付けて比べる必要があります。
-- 検索の質。合成データの precision と recall はラベルが生成の規則から決まる値で、人が書く query と実際の規範の分布は再現しません。語の一致なので言い換えた query は拾いません（「評価」の言い換えの行）。言い換え語に広げる方式、ベクトルとのハイブリッドは、この版では比べていません（次の版で同じ評価の script で比べます）。
+- 検索の質。合成データの precision と recall はラベルが生成の規則から決まる値で、人が書く query と実際の規範の分布は再現しません。語の一致なので言い換えた query は拾いません（「評価」の言い換えの行と「言い換えの case」）。言い換え語に広げる方式（`--expand`）とベクトルとのハイブリッドを測る道具（`--paraphrase` の `caller-expansion` と、package の外の実験 script `examples/synthetic/knowledge_vector_probe.py`）はありますが、比べた結果はまだありません。
 - 予算と閾値の既定値。search の 1500 token、fetch の 3000 token、タスク累計の 6000 token、鮮度の 168 時間が実際の作業で妥当かは測っていません。
 - アクセス区分は本人確認ではありません。principal の名前、`access` の区分と reader は、別 project の知識がうっかり混ざるのを防ぐだけで、同じ OS の利用者は索引、queue、タスク累計のファイルを直接読み書きできます。
 - ネットワークファイルシステムと複数の host。索引の WAL、writer の flock、タスク累計と decision request の flock と link は、ローカルディスクの 1 台の OS を前提にしています。確かめたのは手元の macOS（SQLite 3.54.1）での thread と別プロセスの同時実行と、`knowledge migrate` と `rollback` の入れ替え（reader が古いファイルを開いたまま読み続けること、WAL の frame を読んでいる reader がいると exit 1 で止まること）だけです。CI の OS と SQLite での結果は、この README を書いた時点では確かめていません。
@@ -1468,6 +1532,8 @@ SRE_HARNESS_REQUIRE_OPA=1 python -m pytest
 python -m pytest tests/e2e/test_completion_scenarios.py
 # 評価の script（合成データの 3 規模。「評価」の表を出す）
 python -m examples.synthetic.knowledge_eval --size 50 --size 300 --size 2000 --format markdown
+# 言い換えの case（「評価」の「言い換えの case」の表を出す）
+python -m examples.synthetic.knowledge_eval --paraphrase --size 50 --size 300 --size 2000 --format markdown
 ```
 
 - テストはネットワークも認証も、本物の `claude` も使いません。例と fixture は合成データだけです。GitHub は fixture transport、git はテストが一時ディレクトリに作る合成リポジトリ、Claude CLI は `guard._run` の差し替えか stub です。
