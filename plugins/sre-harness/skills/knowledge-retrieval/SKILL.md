@@ -10,6 +10,8 @@ argument-hint: "context --task-file <task.json>; fetch --principal <名前> --id
 
 索引（`<ルート>/knowledge/index.sqlite3`）は、利用者が `knowledge update` か `knowledge migrate` で作る。この Skill は索引を作らず、書き換えない。
 
+利用者がコンテナの経路を使っているときは、launcher の代わりに `${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness-container` を呼ぶ。引数と出力と exit code は同じで、task file と patch は今の directory の中の相対 path で渡す（コンテナからは今の directory しか見えない。README の「コンテナの経路」）。
+
 ## 段ごとの入力・出力・失敗・権限
 
 | 段 | コマンド | 入力 | 出力 | 失敗時 | 権限 |
