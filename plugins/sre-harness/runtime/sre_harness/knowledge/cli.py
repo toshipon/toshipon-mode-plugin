@@ -56,13 +56,13 @@ def _update(args, env, out):
     return EXIT_OK
 
 
-def _task(args):
-    """The task to count against, or None without --task. Every check runs before anything is
+def _task(args, task_id):
+    """The task to count against, or None without a task. Every check runs before anything is
     read or written. A reason is never echoed: it is the caller's text."""
     extend, reason = args.extend_task_budget, args.reason
     if extend is None and reason is None:
-        return budget.Task(args.task) if args.task else None
-    if not args.task:
+        return budget.Task(task_id) if task_id else None
+    if not task_id:
         raise InputError("--extend-task-budget and --reason extend a task total: give --task.")
     if extend is None or reason is None:
         raise InputError("--extend-task-budget needs --reason, and --reason needs the extension.")
@@ -76,17 +76,17 @@ def _task(args):
         )
     if privacy.find_secrets(reason):
         raise InputError("--reason has the shape of a secret; it was not recorded.")
-    return budget.Task(args.task, extend, reason)
+    return budget.Task(task_id, extend, reason)
 
 
-def _charge(root, task, args, result, *, command, ids, now):
+def _charge(root, task, principal, result, *, command, ids, now):
     """The task total's answer for a result about to be printed, or None without --task."""
     if task is None:
         return None
     return budget.charge(
         root,
         task,
-        args.principal,
+        principal,
         command=command,
         ids=ids,
         tokens=result["budget"]["used_tokens"],
@@ -98,7 +98,7 @@ def _charge(root, task, args, result, *, command, ids, now):
 def _search(args, env, out):
     if args.component and not args.project:
         raise InputError("--component needs --project: a component belongs to one project.")
-    task = _task(args)
+    task = _task(args, args.task)
     request = search.Request(
         project=args.project,
         component=args.component,
@@ -113,10 +113,15 @@ def _search(args, env, out):
         max_tokens=args.max_tokens,
         stale_after_hours=args.stale_after_hours,
     )
+    return _searched(env, args.principal, request, task, out)
+
+
+def _searched(env, principal, request, task, out):
+    """Run one search, count it against `task` when there is one, and print it."""
     root, now = paths.state_root(env), clock()
-    result = search.run(root, args.principal, request, now)
+    result = search.run(root, principal, request, now)
     returned = [shown["id"] for shown in result["records"] + result["proposed"]]
-    charged = _charge(root, task, args, result, command="search", ids=returned, now=now)
+    charged = _charge(root, task, principal, result, command="search", ids=returned, now=now)
     if charged is not None:
         if not charged.allowed:
             result = {
@@ -129,7 +134,7 @@ def _search(args, env, out):
 
 
 def _fetch(args, env, out):
-    task = _task(args)
+    task = _task(args, args.task)
     request = fetch.Request(
         record_id=args.id,
         max_tokens=args.max_tokens,
@@ -139,7 +144,7 @@ def _fetch(args, env, out):
     )
     root, now = paths.state_root(env), clock()
     result = fetch.run(root, args.principal, request)
-    charged = _charge(root, task, args, result, command="fetch", ids=[args.id], now=now)
+    charged = _charge(root, task, args.principal, result, command="fetch", ids=[args.id], now=now)
     if charged is not None:
         if not charged.allowed:
             result = fetch.exhausted(result, charged.view)
