@@ -154,6 +154,18 @@ def test_a_denied_term_is_withheld_without_the_term(home, tmp_path):
     assert "examplecorp" not in everything(result).lower()
 
 
+def test_a_denied_term_split_by_an_invisible_character_is_still_withheld(home, tmp_path):
+    # The fragment is printed without invisible characters, so the term would reappear whole.
+    text = "# R1\n\nExample\u200bCorp のキューは 14 日\n"
+    index(home, tmp_path, [item("R1", evidence=[registry_evidence(home, "RG-0001", text)])])
+    request = fetch.Request(record_id=rid("R1"), deny_terms=("examplecorp",))
+    result = fetch.run(state_root(home), PRINCIPAL, request)
+    assert [m["reason"] for m in result["unfetched"]] == ["secret_shape"]
+    assert result["withheld"] == [{"locator": "registry:RG-0001/v0001.md", "shapes": ["deny_term"]}]
+    assert result["fragments"] == []
+    assert "examplecorp" not in everything(result).lower()
+
+
 def test_a_run_section_is_read_while_the_run_is_kept(home, tmp_path):
     proof = run_evidence(home, "DOC-0001", "S1", TEXT)
     other = run_evidence(home, "DOC-0002", "S1", "ほかの節\n")
