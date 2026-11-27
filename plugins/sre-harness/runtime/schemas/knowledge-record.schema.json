@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:knowledge-record",
+  "title": "knowledge-record",
+  "description": "One record of the knowledge index (knowledge/index.sqlite3 under the state root). The index is rebuilt from its sources and is never the source of truth. `id` is derived from `origin`; `content_hash` covers the normative fields only. `$defs/item` is what a source adapter hands over before the harness derives the id and the hashes; `$defs/source_file` is the input of the `file` adapter.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "origin",
+    "kind",
+    "scope",
+    "facets",
+    "access",
+    "summary",
+    "applies_when",
+    "exceptions",
+    "status",
+    "enforcement",
+    "confidence",
+    "evidence",
+    "supersedes",
+    "content_hash",
+    "updated_at",
+    "indexed_at",
+    "approval"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "id": { "$ref": "#/$defs/record_id" },
+    "origin": { "$ref": "#/$defs/origin" },
+    "kind": { "$ref": "#/$defs/kind" },
+    "scope": { "$ref": "#/$defs/scope" },
+    "facets": { "$ref": "#/$defs/facets" },
+    "access": { "$ref": "#/$defs/access" },
+    "summary": { "$ref": "#/$defs/summary" },
+    "applies_when": { "$ref": "#/$defs/sentences" },
+    "exceptions": { "$ref": "#/$defs/sentences" },
+    "status": { "$ref": "#/$defs/status" },
+    "enforcement": { "$ref": "#/$defs/enforcement" },
+    "confidence": { "anyOf": [{ "$ref": "#/$defs/confidence" }, { "type": "null" }] },
+    "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+    "supersedes": {
+      "description": "Ids of the records this one replaces. superseded_by is derived, never stored.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/record_id" }
+    },
+    "content_hash": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+    "updated_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "indexed_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+    "approval": { "anyOf": [{ "$ref": "#/$defs/approval" }, { "type": "null" }] }
+  },
+  "$defs": {
+    "record_id": { "type": "string", "pattern": "^KN-[0-9a-f]{12}$" },
+    "name": {
+      "description": "A project, component, task, reader, principal or source name.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "kind": { "enum": ["rule", "decision", "requirement", "policy_check"] },
+    "status": {
+      "enum": ["proposed", "approved", "rejected", "superseded", "retired", "unresolved"]
+    },
+    "enforcement": { "enum": ["mandatory", "advisory"] },
+    "classification": { "enum": ["public", "synthetic", "internal", "confidential"] },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[^\\r\\n]*$" },
+    "sentences": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[^\\r\\n]*$" }
+    },
+    "origin_ref": {
+      "description": "What a source calls the record: the id is sha256 of [kind, key].",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key"],
+      "properties": {
+        "kind": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+        "key": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\r\\n]*$" }
+      }
+    },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/origin_ref/properties/kind" },
+        "key": { "$ref": "#/$defs/origin_ref/properties/key" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "scope": {
+      "description": "Ids below `level` must be null: an organization record names no project.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "project_id", "component_id", "task_id"],
+      "properties": {
+        "level": { "enum": ["organization", "project", "component", "task"] },
+        "project_id": { "anyOf": [{ "$ref": "#/$defs/name" }, { "type": "null" }] },
+        "component_id": { "anyOf": [{ "$ref": "#/$defs/name" }, { "type": "null" }] },
+        "task_id": { "anyOf": [{ "$ref": "#/$defs/name" }, { "type": "null" }] }
+      }
+    },
+    "facets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topic", "resource_type", "repo", "path_globs", "decision_id"],
+      "properties": {
+        "topic": { "$ref": "#/$defs/labels" },
+        "resource_type": { "$ref": "#/$defs/labels" },
+        "repo": { "anyOf": [{ "type": "string", "minLength": 3, "maxLength": 140 }, { "type": "null" }] },
+        "path_globs": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "decision_id": { "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 64 }, { "type": "null" }] }
+      }
+    },
+    "labels": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" }
+    },
+    "access": {
+      "description": "Apart from scope. A principal reads the record when it holds the classification and shares a reader. This is not authentication.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "readers"],
+      "properties": {
+        "classification": { "$ref": "#/$defs/classification" },
+        "readers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/name" }
+        }
+      }
+    },
+    "confidence": {
+      "description": "The source's own value and the vocabulary it comes from.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value", "vocabulary"],
+          "properties": {
+            "value": { "enum": ["candidate", "recurring", "strong"] },
+            "vocabulary": { "const": "review" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value", "vocabulary"],
+          "properties": {
+            "value": { "$ref": "urn:sre-harness:common#/$defs/confidence" },
+            "vocabulary": { "const": "spec" }
+          }
+        }
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["locator", "revision", "content_sha256", "size"],
+      "properties": {
+        "locator": { "type": "string", "minLength": 1, "maxLength": 400, "pattern": "^[^\\s]+$" },
+        "revision": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "content_sha256": { "$ref": "urn:sre-harness:common#/$defs/sha256" },
+        "size": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "approval": {
+      "description": "A copy of the source's approval record.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approver", "decided_at", "via"],
+      "properties": {
+        "approver": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "decided_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "via": { "type": "string", "minLength": 1, "maxLength": 100 }
+      }
+    },
+    "item": {
+      "description": "What a source adapter yields. `access` is optional here so that a record without it is listed as rejected (access_missing) rather than as malformed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "kind", "scope", "summary", "status", "enforcement", "evidence", "updated_at"],
+      "properties": {
+        "origin": { "$ref": "#/$defs/origin" },
+        "kind": { "$ref": "#/$defs/kind" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "facets": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "topic": { "$ref": "#/$defs/labels" },
+            "resource_type": { "$ref": "#/$defs/labels" },
+            "repo": { "$ref": "#/$defs/facets/properties/repo" },
+            "path_globs": { "$ref": "#/$defs/facets/properties/path_globs" },
+            "decision_id": { "$ref": "#/$defs/facets/properties/decision_id" }
+          }
+        },
+        "access": { "$ref": "#/$defs/access" },
+        "summary": { "$ref": "#/$defs/summary" },
+        "applies_when": { "$ref": "#/$defs/sentences" },
+        "exceptions": { "$ref": "#/$defs/sentences" },
+        "status": { "$ref": "#/$defs/status" },
+        "enforcement": { "$ref": "#/$defs/enforcement" },
+        "confidence": { "anyOf": [{ "$ref": "#/$defs/confidence" }, { "type": "null" }] },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "supersedes": { "type": "array", "items": { "$ref": "#/$defs/origin_ref" } },
+        "updated_at": { "$ref": "urn:sre-harness:common#/$defs/timestamp" },
+        "approval": { "anyOf": [{ "$ref": "#/$defs/approval" }, { "type": "null" }] }
+      }
+    },
+    "tombstone": {
+      "description": "A record the source says is gone.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "reason"],
+      "properties": {
+        "origin": { "$ref": "#/$defs/origin_ref" },
+        "reason": { "enum": ["deleted", "expired", "access_revoked"] }
+      }
+    },
+    "source_file": {
+      "description": "Input of `knowledge update --source file`. Items are checked one by one, so a bad item is rejected without failing the file.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "source", "complete", "items"],
+      "properties": {
+        "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+        "source": { "$ref": "#/$defs/name" },
+        "complete": {
+          "description": "false (partial) never turns a record missing from `items` into a tombstone.",
+          "type": "boolean"
+        },
+        "items": { "type": "array", "items": { "type": "object" } },
+        "tombstones": { "type": "array", "items": { "$ref": "#/$defs/tombstone" } }
+      }
+    }
+  }
+}

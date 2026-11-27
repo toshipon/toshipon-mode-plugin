@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:knowledge-config",
+  "title": "knowledge-config",
+  "description": "knowledge/config.json under the state root, written by a person. Projects map repos and components; principals are who searches. A principal reads a record when the record's classification is one of the principal's classifications and the two share a reader. The known readers are the union of every principal's readers. This is not authentication: anyone who can read the state root can read the index.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "projects", "principals"],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "projects": {
+      "type": "object",
+      "propertyNames": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/project" }
+    },
+    "principals": {
+      "type": "object",
+      "propertyNames": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+      "additionalProperties": { "$ref": "#/$defs/principal" }
+    }
+  },
+  "$defs": {
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repos", "default_access", "components"],
+      "properties": {
+        "repos": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$" }
+        },
+        "default_access": { "$ref": "urn:sre-harness:knowledge-record#/$defs/access" },
+        "components": {
+          "type": "object",
+          "propertyNames": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path_globs"],
+            "properties": {
+              "path_globs": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "principal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["readers", "classifications"],
+      "properties": {
+        "readers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" }
+        },
+        "classifications": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:sre-harness:knowledge-record#/$defs/classification" }
+        }
+      }
+    }
+  }
+}
