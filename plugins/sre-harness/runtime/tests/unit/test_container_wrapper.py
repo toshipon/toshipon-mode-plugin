@@ -281,6 +281,23 @@ def test_a_read_only_mount_that_is_not_a_plain_host_directory_is_refused(docker,
     assert calls == []
 
 
+def test_a_read_only_mount_below_a_shared_top_level_directory_is_accepted(docker, tmp_path):
+    # tmp_path is /tmp/... on Linux and /private/var/... on macOS: only what the image itself
+    # uses is reserved, not every top-level directory it has.
+    result, calls = docker(SEARCH, SRE_HARNESS_RO_MOUNTS=str(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert f"{tmp_path.resolve()}:{tmp_path.resolve()}:ro" in options(run_call(calls), "-v")
+
+
+def test_a_read_only_mount_whose_real_path_holds_a_colon_is_refused(docker, tmp_path):
+    target = tmp_path / "d:" / "state"
+    target.mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(target)
+    result, calls = docker(SEARCH, SRE_HARNESS_RO_MOUNTS=str(link))
+    assert result.returncode == 2 and calls == []
+
+
 def test_an_odd_memory_limit_is_refused(docker):
     result, calls = docker(SEARCH, SRE_HARNESS_MEMORY="lots")
     assert result.returncode == 2 and calls == []

@@ -15,8 +15,10 @@ PIDS_LIMIT=128
 TMPFS_SIZE=64m
 DEFAULT_MEMORY=512m
 DEFAULT_VOLUME=sre-harness-state
-# Image paths a read-only mount may not cover (SRE_HARNESS_RO_MOUNTS).
-RESERVED_TOP="bin boot dev etc home lib lib64 media mnt nonexistent opt proc root run sbin srv state sys tmp usr var work"
+# What a read-only mount (SRE_HARNESS_RO_MOUNTS) may not cover: these image paths and anything
+# below them, and these directories themselves (a directory below /tmp, /var or /opt is fine).
+RESERVED_TREES="/bin /boot /dev /etc /lib /lib64 /nonexistent /opt/sre-harness /proc /root /run /sbin /state /sys /usr /work"
+RESERVED_EXACT="/ /opt /tmp /var"
 
 die() {
   echo "sre-harness-container: $*" >&2
@@ -113,7 +115,7 @@ run_docker() {
 
 read_only_mounts=()
 add_read_only_mounts() {
-  local list="${SRE_HARNESS_RO_MOUNTS:-}" entry resolved top
+  local list="${SRE_HARNESS_RO_MOUNTS:-}" entry resolved tree
   [ -n "$list" ] || return 0
   local IFS=':'
   for entry in $list; do
@@ -125,13 +127,18 @@ add_read_only_mounts() {
     [ -d "$entry" ] || die "SRE_HARNESS_RO_MOUNTS: '$entry' is not a directory."
     resolved="$(cd "$entry" && pwd -P)"
     case "$resolved" in
-      *,* | *$'\n'*) die "SRE_HARNESS_RO_MOUNTS: '$resolved' holds a ',' or a newline." ;;
+      *,* | *:* | *$'\n'*) die "SRE_HARNESS_RO_MOUNTS: '$resolved' holds a ',', a ':' or a newline." ;;
     esac
-    top="${resolved#/}"
-    top="${top%%/*}"
-    if [ -z "$top" ] || [[ " $RESERVED_TOP " == *" $top "* ]]; then
+    if [[ " $RESERVED_EXACT " == *" $resolved "* ]]; then
       die "SRE_HARNESS_RO_MOUNTS: '$resolved' would cover a path of the image."
     fi
+    IFS=' '
+    for tree in $RESERVED_TREES; do
+      case "$resolved" in
+        "$tree" | "$tree"/*) die "SRE_HARNESS_RO_MOUNTS: '$resolved' would cover a path of the image." ;;
+      esac
+    done
+    IFS=':'
     read_only_mounts+=(-v "$resolved:$resolved:ro")
   done
 }

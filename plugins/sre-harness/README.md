@@ -228,7 +228,7 @@ state（索引、`knowledge/config.json`、registry の写し、run、タスク�
 
 - 今の directory を `/work` に読み取り専用（`:ro`）で mount し、そこを作業 directory にします。`--input`、`--task-file`、`--patch`、`--deny-terms-file` は、今の directory の中の相対 path で渡せばそのまま読めます。
 - 絶対 path や `..` で今の directory の外を指すと、コンテナの中には無いので missing file（exit 2）になります。ラッパーは引数を書き換えません。
-- ほかの directory を読ませるには、`SRE_HARNESS_RO_MOUNTS` に絶対 path を `:` で区切って渡します。それぞれ同じ絶対 path に読み取り専用で mount するので、その中を指す絶対 path の引数が読めます。`/usr` や `/tmp` など image の中の path に重なる directory は拒否します。
+- ほかの directory を読ませるには、`SRE_HARNESS_RO_MOUNTS` に絶対 path を `:` で区切って渡します。それぞれ同じ絶対 path に読み取り専用で mount するので、その中を指す絶対 path の引数が読めます。image が使う path（`/usr` `/bin` `/lib` `/etc` `/state` `/work` `/opt/sre-harness` など）とその下、および `/` `/tmp` `/var` `/opt` そのものは拒否します。`/home/…` や `/tmp/…` の下の directory は渡せます。path は symlink を解決してから判定します（macOS では `/tmp` と `/etc` は `/private` の下に解決されます）。
 - 書き込める bind mount は 1 つも作りません。書き込めるのは state の volume だけです。
 - Docker Desktop と colima では、host の directory は VM と共有した範囲の中だけが見えます（colima の既定は home directory）。共有の外の directory を mount すると、コンテナの中では空の directory に見えます（手元の colima で `/private/tmp` の下の directory がそう見えました）。
 - コンテナの利用者は uid 10001 なので、host の所有と mode をそのまま見せる Docker（Linux の native の Docker など）では、読ませるファイルは他人が読める mode（`0644`、directory は `0755` など）である必要があります。
