@@ -8,6 +8,10 @@
   "required": ["schema_version", "projects", "principals"],
   "properties": {
     "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "state_kind": {
+      "description": "What this state root holds. `synthetic`: made-up data for trying the harness and for tests; only then does `knowledge update --source file` run. `production` (and no value at all): knowledge comes in through the approval flows only (`--source review-registry`, `--source spec-run`), and `--source file` is refused with exit 3.",
+      "enum": ["synthetic", "production"]
+    },
     "projects": {
       "type": "object",
       "propertyNames": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },

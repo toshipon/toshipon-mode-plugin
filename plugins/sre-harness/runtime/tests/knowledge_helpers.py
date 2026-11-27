@@ -13,6 +13,7 @@ SHA = "0" * 64
 
 CONFIG = {
     "schema_version": 1,
+    "state_kind": "synthetic",
     "projects": {
         "project-alpha": {
             "repos": ["example-org/alpha"],

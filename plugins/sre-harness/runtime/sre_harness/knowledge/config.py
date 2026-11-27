@@ -14,6 +14,7 @@ from . import store
 
 FILE = "config.json"
 CLASSIFICATIONS = ("public", "synthetic", "internal", "confidential")
+SYNTHETIC = "synthetic"
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,12 @@ def load(root):
     if not path.exists():
         return None
     return records.validate("knowledge-config", records.read_json(path))
+
+
+def synthetic(config):
+    """Whether the state is marked as holding made-up data (`"state_kind": "synthetic"`). A
+    config that does not say is a production one: the safe reading of a missing answer."""
+    return config.get("state_kind") == SYNTHETIC
 
 
 def known_readers(config):

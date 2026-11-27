@@ -2,6 +2,9 @@
 the store in one transaction. No model is called; the same input and config give the same
 index.
 
+Before anything of the source is read, `admit` refuses (exit 3) an adapter of SYNTHETIC_ONLY in
+a state whose config is not marked `"state_kind": "synthetic"`.
+
 An item is listed in `rejected`, and kept out of the index, when it (`detail` names JSON paths
 and the checks they fail, never a value of the input)
 
@@ -22,7 +25,7 @@ indexed; nothing is merged automatically.
 from dataclasses import dataclass
 
 from .. import globs, records
-from ..errors import InputError
+from ..errors import BoundaryError, InputError
 from . import config, model, store
 
 # origin kinds only one adapter gives: a record of these kinds comes from its approval flow
@@ -32,6 +35,9 @@ RESERVED_KINDS = {
     "requirement": "spec-run",
 }
 OWNED_ELSEWHERE = "owned_by_other_source"
+# adapters whose input declares status, approval, enforcement and access itself, with no
+# approval flow behind it: only a state marked synthetic takes them in
+SYNTHETIC_ONLY = frozenset({"file"})
 
 
 def _origin(item):
@@ -155,6 +161,19 @@ def settings(root):
     return found
 
 
+def admit(adapter, found):
+    """Exit 3 unless this state may take `adapter` in. Nothing of the source is read."""
+    if adapter.name in SYNTHETIC_ONLY and not config.synthetic(found):
+        raise BoundaryError(
+            f"refused: --source {adapter.name} is for synthetic data only, and "
+            'knowledge/config.json does not say "state_kind": "synthetic". Its input declares '
+            "approval, enforcement and access itself. In a production state, take knowledge in "
+            "through an approval flow: `review approve` (with --knowledge-* for scope, access "
+            "and enforcement), then `knowledge update --source review-registry`; or "
+            "`knowledge update --source spec-run`."
+        )
+
+
 def prepare(adapter, found, previous, now):
     """Ask `adapter` for its changes since the cursor `previous` and check every item."""
     changes = adapter.changes(previous)
@@ -228,6 +247,7 @@ def update(root, adapter, *, dry_run=False, now=None):
     and reads the source as it is."""
     store.require_fts5()
     found = settings(root)
+    admit(adapter, found)
     now = now or records.iso()
     if dry_run:
         previous = None
