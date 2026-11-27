@@ -2,7 +2,8 @@
 the store in one transaction. No model is called; the same input and config give the same
 index.
 
-An item is listed in `rejected`, and kept out of the index, when it
+An item is listed in `rejected`, and kept out of the index, when it (`detail` names JSON paths
+and the checks they fail, never a value of the input)
 
     schema_invalid      does not match knowledge-record `$defs/item`
     access_missing      has no `access` (scope is not access: nothing is readable by default)
@@ -69,7 +70,7 @@ def check(items, known_readers, now, adapter=None):
     accepted, rejected = [], []
     for index, item in enumerate(items):
         origin = _origin(item)
-        problems = records.violations("knowledge-record", item, "item")
+        problems = records.violation_paths("knowledge-record", item, "item")
         if problems:
             rejected.append(_rejection(index, origin, "schema_invalid", "; ".join(problems[:5])))
             continue
@@ -90,9 +91,13 @@ def check(items, known_readers, now, adapter=None):
             rejected.append(_rejection(index, origin, "access_missing", detail))
             continue
         record = model.normalize(item, now)
-        unknown = sorted(set(record["access"]["readers"]) - known_readers)
+        unknown = [
+            f"access/readers/{position}"
+            for position, reader in enumerate(item["access"]["readers"])
+            if reader not in known_readers
+        ]
         if unknown:
-            detail = "readers not held by any principal: " + ", ".join(unknown)
+            detail = "readers not held by any principal at " + ", ".join(unknown)
             rejected.append(_rejection(index, origin, "unknown_reader", detail))
             continue
         broken = model.problems(record)

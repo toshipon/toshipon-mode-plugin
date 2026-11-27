@@ -79,6 +79,20 @@ def violations(name, value, definition=None):
     ]
 
 
+def violation_paths(name, value, definition=None):
+    """Where the value breaks the schema and which check it fails ("summary: pattern"), never
+    the value itself: for answers that must not echo external input."""
+    validator = _validator(name)
+    if definition:
+        reference = {"$ref": f"urn:sre-harness:{name}#/$defs/{definition}"}
+        validator = validator.evolve(schema=reference)
+    errors = sorted(validator.iter_errors(value), key=lambda error: list(error.absolute_path))
+    return [
+        f"{'/'.join(str(part) for part in error.absolute_path) or '<root>'}: {error.validator}"
+        for error in errors
+    ]
+
+
 def validate(name, value, definition=None):
     problems = violations(name, value, definition)
     if problems:

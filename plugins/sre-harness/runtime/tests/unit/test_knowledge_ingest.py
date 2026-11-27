@@ -128,7 +128,8 @@ def test_a_record_naming_an_unknown_reader_is_rejected(root, tmp_path):
     )
     result = run(root, write_input(tmp_path / "in.json", [item("R1"), stranger]))
     (rejected,) = result["rejected"]
-    assert rejected["reason"] == "unknown_reader" and "team-x" in rejected["detail"]
+    assert rejected["reason"] == "unknown_reader" and "access/readers/1" in rejected["detail"]
+    assert "team-x" not in rejected["detail"]
     assert set(indexed(root)) == {"R1"}
 
 
@@ -152,6 +153,16 @@ def test_a_record_breaking_an_invariant_is_rejected(root, tmp_path, changes):
     result = run(root, write_input(tmp_path / "in.json", [item("R1"), item("R2", **changes)]))
     assert [r["reason"] for r in result["rejected"]] == ["invariant_violated"]
     assert set(indexed(root)) == {"R1"}
+
+
+def test_a_rejection_names_paths_and_checks_but_never_echoes_the_input(root, tmp_path):
+    marker = "MARKER-0123456789"
+    broken = item("R2", status=marker, summary=marker + "\n" + marker)
+    result = run(root, write_input(tmp_path / "in.json", [item("R1"), broken]))
+    (rejected,) = result["rejected"]
+    assert rejected["reason"] == "schema_invalid"
+    assert marker not in rejected["detail"]
+    assert "status: enum" in rejected["detail"] and "summary: pattern" in rejected["detail"]
 
 
 def test_a_malformed_item_is_rejected_and_the_rest_indexed(root, tmp_path):
