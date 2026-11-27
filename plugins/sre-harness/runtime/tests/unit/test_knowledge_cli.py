@@ -199,3 +199,15 @@ def test_a_writer_in_another_process_is_refused_with_exit_1(home, tmp_path):
     free = subprocess.run(argv, env=env, cwd=RUNTIME, capture_output=True, text=True, timeout=60)
     assert free.returncode == 0, free.stderr
     assert json.loads(free.stdout)["generation"] == {"before": 1, "after": 2}
+
+
+def test_a_damaged_index_is_an_input_error_with_how_to_rebuild(home, tmp_path, capsys):
+    write_config(home)
+    index = knowledge_dir(home) / "index.sqlite3"
+    index.write_bytes(b"not a database at all" * 100)
+    os.chmod(index, 0o600)
+    for argv in (["status"], ["search", "--principal", "workspace-a"]):
+        assert run_cli(["knowledge", *argv], home) == (2, None), argv
+        assert "index.sqlite3" in capsys.readouterr().err
+    assert update(home, write_input(tmp_path / "in.json", [item("R1")]))[0] == 2
+    assert "knowledge update" in capsys.readouterr().err

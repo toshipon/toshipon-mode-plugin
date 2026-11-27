@@ -229,6 +229,22 @@ def _meta(connection):
     }
 
 
+@contextmanager
+def _intact(path):
+    """A file SQLite cannot read as a database (not one, or damaged) is an input error with
+    the way to rebuild it, not a traceback. A busy or locked database is not this."""
+    try:
+        yield
+    except sqlite3.OperationalError:
+        raise
+    except sqlite3.DatabaseError as error:
+        raise InputError(
+            f"knowledge/{path.name} cannot be read as a knowledge index ({error}). The index "
+            f"can be rebuilt: delete knowledge/{INDEX} and run `sre-harness knowledge update` "
+            "again."
+        ) from None
+
+
 def _has_schema(connection):
     found = connection.execute("SELECT 1 FROM sqlite_master WHERE name = 'meta'").fetchone()
     return found is not None
@@ -509,11 +525,12 @@ def writer(root):
             os.close(_create_private(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL))
         connection = _connect(path)
         try:
-            connection.execute("PRAGMA journal_mode = WAL")
-            if not _has_schema(connection):
-                _create_schema(connection)
-            _meta(connection)
-            yield Writer(connection)
+            with _intact(path):
+                connection.execute("PRAGMA journal_mode = WAL")
+                if not _has_schema(connection):
+                    _create_schema(connection)
+                _meta(connection)
+                yield Writer(connection)
         finally:
             connection.close()
     finally:
@@ -643,9 +660,10 @@ def reader(root):
         path.as_uri() + "?mode=ro", uri=True, isolation_level=None, timeout=TIMEOUT_SECONDS
     )
     try:
-        connection.execute("BEGIN")
-        meta = _meta(connection)  # the first read fixes the snapshot
-        yield Reader(connection, meta)
+        with _intact(path):
+            connection.execute("BEGIN")
+            meta = _meta(connection)  # the first read fixes the snapshot
+            yield Reader(connection, meta)
     finally:
         if connection.in_transaction:
             connection.execute("ROLLBACK")
@@ -881,7 +899,8 @@ class Stage:
 def _generation_in_place(index):
     connection = _open_quiet(index)
     try:
-        return _meta(connection)["generation"]
+        with _intact(index):
+            return _meta(connection)["generation"]
     finally:
         connection.close()
 
@@ -954,8 +973,9 @@ def peek(root):
     try:
         connection = _open_quiet(index)
         try:
-            connection.execute("BEGIN")
-            yield Reader(connection, _meta(connection))
+            with _intact(index):
+                connection.execute("BEGIN")
+                yield Reader(connection, _meta(connection))
         finally:
             if connection.in_transaction:
                 connection.execute("ROLLBACK")
