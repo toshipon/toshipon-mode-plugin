@@ -913,7 +913,121 @@ script は LLM を呼ばず、言い換え語のファイルも作りません�
 
 主張できる範囲: 合成データでの値です。言い換えはこの corpus の作者が書いた 36 個で、人が書く query の分布は再現しません。`fts5-paraphrase` が任意のレコードを 1 件も返さないのは、そうなるように query を書いたためです。`fts5-literal` の `ja` で precision が 1 にならないのは、既存の topic の語「アラート通知」と「レート制限」が 2 文字の並び「ート」を共有するためです。予算 1500 token で recall が規模とともに下がるのは、正解が増えても予算で頭打ちになるためです。2000 件の `ja` が 20000 token でも 1 にならない（0.9625）のは、「ート」で一致した別の topic のレコードが予算を使い、`alerting` と `rate-limit` の case で正解の一部が予算に入らないためです。
 
-検索方式の比較は測定の後に追記します。
+### 検索方式の比較
+
+語の一致では拾えない言い換えを、3 つの方式で比べました。比べたのは合成データの言い換えの case（上の 36 個）で、規模は 50 / 300 / 2000 件です。
+
+- `fts5-literal`: 元の語（レコードの言い回し）で検索します。query が良くなったときの上限の目安で、方式ではありません。
+- `caller-expansion`（採る方式）: 呼び出し側が、query の言い換え語を挙げて `--expand` で渡します。索引は変えません。`fts5-paraphrase`（言い換えをそのまま検索する）は、全区分・全規模・両方の予算で recall 0 でした。
+- `vector-hybrid`: FTS5 の順位と、sqlite-vec の `vec0` で引いた cosine の近さの順位を Reciprocal Rank Fusion（K = 60）で混ぜます。必須のレコードは `knowledge search` のままで、ベクトルの候補は `search.narrow` を通った承認済みの任意のレコードだけです（`--vector-k` で上位の件数を決めます）。package には入れず、実験 script `examples/synthetic/knowledge_vector_probe.py` で測りました。
+
+測り方です。
+
+- `caller-expansion`: 10 回です（Haiku 5 回と Sonnet 5 回）。各回で、agent に `--write-expansion-input` の出力（case の ID と言い換えの query だけ）を渡し、言い換え語に広げさせました。渡した指示は次のとおりです。「各 query について、同じ意味の別の言い方、その話題を文書に書くときに使われそうな用語を挙げる。日本語の語と英語の語の両方を含め、1 query あたり 8〜12 個。1 語は短い名詞句（64 文字以内）。検索対象の文書は見ない。」10 回分の語は `examples/synthetic/expansions/` に置いてあります。表は 10 回の recall の平均 ± 標準偏差 [最小, 最大] と、precision の平均です。10 回分を `--expansions` で読んで 50 件の規模で実行したところ、search が拒否した case の数（`refused`）は、全区分・両方の予算・10 回すべてで 0 でした。
+- `vector-hybrid`: 3 回です（標準偏差は 0）。環境はコンテナ `python:3.13.1-slim-bookworm`（Python 3.13.1、SQLite 3.40.1）で、`--network none` で実行しました。sqlite-vec 0.1.9、sentence-transformers 6.3.0、torch 2.15.0（CPU）、モデルは multilingual-e5-small（ローカルに保存した 466 MB。MIT ライセンス）で、prefix は `query: ` と `passage: `、RRF の K は 60 です。依存を入れた venv は 1.3 GB でした。
+
+表の上の注記です。
+
+- 合成データでの値です。言い換えはこの corpus の作者が書いた 36 個で、人が書く query の分布は再現しません。
+- 言い換えの query は、レコードと検索の語を 1 つも共有しないように作ってあります。
+- 仕組みの検証で、実際の検索の質の検証ではありません。1 つの比率を成果としません。
+- Claude Code の利用枠が減るとは主張しません。
+
+#### 既定の予算（1500 token）
+
+`vector-hybrid` の値は、`--vector-k` を 5、10、20 にしても 1500 token では変わらなかったので、1 行にまとめています（表は k = 5 の値です）。各列は、`fts5-paraphrase` の recall、`fts5-literal` の recall / precision、`caller-expansion` の recall と precision、`vector-hybrid` の recall / precision です。
+| 規模 | 区分 | fts5-paraphrase recall | fts5-literal recall / precision | caller-expansion recall 平均 ± 標準偏差 [最小, 最大] | caller-expansion precision 平均 | vector-hybrid（k = 5）recall / precision |
+|---|---|---|---|---|---|---|
+| 50 件 + 言い換え 86 件 | ja | 0.0000 | 0.9024 / 0.9737 | 0.7097 ± 0.0466 [0.6098, 0.7561] | 0.7147 | 0.2927 / 0.2791 |
+| 50 件 + 言い換え 86 件 | en | 0.0000 | 1.0000 / 1.0000 | 0.7750 ± 0.0480 [0.6944, 0.8333] | 0.6225 | 0.5556 / 0.4167 |
+| 50 件 + 言い換え 86 件 | cross | 0.0000 | 0.9500 / 1.0000 | 0.8225 ± 0.0362 [0.7500, 0.8750] | 0.7359 | 0.2000 / 0.1739 |
+| 300 件 + 言い換え 86 件 | ja | 0.0000 | 0.3882 / 0.9167 | 0.3012 ± 0.0255 [0.2588, 0.3294] | 0.6729 | 0.1647 / 0.3111 |
+| 300 件 + 言い換え 86 件 | en | 0.0000 | 1.0000 / 1.0000 | 0.5722 ± 0.0657 [0.4444, 0.6389] | 0.5151 | 0.5000 / 0.3830 |
+| 300 件 + 言い換え 86 件 | cross | 0.0000 | 0.5286 / 1.0000 | 0.3700 ± 0.0171 [0.3429, 0.4000] | 0.6728 | 0.1286 / 0.1957 |
+| 2000 件 + 言い換え 86 件 | ja | 0.0000 | 0.0900 / 1.0000 | 0.0698 ± 0.0061 [0.0625, 0.0775] | 0.7438 | 0.0300 / 0.2727 |
+| 2000 件 + 言い換え 86 件 | en | 0.0000 | 1.0000 / 1.0000 | 0.5250 ± 0.0634 [0.3889, 0.5833] | 0.4812 | 0.5278 / 0.3958 |
+| 2000 件 + 言い換え 86 件 | cross | 0.0000 | 0.1319 / 1.0000 | 0.0912 ± 0.0053 [0.0842, 0.0989] | 0.6533 | 0.0366 / 0.2128 |
+
+#### 予算 20000 token
+
+予算で頭打ちにならない場合です。`vector-hybrid` は `--vector-k` が 20 の値で、ベクトルの候補が上位 20 件までなので、k が上限になっています（k が 5 と 10 のときの値は、この表より低いです。例: 2000 件の `ja` の recall は、k = 5 で 0.0425、k = 10 で 0.0975、k = 20 で 0.2025）。
+| 規模 | 区分 | fts5-paraphrase recall | fts5-literal recall / precision | caller-expansion recall 平均 ± 標準偏差 [最小, 最大] | caller-expansion precision 平均 | vector-hybrid（k = 20）recall / precision |
+|---|---|---|---|---|---|---|
+| 50 件 + 言い換え 86 件 | ja | 0.0000 | 1.0000 / 0.9111 | 1.0000 ± 0.0000 [1.0000, 1.0000] | 0.4443 | 0.9756 / 0.1667 |
+| 50 件 + 言い換え 86 件 | en | 0.0000 | 1.0000 / 1.0000 | 1.0000 ± 0.0000 [1.0000, 1.0000] | 0.4105 | 0.9444 / 0.1417 |
+| 50 件 + 言い換え 86 件 | cross | 0.0000 | 1.0000 / 1.0000 | 1.0000 ± 0.0000 [1.0000, 1.0000] | 0.5832 | 0.5000 / 0.0833 |
+| 300 件 + 言い換え 86 件 | ja | 0.0000 | 1.0000 / 0.7870 | 1.0000 ± 0.0000 [1.0000, 1.0000] | 0.3814 | 0.7647 / 0.2708 |
+| 300 件 + 言い換え 86 件 | en | 0.0000 | 1.0000 / 1.0000 | 1.0000 ± 0.0000 [1.0000, 1.0000] | 0.1907 | 0.9444 / 0.1417 |
+| 300 件 + 言い換え 86 件 | cross | 0.0000 | 1.0000 / 1.0000 | 1.0000 ± 0.0000 [1.0000, 1.0000] | 0.4356 | 0.3571 / 0.1042 |
+| 2000 件 + 言い換え 86 件 | ja | 0.0000 | 0.9625 / 0.8499 | 0.9325 ± 0.0344 [0.8650, 0.9575] | 0.4836 | 0.2025 / 0.3375 |
+| 2000 件 + 言い換え 86 件 | en | 0.0000 | 1.0000 / 1.0000 | 0.9528 ± 0.0348 [0.8889, 1.0000] | 0.0570 | 0.9167 / 0.1375 |
+| 2000 件 + 言い換え 86 件 | cross | 0.0000 | 1.0000 / 1.0000 | 0.9938 ± 0.0197 [0.9377, 1.0000] | 0.4035 | 0.1172 / 0.1333 |
+
+#### Haiku と Sonnet の差
+
+`caller-expansion` の recall の平均を、広げた agent ごとに並べた値です（各 5 回）。表の値を並べるだけで、優劣は断定しません。
+
+予算 1500 token です。
+| 規模 | 区分 | Haiku 5 回の recall 平均 | Sonnet 5 回の recall 平均 |
+|---|---|---|---|
+| 50 件 + 言い換え 86 件 | ja | 0.7463 | 0.6732 |
+| 50 件 + 言い換え 86 件 | en | 0.8000 | 0.7500 |
+| 50 件 + 言い換え 86 件 | cross | 0.8200 | 0.8250 |
+| 300 件 + 言い換え 86 件 | ja | 0.3223 | 0.2800 |
+| 300 件 + 言い換え 86 件 | en | 0.6055 | 0.5389 |
+| 300 件 + 言い換え 86 件 | cross | 0.3714 | 0.3686 |
+| 2000 件 + 言い換え 86 件 | ja | 0.0750 | 0.0645 |
+| 2000 件 + 言い換え 86 件 | en | 0.5445 | 0.5055 |
+| 2000 件 + 言い換え 86 件 | cross | 0.0886 | 0.0938 |
+
+予算 20000 token です。
+| 規模 | 区分 | Haiku 5 回の recall 平均 | Sonnet 5 回の recall 平均 |
+|---|---|---|---|
+| 50 件 + 言い換え 86 件 | ja | 1.0000 | 1.0000 |
+| 50 件 + 言い換え 86 件 | en | 1.0000 | 1.0000 |
+| 50 件 + 言い換え 86 件 | cross | 1.0000 | 1.0000 |
+| 300 件 + 言い換え 86 件 | ja | 1.0000 | 1.0000 |
+| 300 件 + 言い換え 86 件 | en | 1.0000 | 1.0000 |
+| 300 件 + 言い換え 86 件 | cross | 1.0000 | 1.0000 |
+| 2000 件 + 言い換え 86 件 | ja | 0.9400 | 0.9250 |
+| 2000 件 + 言い換え 86 件 | en | 0.9611 | 0.9444 |
+| 2000 件 + 言い換え 86 件 | cross | 0.9875 | 1.0000 |
+
+#### 決めたこと
+
+1. 採るのは `caller-expansion`（呼び出し側の言い換え）です。索引は変えず、`--expand` を使います。ベクトル検索は package に入れません。
+2. 根拠です。既定の予算（1500 token）で、`vector-hybrid` が `caller-expansion` の平均を上回った区分は 9 つのうち 1 つ（2000 件の `en`。0.5278 対 0.5250）だけで、残りの 8 つは `caller-expansion` の方が上でした。precision は 9 つすべてで `caller-expansion` の方が上でした。`vector-hybrid` は 1.3 GB の依存と 466 MB のモデル、拡張を読み込める Python を要します。
+3. `caller-expansion` でも十分ではありません。測る前に決めた基準は「既定の予算で、言い換えの recall が、元の語で検索したとき（`fts5-literal`）の 0.9 倍以上（10 回の最小値で）」でした。実際は 0.39 倍から 0.79 倍で、基準に届いていません。予算を 20000 token にすると、recall は 50 件と 300 件で 1.0000、2000 件で最小 0.8650 から 0.9377 まで戻るので、正解は候補に入っています。届かない原因は順位で、広げた語が別のレコードにも当たり（precision が下がり）、予算の中で正解が押し出されます。これは原因の推定で、順位付けを変えて確かめてはいません。
+4. 順位付けは変えていません。合成データのラベルに合わせて調整すると、合成データにだけ合う規則になるためです。
+5. `vector-hybrid` の結果が言えるのは、この 1 つのモデルとこの混ぜ方（RRF、上位 k 件）についてだけです。合成データのレコードは短く似た文なので、ベクトルに不利な可能性があります。`knowledge_vector_probe.py` は、別のモデルで測り直せるように残します。
+6. 上の注記のとおり、合成データでの値で、実際の検索の質ではありません。
+
+#### 再現の手順
+
+`caller-expansion`（LLM もネットワークも使いません。10 回分の語のファイルを読むだけです）です。
+
+```bash
+cd "${CLAUDE_PLUGIN_ROOT}/runtime"
+E="examples/synthetic/expansions"
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.knowledge_eval --paraphrase \
+  --size 50 --size 300 --size 2000 --format markdown \
+  --expansions $E/haiku-1.json --expansions $E/haiku-2.json --expansions $E/haiku-3.json \
+  --expansions $E/haiku-4.json --expansions $E/haiku-5.json \
+  --expansions $E/sonnet-1.json --expansions $E/sonnet-2.json --expansions $E/sonnet-3.json \
+  --expansions $E/sonnet-4.json --expansions $E/sonnet-5.json
+```
+
+`vector-hybrid`（package の外の実験 script。CI では走らせません）です。拡張を読み込める Python（`knowledge status` の `extension_loading` が true）に、`sqlite-vec` と `sentence-transformers` を入れます。モデル（multilingual-e5-small）は、ネットワークのある場所であらかじめローカルに保存し、そのディレクトリを `--model` に渡します。実行は offline の設定（`HF_HUB_OFFLINE`、`TRANSFORMERS_OFFLINE`）で model を読み、測ったときはコンテナの `--network none` で動かしました。
+
+```bash
+cd "${CLAUDE_PLUGIN_ROOT}/runtime"
+python -m pip install sqlite-vec sentence-transformers   # 専用の venv に入れる（torch を含み、1.3 GB ほど）
+python -m examples.synthetic.knowledge_vector_probe --model /path/to/multilingual-e5-small \
+  --query-prefix "query: " --passage-prefix "passage: " \
+  --size 50 --size 300 --size 2000 --vector-k 5 --vector-k 10 --vector-k 20 --runs 3 --out probe.json
+```
+
+依存が無い、または拡張を読み込めない Python では、足りないものを出して exit 2 で止まります。
 
 ## 未検証
 
@@ -948,7 +1062,7 @@ script は LLM を呼ばず、言い換え語のファイルも作りません�
 確かめたのは、合成データで仕組みが動くことだけです（上の「Knowledge Retrieval（V2）の完了条件」と「評価」）。次のことは確かめていません。
 
 - 実際の Claude での消費。入力 token は合成データで見積もった分布だけで、実際の tokenizer の数とも、セッション全体の消費（search と fetch の呼び出し、追加のターン、prompt cache の効き方）とも比べていません。Claude Code の利用枠が減ることは保証しません。知識の入力 token が減っても、全体の消費は増えることも減ることもあります。測るなら、同じ task を 2 つの方式で実際に実行し、呼び出しごとの usage を回数とばらつきを付けて比べる必要があります。
-- 検索の質。合成データの precision と recall はラベルが生成の規則から決まる値で、人が書く query と実際の規範の分布は再現しません。語の一致なので言い換えた query は拾いません（「評価」の言い換えの行と「言い換えの case」）。言い換え語に広げる方式（`--expand`）とベクトルとのハイブリッドを測る道具（`--paraphrase` の `caller-expansion` と、package の外の実験 script `examples/synthetic/knowledge_vector_probe.py`）はありますが、比べた結果はまだありません。
+- 検索の質。合成データの precision と recall はラベルが生成の規則から決まる値で、人が書く query と実際の規範の分布は再現しません。語の一致なので、言い換えた query はそのままでは拾いません（「評価」の言い換えの行と「言い換えの case」）。呼び出し側が言い換え語を `--expand` で渡す方式は、合成データで測りました（「検索方式の比較」）。既定の予算で、言い換えの recall は元の語で検索したときの 0.39 倍から 0.79 倍で、測る前に決めた基準（0.9 倍以上）に届いていません。順位付けの改善は未着手です。言い換え語は、合成データの query だけを見て Haiku と Sonnet が広げたもので、実際の作業での query と、実際の呼び出し側（agent が自分で言い換え語を挙げる手順）では測っていません。ベクトルとのハイブリッドは 1 つのモデルと 1 つの混ぜ方で測っただけで、採っていません。
 - 予算と閾値の既定値。search の 1500 token、fetch の 3000 token、タスク累計の 6000 token、鮮度の 168 時間が実際の作業で妥当かは測っていません。
 - アクセス区分は本人確認ではありません。principal の名前、`access` の区分と reader は、別 project の知識がうっかり混ざるのを防ぐだけで、同じ OS の利用者は索引、queue、タスク累計のファイルを直接読み書きできます。
 - ネットワークファイルシステムと複数の host。索引の WAL、writer の flock、タスク累計と decision request の flock と link は、ローカルディスクの 1 台の OS を前提にしています。確かめたのは手元の macOS（SQLite 3.54.1）での thread と別プロセスの同時実行と、`knowledge migrate` と `rollback` の入れ替え（reader が古いファイルを開いたまま読み続けること、WAL の frame を読んでいる reader がいると exit 1 で止まること）だけです。CI の OS と SQLite での結果は、この README を書いた時点では確かめていません。
