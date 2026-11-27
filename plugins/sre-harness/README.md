@@ -211,9 +211,9 @@ state（索引、`knowledge/config.json`、registry の写し、run、タスク�
 | 操作 | コマンド | 内容 |
 |---|---|---|
 | 作る | `"$C" volume create` | `docker volume create` です。作らずに最初の呼び出しをしても Docker が作ります |
-| 設定と出典を写す | `"$C" volume import "$AI_HARNESS_HOME/sre-harness"` | ホストの state のうち `knowledge/config.json`、`registry/`、`runs/`、`cache/git/` だけを tar にして stdin で渡し、volume の同じ場所に置き換えます（writer の lock の下で）。索引は写しません（コンテナで `knowledge update` を実行して作ります） |
+| 設定と出典を写す | `"$C" volume import "$AI_HARNESS_HOME/sre-harness"` | ホストの state のうち `knowledge/config.json`、`registry/`、`runs/`、`cache/git/` だけを tar にして stdin で渡し、volume の同じ場所に置き換えます（writer の lock の下で）。置き換える前に、すべての置き場所を検査します（途中に symlink がある、file を置く場所が directory、directory の途中が file のどれかなら、何も置き換えずに止まります）。置き換えは file ごとの rename なので、置き換えの途中で失敗すると（disk が一杯など）、それまでの file は新しく、残りは古いままになります。もう一度 import してください。索引は写しません（コンテナで `knowledge update` を実行して作ります） |
 | バックアップ | `"$C" volume backup > state.tar` | volume を `:ro` で mount した使い捨てのコンテナが、writer の lock を取ってから state を tar にして stdout に出します。`-shm`、lock、一時ファイルは入れません |
-| 復元 | `SRE_HARNESS_VOLUME=<新しい名前> "$C" volume restore < state.tar` | 空の volume にだけ復元します。中身のある volume への復元は exit 3 です |
+| 復元 | `SRE_HARNESS_VOLUME=<新しい名前> "$C" volume restore < state.tar` | 空の volume にだけ復元します。中身のある volume への復元は exit 3 です。バックアップは `writer.lock` を写さないので、`knowledge/` があれば空の `writer.lock` を作り直します（復元した volume のバックアップも lock を取ります） |
 | 消す | `docker volume rm sre-harness-state` | ラッパーは volume を消しません。消すと索引も、タスク累計も、decision request も消えます |
 
 `config.json` はコンテナの経路でも人が書く設定です。ホストで書いた `config.json` を `volume import` で写すか、`AI_HARNESS_HOME` を一時ディレクトリにして `knowledge/config.json` だけを置いた state root を作り、それを `volume import` してください。
