@@ -30,6 +30,7 @@ Claude Code のセッション内で実行します。
 | `gh` | GitHub を読む段（`review collect --auth-env`、`spec ingest` の GitHub の PR、`spec analyze --auth-env`、`spec check-patch --auth-env`） |
 | Claude CLI（`claude`） | `--backend claude` を選んだ段だけ |
 | `opa`（任意） | `iac validate` の plan のリスク分類だけ。無ければ分類を `unevaluable` と記録し、状態遷移の検査は行います |
+| Docker（CLI と daemon。任意） | コンテナの経路（`scripts/sre-harness-container`）だけ。`knowledge` と `runs list` を、ホストの Python を使わずに動かします |
 
 plugin のディレクトリは変更しません。venv は別の場所に作ってください。
 
@@ -46,6 +47,15 @@ Python は 3.10 以上で、`sqlite3` が FTS5 を持つ build を使ってく�
 - Homebrew: `brew install python` で入る `python3` で、上の `python3 -m venv` の手順を実行します。
 
 入れた後に `"${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness" knowledge status` を実行すると、`python_version`、`sqlite_version`、`fts5`（FTS5 があるか）、`extension_loading`（`sqlite3` が SQLite の拡張を読み込めるか。判定するだけで、何も読み込みません）が出ます。`fts5` が `false` なら `knowledge update` と `knowledge search` は exit 2 で止まります。`extension_loading` が `false` でも、今の版はどの段も止まりません（ベクトル検索などの拡張を使っていないためです）。
+
+動かし方は 2 つあります。
+
+| 経路 | コマンド | 動く group | 要るもの | state |
+|---|---|---|---|---|
+| ホストで直接 | `scripts/sre-harness <group> <stage>` | すべて | 上の表の Python など | `$AI_HARNESS_HOME/sre-harness/`（下の「保存場所」） |
+| コンテナ | `scripts/sre-harness-container <group> <stage>` | `knowledge` と `runs list` だけ | Docker | Docker の named volume（既定 `sre-harness-state`） |
+
+knowledge index を使うだけなら、コンテナの経路はホストの Python と SQLite の build（版、FTS5 の有無）に左右されません。GitHub を読む段、Claude を呼ぶ段、`review approve`、`spec`、`iac` はホストで直接動かします。2 つの経路の state は共有されません。詳しくは下の「コンテナの経路」を読んでください。
 
 コマンドは launcher `scripts/sre-harness <group> <stage>` で実行します。launcher は `SRE_HARNESS_PYTHON`（無ければ `python3`）を `-I`（isolated mode）で起動して `runtime/sre_harness_main.py` を実行し、`runtime/` だけを `sys.path` に足します。作業ディレクトリ、`PYTHONPATH` などの `PYTHON*` 環境変数、user site-packages は読みません。利用者のリポジトリを作業ディレクトリにして実行しても、そこにある `argparse.py` や `json.py` は harness の中で import されません。`python3 -m sre_harness` で直接起動すると作業ディレクトリが `sys.path` の先頭に入るので、launcher を使ってください。
 
@@ -155,6 +165,191 @@ update は 2 回とも exit 0 で、registry の 5 件が入ります（`RG-9006
 
 試し終えたら `$AI_HARNESS_HOME` と `$D` を削除してください。
 
+## コンテナの経路（knowledge と runs list）
+
+`scripts/sre-harness-container` は、ホストの launcher と同じ argv を受け取り、1 回の呼び出しを使い捨てのコンテナ（`docker run --rm`）で動かします。標準出力はコンテナの中のコマンドの JSON だけで、exit code もそのまま返します（0 / 1 / 2 / 3）。常駐のサービスは作りません。Docker の CLI と daemon が要ります（Docker Desktop、colima などで入手します）。
+
+```bash
+C="${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness-container"
+"$C" image build          # sre-harness:<plugin の version> を build します（初回と plugin の更新後）
+"$C" volume create        # state の volume を作ります（既定 sre-harness-state）
+cd <読ませたいファイルのある directory>
+"$C" knowledge status     # python_version、sqlite_version、fts5 などはホストの経路と同じ形です
+"$C" knowledge search --principal workspace-a --project project-alpha --query "queue の保持期間"
+```
+
+### 扱う group
+
+コンテナの中では network を使いません（`--network none`）。network、`gh`、`claude`、`opa` を要る段と、ホストの state を前提にする段は、コンテナでは動かさず、「ホストの launcher を使ってください」と stderr に出して exit 2 で止まります（docker は起動しません）。group の中に network を使わない stage があっても、group ごと拒否する側に倒しています。
+
+| group | コンテナ | 理由 |
+|---|---|---|
+| `knowledge`（すべての stage） | 動く | LLM も network も使いません。`knowledge fetch` の `git:` は image の `git` で volume の中の bare リポジトリを読みます |
+| `runs list` | 動く | volume の中の run の一覧です |
+| `review` | 拒否 | `collect` は `gh`、`analyze`・`classify`・`generate`・`evaluate` は `claude` を使い、`approve` は人の端末とホストの registry に書く段です |
+| `spec` | 拒否 | `ingest` は `gh`、`extract` と `audit` は `claude`、`analyze` と `check-patch` は git の fetch を使います |
+| `iac` | 拒否 | plan のリスク分類に `opa` を使います。image には `opa` を入れていません |
+
+### image
+
+`container/Dockerfile` は、Python の公式の slim image（`python:3.13.1-slim-bookworm`）を tag と digest（`sha256:031ebf3cde9f3719d2db385233bcb18df5162038e9cda20e64e08f49f4b47a2f`。linux/amd64 と linux/arm64 を含む multi-platform の index の digest）で固定しています。Python 3.13.1、SQLite 3.40.1 で、FTS5 があります。build の途中で FTS5 が無いと分かれば、build は失敗します。
+
+- 入れるもの: `jsonschema`（`runtime/requirements.txt` の版。その依存は `container/constraints.txt` の版）、`runtime/` の `sre_harness`、`schemas`、`sre_harness_main.py`、volume の保守に使う `container_state.py`、`git`（Debian bookworm の archive から）。`gh`、`claude`、`opa`、sqlite-vec、埋め込みのモデルは入れません。合成データの script（`examples/`）とテストも入れません（`.dockerignore` が runtime の上のファイルだけを通します）。
+- `git` の版は固定していません。Debian の archive は security update で古い版を消すので、版を固定すると、その版が消えた時点で build が失敗するためです。再現性は base image の digest の固定で取ります。build し直すと、`git` 2.39 の新しい patch release が入ることがあります。
+- 動かす利用者は uid / gid 10001 で、root ではありません。`AI_HARNESS_HOME=/state`、entrypoint は `python -I /opt/sre-harness/runtime/sre_harness_main.py`（ホストの launcher と同じ isolated mode）です。
+- 手元で build した image は 81.6 MB（content size。展開後の disk usage は 365 MB）でした。
+
+`image build` は registry から base image を取得します（認証は要りません）。Docker の credential helper の設定が壊れていると、公開の image でも取得に失敗することがあります。
+
+### state の volume
+
+state（索引、`knowledge/config.json`、registry の写し、run、タスク累計、decision request）は、Docker の named volume（既定 `sre-harness-state`、`SRE_HARNESS_VOLUME` で変えられます）を `/state` に mount した中の `/state/sre-harness/` に置きます。image の `/state` は uid 10001 の所有で 0700 なので、新しい volume は初めて mount したときにその所有と mode を引き継ぎます。
+
+- `SRE_HARNESS_VOLUME` は Docker の volume の名前の形（英数字で始まり、英数字、`_`、`.`、`-`）だけを受け付けます。`/`、`./`、`~` で始まる値などの host の path は、docker を起動する前に exit 2 で拒否します（Docker は path を渡されると host の directory を bind mount するためです）。
+- ホストの `$AI_HARNESS_HOME/sre-harness/` と volume の中身は別物で、共有されません。
+
+| 操作 | コマンド | 内容 |
+|---|---|---|
+| 作る | `"$C" volume create` | `docker volume create` です。作らずに最初の呼び出しをしても Docker が作ります |
+| 設定と出典を写す | `"$C" volume import "$AI_HARNESS_HOME/sre-harness"` | ホストの state のうち `knowledge/config.json`、`registry/`、`runs/`、`cache/git/` だけを tar にして stdin で渡し、volume の同じ場所に置き換えます（writer の lock の下で）。索引は写しません（コンテナで `knowledge update` を実行して作ります） |
+| バックアップ | `"$C" volume backup > state.tar` | volume を `:ro` で mount した使い捨てのコンテナが、writer の lock を取ってから state を tar にして stdout に出します。`-shm`、lock、一時ファイルは入れません |
+| 復元 | `SRE_HARNESS_VOLUME=<新しい名前> "$C" volume restore < state.tar` | 空の volume にだけ復元します。中身のある volume への復元は exit 3 です |
+| 消す | `docker volume rm sre-harness-state` | ラッパーは volume を消しません。消すと索引も、タスク累計も、decision request も消えます |
+
+`config.json` はコンテナの経路でも人が書く設定です。ホストで書いた `config.json` を `volume import` で写すか、`AI_HARNESS_HOME` を一時ディレクトリにして `knowledge/config.json` だけを置いた state root を作り、それを `volume import` してください。
+
+バックアップは writer の lock を取ってファイルを写す方式にしました。lock を持っている間は `knowledge update`、`migrate`、`rollback` が索引のファイルと WAL を変えないので、索引のファイルと `-wal` の組が 1 つの状態に揃います（reader は読み取り専用で開くので、どちらも変えません）。`-shm` は SQLite が次に開いたときに WAL から作り直すので写しません。SQLite の backup API で写す方式（`knowledge migrate` と `rollback` が使う方式）は、写しを置く書き込める場所がコンテナの中に要り、`--read-only` の下では memory の上限に数えられる tmpfs になるので採りませんでした。lock を持つ writer がいれば、バックアップは待たずに exit 1 で止まります。索引の外のファイル（タスク累計の `tasks/`、`decisions/`）は 1 ファイルずつ開いた時点の中身を写すだけで、ファイルの間の一貫性はありません。バックアップの間は `--task` を付けた search と fetch、decision の段を動かさないでください。
+
+### review の registry をコンテナで読むには
+
+`review approve` はホストの経路の段なので、registry（`registry/RG-*/`）はホストの state にあります。コンテナの `knowledge update --source review-registry` と `knowledge migrate` は volume の中の registry を読むので、先に `volume import` でホストの registry を写します。写しはその時点のもので、ホストで承認が増えても volume には反映されません。承認した後に、もう一度 `volume import` してから `knowledge update --source review-registry` を実行してください。registry をコンテナに `:ro` で mount する方式は採りませんでした（volume の中の path に host の directory を重ねると、state に bind mount を混ぜることになるためです）。
+
+### 読むファイルの渡し方
+
+- 今の directory を `/work` に読み取り専用（`:ro`）で mount し、そこを作業 directory にします。`--input`、`--task-file`、`--patch`、`--deny-terms-file` は、今の directory の中の相対 path で渡せばそのまま読めます。
+- 絶対 path や `..` で今の directory の外を指すと、コンテナの中には無いので missing file（exit 2）になります。ラッパーは引数を書き換えません。
+- ほかの directory を読ませるには、`SRE_HARNESS_RO_MOUNTS` に絶対 path を `:` で区切って渡します。それぞれ同じ絶対 path に読み取り専用で mount するので、その中を指す絶対 path の引数が読めます。image が使う path（`/usr` `/bin` `/lib` `/etc` `/state` `/work` `/opt/sre-harness` など）とその下、および `/` `/tmp` `/var` `/opt` そのものは拒否します。`/home/…` や `/tmp/…` の下の directory は渡せます。path は symlink を解決してから判定します（macOS では `/tmp` と `/etc` は `/private` の下に解決されます）。
+- 書き込める bind mount は 1 つも作りません。書き込めるのは state の volume だけです。
+- Docker Desktop と colima では、host の directory は VM と共有した範囲の中だけが見えます（colima の既定は home directory）。共有の外の directory を mount すると、コンテナの中では空の directory に見えます（手元の colima で `/private/tmp` の下の directory がそう見えました）。
+- コンテナの利用者は uid 10001 なので、host の所有と mode をそのまま見せる Docker（Linux の native の Docker など）では、読ませるファイルは他人が読める mode（`0644`、directory は `0755` など）である必要があります。
+
+### 合成データで試す
+
+合成データの script は image に入れていません。合成データはホストの Python（3.10 以上と `jsonschema`）で作り、出典と設定は `volume import` で volume に写し、入力のファイルは今の directory として読ませます。「最初に試す手順」の Knowledge Retrieval と同じ値になります（update は 2 回とも exit 0 で registry の 5 件、context は exit 0 で必須 3 件と任意 3 件の 1351 token、fetch は exit 0、check は違反で exit 1）。合成データの directory は、colima や Docker Desktop で VM と共有している場所（ここでは home directory の下）に作ります。
+
+```bash
+C="${CLAUDE_PLUGIN_ROOT}/scripts/sre-harness-container"
+export AI_HARNESS_HOME="$(mktemp -d "${TMPDIR:-/tmp}/sre-harness-state.XXXXXX")"   # 写す元のホストの state
+D="$(mktemp -d "$HOME/.sre-harness-demo.XXXXXX")"                                 # コンテナから読ませる場所
+export SRE_HARNESS_VOLUME=sre-harness-demo
+cd "${CLAUDE_PLUGIN_ROOT}/runtime"
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.knowledge_corpus "$D/knowledge" --size 300 --write-sources
+install -d -m 700 "$AI_HARNESS_HOME/sre-harness/knowledge"
+install -m 600 "$D/knowledge/config.json" "$AI_HARNESS_HOME/sre-harness/knowledge/config.json"
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.review_registry
+"$C" image build
+"$C" volume create
+"$C" volume import "$AI_HARNESS_HOME/sre-harness"
+cd "$D/knowledge"
+"$C" knowledge update --source file --input corpus.json
+"$C" knowledge update --source review-registry
+# task.json と change.diff は「最初に試す手順」と同じ内容を、この directory に書きます
+"$C" knowledge context --task-file task.json --query "queue の保持期間"
+"$C" knowledge fetch --principal workspace-a --id KN-904a3334f940 --task TASK-0101
+"$C" knowledge check --task-file task.json --patch change.diff
+```
+
+`--task-file "$D/knowledge/task.json"` のように絶対 path で渡すと、コンテナの中には無い path なので `cannot read the task file … No such file or directory` で exit 2 になります。試し終えたら `docker volume rm sre-harness-demo` を実行し、`$AI_HARNESS_HOME` と `$D` を削除してください。
+
+### コンテナの強化と環境変数
+
+毎回 `--rm`、`--pull never`、`--network none`、`--read-only`（root filesystem）、`--tmpfs /tmp`（64 MB。SQLite の一時ファイル用）、`--cap-drop ALL`、`--security-opt no-new-privileges`、`--pids-limit 128`、`--memory 512m`（`SRE_HARNESS_MEMORY` で変えられます）を付けます。下の実測は、どれもこれらを付けた状態で行いました。
+
+- 環境変数は `AI_HARNESS_AUTOMATED` と `AI_HARNESS_ACTIVE` だけを、ホストで設定されているときに渡します（`knowledge decision answer` の自動実行の検査をコンテナで素通りさせないためです）。秘密情報を渡す仕組みはありません（この経路は認証を要る段を扱いません）。
+- `knowledge decision answer` は、stdin と stdout がともに端末のときだけ `-i -t` を付けます。stdin だけが端末のときに `-t` を付けると、コンテナの中の stdout が端末になり、中の検査が pipe を端末と取り違えるからです。端末が無ければ `-t` を付けず、コンテナの中の既存の検査が exit 3 にします。
+- docker が無い、daemon に繋がらない、image が無い、docker がコンテナを起動できない（exit 125〜127）ときは、理由を stderr に出して exit 2 です。
+
+### ホストの経路との違い
+
+| 項目 | ホストで直接 | コンテナ |
+|---|---|---|
+| Python と SQLite | 利用者の Python（3.10 以上、FTS5 のある build） | image の Python 3.13.1、SQLite 3.40.1 |
+| 動く group | すべて | `knowledge` と `runs list` |
+| state | `$AI_HARNESS_HOME/sre-harness/` | volume の中の `/state/sre-harness/`。共有されません |
+| registry | `review approve` が書いたもの | `volume import` で写したもの |
+| 読めるファイル | ホストのすべて | 今の directory と `SRE_HARNESS_RO_MOUNTS` だけ（読み取り専用） |
+| network | 段による | 使いません |
+| 1 回の起動 | 下の表の「host」の行 | 下の表の「wrapper」の行 |
+
+### 設計の判断
+
+- **なぜ knowledge をコンテナで動かすか。** knowledge index は SQLite の FTS5 と flock と WAL に依存します。ホストの経路は利用者の Python とその SQLite の build（版、FTS5 の有無、`enable_load_extension` の有無）に左右されます。image に固定すると、Docker があればどのホストでも同じ Python と SQLite で動きます。ホストの経路は CI とテストの互換のために残し、起動時の能力の検査（`knowledge status` の `python_version`、`sqlite_version`、`fts5`、`extension_loading`）もそのまま使います。
+- **なぜ常駐のサービスにしないか。** 1 回の呼び出しが 1 つのコンテナで、1 つのコマンドは 1 つのスナップショットを読みます。複数の呼び出しの間の調停は、ホストの経路と同じく索引の flock と WAL に任せます。常駐させると、port か socket、起動と停止、認証、寿命の管理が要り、`--network none` で動かせなくなります。1 回あたりの起動の時間と内訳は下の表のとおりです。
+- **なぜ named volume か。** DB を host の directory（bind mount）に置くと、Docker Desktop と colima では VM とのファイル共有（colima の既定は virtiofs）を通ることになり、flock と、WAL の `-shm` の共有メモリ（mmap）がその共有の実装に依存します。named volume は Docker host（ここでは VM）のファイルシステムの中にあり、書き込むのは image の利用者（uid 10001）だけで、ホストの道具が DB に触れません。ただし、下の実測では、colima の virtiofs の bind mount に state を置いても、排他とスナップショットの試験は named volume と同じ結果になりました。この環境では差が出ませんでした。named volume を選んだのは実測の差によるものではありません。
+- **複数のコンテナで同じ volume を使う条件。** 同じ Docker host の上で、`local` driver の volume を使うことです。同じカーネルの flock と WAL を共有するので、下の試験はこの条件で通りました。別の host から同じ volume を使う構成、network の volume driver（NFS など）は確かめていません。
+
+### 実測
+
+`runtime/examples/synthetic/container_probe.py` で、合成データだけで測りました。実行したのは 2026-11-27、測った環境は次のとおりです。**これ以外の環境（Docker Desktop、Linux の native の Docker、amd64）では確かめていません。**
+
+- host: macOS 27.2、arm64（Apple silicon）、ホストの経路の Python 3.15.2
+- Docker: client 29.10.0、server 29.5.2、colima 0.10.3（vmType `vz`、mountType `virtiofs`）。VM は Ubuntu 24.04.4 LTS、kernel 6.8.0-117-generic、aarch64、CPU 6、memory 8 GB、storage driver overlayfs（containerd の snapshotter）
+- image: `python:3.13.1-slim-bookworm@sha256:031ebf3c…` を base に build したもの（content size 81.6 MB）
+- データ: 合成の規範 300 件（`knowledge_corpus --size 300`）
+
+```bash
+cd "${CLAUDE_PLUGIN_ROOT}/runtime"
+"${SRE_HARNESS_PYTHON:-python3}" -m examples.synthetic.container_probe --out <結果の directory> --bind-mount
+```
+
+#### 1 回の呼び出しの時間（秒）
+
+20 回ずつ実行し、最初の 1 回（cold）と残りの 19 回を分けました。最初の 1 回の前にも、同じ image は build と試験で使っています。build の直後や VM の起動の直後の時間は測っていません。
+
+| 何を | cold | 回数 | 最小 | 中央値 | 最大 |
+|---|---|---|---|---|---|
+| wrapper `knowledge status` | 0.212 | 19 | 0.193 | 0.208 | 0.246 |
+| wrapper `knowledge search` | 0.232 | 19 | 0.207 | 0.215 | 0.263 |
+| host `knowledge status` | 0.159 | 19 | 0.087 | 0.089 | 0.097 |
+| host `knowledge search` | 0.106 | 19 | 0.099 | 0.102 | 0.156 |
+| `docker image inspect`（wrapper の事前の確認） | 0.049 | 19 | 0.018 | 0.019 | 0.030 |
+| `docker run`（同じ強化の option）で `true` | 0.072 | 19 | 0.067 | 0.084 | 0.092 |
+| `docker run` で `python -I -c pass` | 0.090 | 19 | 0.085 | 0.094 | 0.108 |
+| host `python -I -c pass` | 0.038 | 19 | 0.011 | 0.012 | 0.021 |
+
+中央値での内訳: wrapper の `knowledge status` の 0.208 秒のうち、`docker image inspect` が 0.019 秒、コンテナの起動（`true`）が 0.084 秒、コンテナの中の Python の起動が 0.010 秒（`python -I -c pass` と `true` の差）です。残りの 0.095 秒が、ラッパーの shell とコンテナの中の harness（import と `status` の処理）です。ホストでは harness の分が 0.077 秒（host `status` と host `python -I -c pass` の差）でした。コンテナの中の harness の分だけを直接測ったものではなく、引き算で出した値です。
+
+#### 2 つのコンテナからの書き込み（排他）
+
+- **lock を持ち続けるコンテナの間の update（5 回）。** 1 つ目のコンテナが `knowledge/writer.lock` を flock で取り、取ったことを stdout に出してから 4 秒保持します。それを読んでから、2 つ目のコンテナで `knowledge update` を実行しました。重なりはこの順序で作っており、update が終わった時点でも 1 つ目のコンテナが lock を持っていたことを確かめています。
+- **同時に始めた 2 つの update（20 組）。** それぞれ内容の違う入力を渡して同時に起動し、片方が lock で止まった組を「重なった組」、両方が書けた組を「直列」と数えました。exit 1 でも lock の message が無いものは重なりの証拠にせず、異常に数えます。
+
+| 試験 | named volume | bind mount（host の directory） |
+|---|---|---|
+| lock を持つ間の update が exit 1 で止まった | 5 / 5 | 5 / 5 |
+| そのとき generation が動かなかった | 5 / 5 | 5 / 5 |
+| lock を放した後に同じ update が書けた | 5 / 5 | 5 / 5 |
+| 同時の 2 つ: 重なった / 直列 / 異常 | 20 / 0 / 0 | 20 / 0 / 0 |
+| generation の進み = 書けた update の数 | 20 = 20 | 20 = 20 |
+| 1 回の update の呼び出し（最小 / 中央値 / 最大、秒） | 0.306 / 0.318 / 0.354 | 0.282 / 0.284 / 0.304 |
+
+#### 読み取りのスナップショット
+
+writer のコンテナが、すべてのレコードの要約を変えた入力で update を 10 回繰り返し、その間に reader のコンテナを 3 つ並べて `knowledge search` を繰り返しました。update のたびに、次の update を始める前に同じ search を 1 回実行して、その generation の基準の答えにしました。reader の答え（`snapshot.generation`、返ったレコードの ID と要約、`truncated` の数）を、同じ generation の基準と比べています。
+
+| 試験 | named volume | bind mount |
+|---|---|---|
+| 比べた reader の答え / 食い違い | 78 / 0 | 87 / 0 |
+| reader が見た generation の数 | 11 | 11 |
+| reader の失敗（そのうち database is locked） | 0（0） | 0（0） |
+| writer の失敗 | 0 | 0 |
+
+reader の答えのうち、この試験の最初の update より前の generation のもの（named volume で 3 件、bind mount で 3 件）は、基準が無いので比べていません。reader が writer のトランザクションの最中に読んだ回数は数えていません。
+
+`volume backup` の tar を新しい volume に `volume restore` すると、`knowledge status` の generation は元の volume と同じでした（1 回）。
+
+bind mount の試験は、ラッパーが bind mount の state を拒否するので、script が docker を直接呼び、同じ強化の option で、host の利用者の uid / gid（`--user`）で動かしました。state の directory は home directory の下（colima の virtiofs で VM と共有した場所）です。
+
 ## 段の一覧
 
 入力と出力の詳細、失敗の条件の全部は各 Skill の表（[review-learning](skills/review-learning/SKILL.md)、[spec-consistency](skills/spec-consistency/SKILL.md)、[iac-delivery-contract](skills/iac-delivery-contract/SKILL.md)）にあります。LLM の列の「選択」は `--backend claude` を選んだときだけ使うことを、「必須」は `--backend`（`claude` か `stub`）の指定が必須であることを示します。
@@ -228,6 +423,7 @@ exit code の意味はすべての段で同じです。
 | bare リポジトリ | `<ルート>/cache/git/`。run をまたいで使います |
 | knowledge index | `<ルート>/knowledge/`。`config.json`（人が書く設定）、`index.sqlite3`（索引）、`writer.lock`、`tasks/<hash>.jsonl`（タスク累計の記録）、`backups/`（`migrate` と `rollback` が入れ替える前の索引）、`decisions/`（decision request の参照実装の outbox / inbox） |
 | 権限 | ディレクトリ 0700、ファイル 0600 |
+| コンテナの経路 | 上のルートとは別の、Docker の named volume の中の `/state/sre-harness/`（下の「コンテナの経路」） |
 
 run にはレビュー本文、diff、文書の section が入ります。消すときは `runs/<run_id>/` を、bare リポジトリは `cache/git/` を削除してください（次の実行で作り直します）。ホームディレクトリを git で管理している場合、既定の場所は拒否されます。`AI_HARNESS_HOME` にリポジトリの外のディレクトリを指定してください。
 
@@ -1072,6 +1268,20 @@ python -m examples.synthetic.knowledge_vector_probe --model /path/to/multilingua
 - `knowledge check` が読む unified diff の形。読むのは `git diff` の形（`diff --git`、`---` / `+++`、hunk の見出しの行数）と、`---` / `+++` だけの形です。引用符で囲んだ path は exit 2 で、combined diff（`@@@`）と binary の差分は hunk として読まないので検査されません。実際の作業で出る diff での誤検知と見落としは測っていません。
 - `knowledge export` の出力を project-context-explorer に渡すのは、合成データで 1 回 `index add` と `check` を通しただけです。explorer の側の entity の検査は、テストでは explorer の定数から読んだ規則で行っていて、explorer のコードそのものは実行していません。
 
+### コンテナの経路の未検証
+
+確かめたのは、手元の 1 つの環境（macOS 27.2、arm64、colima 0.10.3、Docker server 29.5.2）で、上の「コンテナの経路」の実測と合成データの手順が動くことだけです。次のことは確かめていません。
+
+- Docker Desktop、Linux の native の Docker、amd64 の host での動作と時間。CI の job `container`（ubuntu、amd64）は image の build と `container_probe --smoke` を実行しますが、この README を書いた時点では GitHub Actions 上で実行していません。
+- Linux の native の Docker で、今の directory の中のファイルの所有と mode がコンテナの利用者（uid 10001）から読めない場合の振る舞い（missing file か permission の exit 2 になるはずです）。
+- 別の host から同じ volume を使う構成、network の volume driver（NFS など）、rootless Docker、Podman。
+- build の直後や VM の起動の直後の 1 回目の時間。表の cold は、同じ image を使った後の最初の 1 回です。強化の option（`--read-only` など）を外したときの時間との差も測っていません。
+- `knowledge fetch` の `git:` を、`volume import` で写した bare リポジトリから image の `git` で読むこと（image に `git` があることは build で確かめましたが、`git:` の出典を volume の中で読んではいません）。
+- 実際の端末での `sre-harness-container knowledge decision answer`（`-i -t` を付けた経路）。テストは偽の docker で argv を確かめただけです。
+- `volume backup` の間に、`--task` を付けた search や decision の段が動いたときの写しの中身。
+- `image build` の再現性。base image の digest は固定していますが、`git` は Debian の archive の今の版が入るので、build した時期によって image の中身が変わります。image の digest（ID）は build ごとに変わります。
+- shellcheck は手元に無く、ラッパーには実行していません（`bash -n` と、macOS の `/bin/bash` 3.2 で動くことはテストで確かめています）。
+
 ## Review Learning: 収集と正規化
 
 段ごとの入力・出力・失敗・権限は `skills/review-learning/SKILL.md` の表にあります。
@@ -1648,9 +1858,13 @@ python -m pytest tests/e2e/test_completion_scenarios.py
 python -m examples.synthetic.knowledge_eval --size 50 --size 300 --size 2000 --format markdown
 # 言い換えの case（「評価」の「言い換えの case」の表を出す）
 python -m examples.synthetic.knowledge_eval --paraphrase --size 50 --size 300 --size 2000 --format markdown
+# コンテナの経路の実測（Docker と build した image が要ります。「コンテナの経路」の表を出す）
+python -m examples.synthetic.container_probe --out <結果の directory> --bind-mount
+# CI と同じ小さい版
+python -m examples.synthetic.container_probe --smoke
 ```
 
 - テストはネットワークも認証も、本物の `claude` も使いません。例と fixture は合成データだけです。GitHub は fixture transport、git はテストが一時ディレクトリに作る合成リポジトリ、Claude CLI は `guard._run` の差し替えか stub です。
 - opa が PATH に無いと、opa を使うテストは理由付きで SKIP と表示されます。`SRE_HARNESS_REQUIRE_OPA=1` を付けると、SKIP ではなく失敗になります。
-- CI（`.github/workflows/sre-harness.yml`）は、この plugin のほかに project-context-explorer のファイルが変わったときも走ります（契約の照合テストが読むため）。Python 3.10 と 3.13 で、compileall、ruff、pyright、opa を入れた上での `SRE_HARNESS_REQUIRE_OPA=1` の pytest と coverage を実行します。macOS（Python 3.13）でも pytest を実行します（knowledge index の flock、WAL、FTS5 を確かめるためです。opa は入れないので、opa のテストは SKIP になります）。opa は v1.22.2 の Linux amd64 static バイナリを版固定の URL から取得し、公式の `.sha256` の値で検査してから PATH に置きます。
+- CI（`.github/workflows/sre-harness.yml`）は、この plugin のほかに project-context-explorer のファイルが変わったときも走ります（契約の照合テストが読むため）。Python 3.10 と 3.13 で、compileall、ruff、pyright、opa を入れた上での `SRE_HARNESS_REQUIRE_OPA=1` の pytest と coverage を実行します。macOS（Python 3.13）でも pytest を実行します（knowledge index の flock、WAL、FTS5 を確かめるためです。opa は入れないので、opa のテストは SKIP になります）。opa は v1.22.2 の Linux amd64 static バイナリを版固定の URL から取得し、公式の `.sha256` の値で検査してから PATH に置きます。 job `container` は、ubuntu で image を build し、`container_probe --smoke`（ラッパー経由の status、update、search、fetch、volume の backup と restore、lock を持つコンテナの間の update の拒否、同時の 2 組の update、update の間の reader）を実行します。
 - `tests/invariants/` は、子プロセスを起動できるのが `guard.py` だけであること（AST の検査）、plugin のファイルに秘密情報の形が無いこと、plugin のファイルに出る URL の host が許可リスト（`example.com`、`example.org`、`github.com`、`api.github.com`、schema の host、`*.invalid`、`*.example`）の中だけであること、project-context-explorer との 5 つの契約が一致すること（`SRE_HARNESS_REQUIRE_EXPLORER=1` で explorer が無いときに SKIP でなく失敗にします）などを検査します。

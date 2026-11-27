@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+# Container launcher. Runs one harness command in a throwaway container (docker run --rm) with
+# the same argv as scripts/sre-harness, and returns its stdout and exit code. Only `knowledge`
+# and `runs list` run here: they need no network, gh or claude. State lives in a Docker named
+# volume mounted at /state; the working directory is mounted read-only at /work. No bind mount
+# is writable. Written for bash 3.2 (macOS /bin/bash): no associative arrays, no mapfile.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+plugin="$(cd "$here/.." && pwd)"
+
+STATE_ROOT=/state/sre-harness
+STATE_TOOL=/opt/sre-harness/runtime/container_state.py
+PIDS_LIMIT=128
+TMPFS_SIZE=64m
+DEFAULT_MEMORY=512m
+DEFAULT_VOLUME=sre-harness-state
+# What a read-only mount (SRE_HARNESS_RO_MOUNTS) may not cover: these image paths and anything
+# below them, and these directories themselves (a directory below /tmp, /var or /opt is fine).
+RESERVED_TREES="/bin /boot /dev /etc /lib /lib64 /nonexistent /opt/sre-harness /proc /root /run /sbin /state /sys /usr /work"
+RESERVED_EXACT="/ /opt /tmp /var"
+
+die() {
+  echo "sre-harness-container: $*" >&2
+  exit 2
+}
+
+usage() {
+  cat <<'USAGE'
+usage: sre-harness-container knowledge <stage> [arguments]   as scripts/sre-harness knowledge
+       sre-harness-container runs list
+       sre-harness-container image build                    build sre-harness:<plugin version>
+       sre-harness-container volume create                  create the state volume
+       sre-harness-container volume backup > state.tar      a tar of the state, on stdout
+       sre-harness-container volume restore < state.tar     into an empty state volume
+       sre-harness-container volume import DIR              knowledge/config.json, registry/,
+                                                            runs/ and cache/git/ of a host
+                                                            state root (DIR), copied in
+
+environment:
+  SRE_HARNESS_IMAGE      the image (default sre-harness:<plugin version>)
+  SRE_HARNESS_VOLUME     the state volume, a Docker volume name, never a path
+                         (default sre-harness-state)
+  SRE_HARNESS_RO_MOUNTS  more host directories, ':'-separated, mounted read-only at their own
+                         absolute path
+  SRE_HARNESS_MEMORY     the memory limit of a container (default 512m)
+USAGE
+}
+
+plugin_version() {
+  sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$plugin/.claude-plugin/plugin.json" | head -n 1
+}
+
+image="${SRE_HARNESS_IMAGE:-sre-harness:$(plugin_version)}"
+volume="${SRE_HARNESS_VOLUME:-$DEFAULT_VOLUME}"
+memory="${SRE_HARNESS_MEMORY:-$DEFAULT_MEMORY}"
+
+check_volume_name() {
+  # A Docker volume name. A path (/..., ./..., ~/...) would make Docker bind-mount a host
+  # directory as the state; the state lives in a named volume only.
+  if ! [[ "$volume" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]]; then
+    die "SRE_HARNESS_VOLUME must be a Docker volume name (letters, digits, '_', '.', '-'), not a path: '$volume'."
+  fi
+}
+
+check_memory() {
+  if ! [[ "$memory" =~ ^[1-9][0-9]*[kmg]?$ ]]; then
+    die "SRE_HARNESS_MEMORY must be a size such as 512m: '$memory'."
+  fi
+}
+
+require_docker() {
+  command -v docker >/dev/null 2>&1 || die "docker is not installed or not on PATH."
+}
+
+require_image() {
+  require_docker
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! docker version >/dev/null 2>&1; then
+    die "cannot reach the Docker daemon (docker version failed)."
+  fi
+  die "there is no image $image; run 'sre-harness-container image build' first."
+}
+
+require_volume() {
+  docker volume inspect "$volume" >/dev/null 2>&1 \
+    || die "there is no volume $volume; run 'sre-harness-container volume create' first."
+}
+
+# The options every container gets. No bind mount here; callers add the read-only ones.
+hardening=(
+  --rm
+  --pull never
+  --network none
+  --read-only
+  --tmpfs "/tmp:rw,noexec,nosuid,size=$TMPFS_SIZE"
+  --cap-drop ALL
+  --security-opt no-new-privileges
+  --pids-limit "$PIDS_LIMIT"
+  --memory "$memory"
+)
+
+run_docker() {
+  # docker exits 125-127 when it could not start the container; the harness never does.
+  local code=0
+  docker run "$@" || code=$?
+  if [ "$code" -ge 125 ] && [ "$code" -le 127 ]; then
+    echo "sre-harness-container: docker could not start the container (exit $code)." >&2
+    exit 2
+  fi
+  exit "$code"
+}
+
+read_only_mounts=()
+add_read_only_mounts() {
+  local list="${SRE_HARNESS_RO_MOUNTS:-}" entry resolved tree
+  [ -n "$list" ] || return 0
+  local IFS=':'
+  for entry in $list; do
+    [ -n "$entry" ] || continue
+    case "$entry" in
+      /*) ;;
+      *) die "SRE_HARNESS_RO_MOUNTS takes absolute paths: '$entry'." ;;
+    esac
+    [ -d "$entry" ] || die "SRE_HARNESS_RO_MOUNTS: '$entry' is not a directory."
+    resolved="$(cd "$entry" && pwd -P)"
+    case "$resolved" in
+      *,* | *:* | *$'\n'*) die "SRE_HARNESS_RO_MOUNTS: '$resolved' holds a ',', a ':' or a newline." ;;
+    esac
+    if [[ " $RESERVED_EXACT " == *" $resolved "* ]]; then
+      die "SRE_HARNESS_RO_MOUNTS: '$resolved' would cover a path of the image."
+    fi
+    IFS=' '
+    for tree in $RESERVED_TREES; do
+      case "$resolved" in
+        "$tree" | "$tree"/*) die "SRE_HARNESS_RO_MOUNTS: '$resolved' would cover a path of the image." ;;
+      esac
+    done
+    IFS=':'
+    read_only_mounts+=(-v "$resolved:$resolved:ro")
+  done
+}
+
+run_harness() {
+  case "${1:-}" in
+    knowledge) ;;
+    runs)
+      [ "${2:-}" = "list" ] || die "only 'runs list' runs in the container."
+      ;;
+    review | spec | iac)
+      die "'$1' is not run in the container: it reads GitHub (gh), calls claude, or runs git or opa against the host. Use the host launcher scripts/sre-harness."
+      ;;
+    *)
+      die "unknown command '${1:-}'. The container runs 'knowledge' and 'runs list' (see --help)."
+      ;;
+  esac
+  check_volume_name
+  check_memory
+  local work
+  work="$(pwd -P)"
+  case "$work" in
+    *,* | *:* | *$'\n'*) die "the working directory '$work' holds a ',', a ':' or a newline." ;;
+  esac
+  add_read_only_mounts
+  local options=("${hardening[@]}" -v "$volume:/state" -v "$work:/work:ro" -w /work)
+  # A person answers at a terminal: a tty only when both stdin and stdout are one, so the
+  # check in the container still sees a pipe as a pipe.
+  if [ "${1:-}" = "knowledge" ] && [ "${2:-}" = "decision" ] && [ "${3:-}" = "answer" ] \
+    && [ -t 0 ] && [ -t 1 ]; then
+    options+=(-i -t)
+  fi
+  # So that the automated-run check of `decision answer` is not bypassed in the container.
+  local name
+  for name in AI_HARNESS_AUTOMATED AI_HARNESS_ACTIVE; do
+    if printenv "$name" >/dev/null 2>&1; then
+      options+=(-e "$name")
+    fi
+  done
+  require_image
+  run_docker "${options[@]}" ${read_only_mounts[@]+"${read_only_mounts[@]}"} "$image" "$@"
+}
+
+state_tool() {
+  # $1: backup | restore | import; the rest are docker options.
+  local command="$1"
+  shift
+  run_docker "${hardening[@]}" "$@" --entrypoint python "$image" -I "$STATE_TOOL" \
+    "$command" "$STATE_ROOT"
+}
+
+volume_command() {
+  check_volume_name
+  check_memory
+  case "${1:-}" in
+    create)
+      require_docker
+      docker volume create --label org.opencontainers.image.title=sre-harness "$volume" >/dev/null \
+        || die "docker volume create $volume failed."
+      echo "$volume"
+      ;;
+    backup)
+      [ -t 1 ] && die "volume backup writes a tar on stdout; redirect it to a file."
+      require_image
+      require_volume
+      state_tool backup -v "$volume:/state:ro"
+      ;;
+    restore)
+      [ -t 0 ] && die "volume restore reads a tar on stdin; redirect it from a file."
+      require_image
+      state_tool restore -i -v "$volume:/state"
+      ;;
+    import)
+      local source="${2:-}" names=() name
+      [ -n "$source" ] || die "volume import needs a host state root (\$AI_HARNESS_HOME/sre-harness)."
+      [ -d "$source" ] || die "volume import: '$source' is not a directory."
+      for name in knowledge/config.json registry runs cache/git; do
+        if [ -e "$source/$name" ]; then
+          names+=("$name")
+        fi
+      done
+      [ "${#names[@]}" -gt 0 ] \
+        || die "volume import: '$source' has none of knowledge/config.json, registry, runs, cache/git."
+      require_image
+      # COPYFILE_DISABLE keeps macOS tar from adding ._ files.
+      (cd "$source" && COPYFILE_DISABLE=1 tar -cf - "${names[@]}") \
+        | state_tool import -i -v "$volume:/state"
+      ;;
+    *)
+      die "unknown volume command '${1:-}' (create, backup, restore, import)."
+      ;;
+  esac
+}
+
+image_command() {
+  [ "${1:-}" = "build" ] || die "unknown image command '${1:-}' (build)."
+  require_docker
+  local version
+  version="$(plugin_version)"
+  # The build's progress goes to stderr: stdout stays empty.
+  docker build --tag "$image" --build-arg "SRE_HARNESS_VERSION=$version" \
+    --file "$plugin/container/Dockerfile" "$plugin" >&2 || die "docker build failed."
+}
+
+case "${1:-}" in
+  "")
+    usage >&2
+    exit 2
+    ;;
+  -h | --help | help)
+    usage
+    ;;
+  image)
+    shift
+    image_command "$@"
+    ;;
+  volume)
+    shift
+    volume_command "$@"
+    ;;
+  *)
+    run_harness "$@"
+    ;;
+esac

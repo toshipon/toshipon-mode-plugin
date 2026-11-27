@@ -72,3 +72,26 @@ jobs:
           python-version: '3.13'
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest
+
+  # The container path (scripts/sre-harness-container): build the image, then, through the
+  # wrapper on synthetic data, knowledge status (FTS5), update, search, fetch, a volume
+  # backup restored into a new volume, an update refused while another container holds the
+  # writer lock, two concurrent updates, and readers during updates (container_probe --smoke).
+  # The full measurement (20 runs and more) is not run here.
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: plugins/sre-harness/runtime
+    env:
+      SRE_HARNESS_IMAGE: sre-harness:ci
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      # The synthetic data is made on the host, with the runtime's own dependency.
+      - run: python -m pip install -r requirements.txt
+      - run: ../scripts/sre-harness-container image build
+      - run: python -m examples.synthetic.container_probe --smoke
