@@ -177,6 +177,8 @@ def contract_section(title):
 def explorer_accepts(locator, revision):
     """The explorer's parse_locator and check_reference, by their patterns: (kind, path,
     start, end) when the reference is well formed, else None."""
+    if not isinstance(locator, str) or not isinstance(revision, str):
+        return None
     git = re.compile(compiled_pattern("claims.py", "_GIT"))
     pr = re.compile(compiled_pattern("claims.py", "_PR"))
     doc = re.compile(compiled_pattern("claims.py", "_DOC"))
@@ -206,3 +208,53 @@ def explorer_accepts(locator, revision):
     if doc.match(locator):
         return ("doc", None, None, None) if doc_revision.match(revision) else None
     return None
+
+
+# The explorer's entity contract (index.check_entity), from its constants ----------------------
+
+ENTITY_NAMES = ("_ID", "_ENTITY_KEYS", "TYPES", "RELATIONS", "DECISION_STATUSES", "MAX_DESCRIPTION")
+
+
+def entity_problems(entity):
+    """What the explorer's `index add` would refuse in one entity, by the rules of
+    index.check_entity read from its constants. Empty when `index add` stores it. The check
+    itself is not run: it imports the explorer's git reader."""
+    node = function("index.py", "check_entity")
+    used = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+    assert set(ENTITY_NAMES) <= used, "check_entity no longer uses the constants read here"
+    identifier = re.compile(compiled_pattern("index.py", "_ID"))
+    keys = constant("index.py", "_ENTITY_KEYS")
+    types = constant("index.py", "TYPES")
+    relations = constant("index.py", "RELATIONS")
+    statuses = constant("index.py", "DECISION_STATUSES")
+    longest = constant("index.py", "MAX_DESCRIPTION")
+    if not isinstance(entity, dict) or not identifier.match(str(entity.get("id"))):
+        return ["id"]
+    problems = [f"unknown field {key}" for key in sorted(set(entity) - set(keys))]
+    if entity.get("type") not in types:
+        problems.append("type")
+    description = entity.get("description")
+    if (
+        not isinstance(description, str)
+        or not description.strip()
+        or len(description) > longest
+        or "\n" in description.strip()
+    ):
+        problems.append("description")
+    source = entity.get("source")
+    if source is not None:
+        if not isinstance(source, dict) or set(source) - {"locator", "revision", "sha256", "size"}:
+            problems.append("source shape")
+        elif explorer_accepts(source.get("locator"), source.get("revision", "a" * 40)) is None:
+            problems.append("source reference")
+    for relation in entity.get("relationships", []):
+        if (
+            not isinstance(relation, dict)
+            or set(relation) != {"type", "to"}
+            or relation["type"] not in relations
+            or not identifier.match(str(relation["to"]))
+        ):
+            problems.append("relationship")
+    if "status" in entity and entity["status"] not in statuses:
+        problems.append("status")
+    return problems
