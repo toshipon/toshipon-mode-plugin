@@ -122,7 +122,10 @@ def test_the_approval_record_is_copied_from_the_latest_approved_version(root, ma
 
 
 def test_every_item_passes_the_update_checks(root, made):
-    accepted, rejected = ingest.check(changes(root).items, config.known_readers(rr.CONFIG), NOW)
+    items = changes(root).items
+    accepted, rejected = ingest.check(
+        items, config.known_readers(rr.CONFIG), NOW, "review-registry"
+    )
     assert rejected == [] and len(accepted) == 5
     assert all(record["enforcement"] == "advisory" for record in accepted)
 

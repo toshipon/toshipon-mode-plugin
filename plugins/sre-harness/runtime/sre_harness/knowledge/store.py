@@ -262,6 +262,7 @@ class _Plan:
     updated: list
     unchanged: int
     deletes: dict  # id -> (origin, reason)
+    foreign: list  # incoming ids another source holds: not written
 
     @property
     def advanced(self):
@@ -279,6 +280,7 @@ class _Plan:
             "inserted": sorted(self.inserted),
             "updated": sorted(self.updated),
             "unchanged": self.unchanged,
+            "owned_by_other_source": sorted(self.foreign),
             "tombstoned": [
                 {"id": record_id, "reason": reason}
                 for record_id, (_, reason) in sorted(self.deletes.items())
@@ -288,7 +290,9 @@ class _Plan:
 
 def _plan(connection, batch):
     """What `batch` would change, read inside the caller's transaction. Refuses (exit 2) an
-    update after which `supersedes` would have a cycle."""
+    update after which `supersedes` would have a cycle. A record whose id another source holds
+    is not written (`foreign`): a source changes only its own records, and an id becomes free
+    for another source once its owner has dropped it."""
     meta = _meta(connection)
     followed = connection.execute(
         "SELECT config_hash FROM sources WHERE name = ?", (batch.source,)
@@ -300,12 +304,15 @@ def _plan(connection, batch):
         )
     }
     incoming = {record["id"]: record for record in batch.records}
-    upserts, inserted, updated, unchanged = [], [], [], 0
+    upserts, inserted, updated, unchanged, foreign = [], [], [], 0, []
     for record_id, record in sorted(incoming.items()):
         now = current.get(record_id)
         if now is None:
             inserted.append(record_id)
-        elif now["hash"] != model.record_hash(record) or now["source"] != batch.source:
+        elif now["source"] != batch.source:
+            foreign.append(record_id)  # another source holds it: never overwritten from here
+            continue
+        elif now["hash"] != model.record_hash(record):
             updated.append(record_id)
         else:
             unchanged += 1
@@ -352,6 +359,7 @@ def _plan(connection, batch):
         updated=updated,
         unchanged=unchanged,
         deletes=deletes,
+        foreign=foreign,
     )
 
 

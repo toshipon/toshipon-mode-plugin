@@ -435,10 +435,14 @@ run にはレビュー本文、diff、文書の section が入ります。消す
 - 書き込むのは一度に 1 つの writer だけです。1 回の取り込みは 1 つのトランザクションで、何か変わったときだけ generation が 1 進みます。同じ入力をもう一度取り込んでも generation は進みません。索引は source ごとに、その source を最後に取り込んだときの `config.json` の hash を持ちます。`config.json` を変えると、その source の次の取り込みで generation が進みます。
 - `complete: false`（部分的な取り込み）では、入力に無いレコードを消しません。`complete: true` のときだけ、消えたものを tombstone にします。
 - `access` の無いレコードと、どの principal も持たない reader を名指しするレコードは、索引に入れずに `rejected` に理由を付けて出します。
+- レコード ID は、それを最初に取り込んだ source のものです。別の source が同じ ID（同じ `origin`）のレコードを出しても書き込まず、そのレコードだけを `rejected` に理由 `owned_by_other_source` で出します（ほかの item は取り込み、generation は実際に何かが変わったときだけ進みます）。持ち主の source がそのレコードを外した（tombstone にした）後なら、別の source が取り込めます。
+- `origin.kind` の `review-registry` は `--source review-registry` だけ、`decision` と `requirement` は `--source spec-run` だけが出せます。`--source file` の item がこれらの kind を使うと、`rejected` に理由 `origin_kind_reserved` で出します。
 - WAL を使うので、ローカルディスクに置いてください。ネットワークファイルシステムでは壊れることがあります。
 - Python の `sqlite3` に FTS5 が無いと、`knowledge update` は exit 2 で止まります。`knowledge status` の `fts5` で確かめられます。`knowledge status` の `extension_loading` は、`sqlite3` が SQLite の拡張を読み込めるか（接続に `enable_load_extension` があり、呼べるか）です。索引は拡張を使わないので、`false` でも止まりません。
 - アクセス区分（`access` の `classification` と `readers`、`config.json` の principal）は本人確認ではありません。同じ OS の利用者は SQLite のファイルを直接読めます。防げるのは、別 project の知識がうっかり結果に混ざることです。
-- **必須（`mandatory`）にするのは人の操作だけです。** レコードが `mandatory` になるのは、人が `review approve` の `--knowledge-enforcement mandatory` で明示し、その entry の最新版が承認のときだけです。`review-registry` の既定、`spec-run` の取り込み、移行したレコードは、どれも `advisory` です。文書に「approved」と書いてあっても必須にはなりません。
+- アクセスはレコード単位で評価します。evidence の locator の先（registry の artifact、run の `documents.jsonl`、git の object）のアクセスは評価しません。`knowledge fetch` は、principal がレコードを読めれば、その locator の原文を hash の照合付きで返します。`--source file` を書ける人は、読める principal に別の project の原文を見せるレコード（別の project の registry の artifact を指す evidence を持つ、読める区分のレコード）を作れます。
+- **`review-registry`、`spec-run`、移行で必須（`mandatory`）にするのは人の操作だけです。** これらのレコードが `mandatory` になるのは、人が `review approve` の `--knowledge-enforcement mandatory` で明示し、その entry の最新版が承認のときだけです。`review-registry` の既定、`spec-run` の取り込み、移行したレコードは、どれも `advisory` です。文書に「approved」と書いてあっても必須にはなりません。
+- **`--source file` は信頼された入力で、この性質の例外です。** ファイルを書いた人が、status、承認の記録（`approval`）、enforcement（`mandatory` を含む）、アクセス、evidence の locator までを宣言でき、承認の流れ（`review approve`）を通りません。合成データと、利用者が自分で管理する台帳のための入口です。誰でも書ける場所のファイルを `--input` に渡さないでください。
 
 #### `knowledge` block の指定（`review approve`）
 
