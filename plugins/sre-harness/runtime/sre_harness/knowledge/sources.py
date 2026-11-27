@@ -35,8 +35,10 @@ _REGISTRY = re.compile(r"registry:(RG-[0-9]{4,})/(v[0-9]{4,}\.md)")
 _RUN = re.compile(
     r"run:(run-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8})/documents\.jsonl#(DOC-[0-9]{4,})#(S[0-9]{1,6})"
 )
+# The path never starts with "-": the project context explorer refuses such a locator
+# (gitread.checked_path), so the two indexes never read it differently.
 _GIT = re.compile(
-    r"git:(?P<path>[A-Za-z0-9_.@+=,-]+(?:/[A-Za-z0-9_.@+=,-]+)*)"
+    r"git:(?P<path>(?!-)[A-Za-z0-9_.@+=,-]+(?:/[A-Za-z0-9_.@+=,-]+)*)"
     r"(?:#L(?P<start>[1-9][0-9]{0,6})(?:-L(?P<end>[1-9][0-9]{0,6}))?)?"
 )
 _SHA = re.compile(r"[0-9a-f]{40}")
