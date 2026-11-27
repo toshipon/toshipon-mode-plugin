@@ -50,9 +50,9 @@ def load(path):
     return value
 
 
-def request(task, *, query="", max_tokens=search.DEFAULT_MAX_TOKENS, paths=()):
+def request(task, *, query="", max_tokens=search.DEFAULT_MAX_TOKENS, paths=(), expand=None):
     """The search a task describes. `paths` are added to its changed paths (`knowledge check`
-    adds the paths its patch touches)."""
+    adds the paths its patch touches); `expand` is the caller's checked expansion words."""
     return search.Request(
         project=task["project_id"],
         component=task["component_id"],
@@ -62,4 +62,5 @@ def request(task, *, query="", max_tokens=search.DEFAULT_MAX_TOKENS, paths=()):
         paths=tuple(sorted(set(task["changed_paths"]) | set(paths))),
         resource_types=tuple(task["resource_types"]),
         max_tokens=max_tokens,
+        expand=expand,
     )
