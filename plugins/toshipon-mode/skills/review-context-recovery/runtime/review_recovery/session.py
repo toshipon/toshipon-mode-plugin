@@ -7,6 +7,7 @@ that is neither recapped nor skipped, and it moves through four phases in order:
 explanation, the user's own answer and the recap cannot be skipped or batched."""
 
 import os
+import re
 from datetime import datetime
 
 from .foundation import (
@@ -19,6 +20,7 @@ from .foundation import (
     now,
     one_line,
     parse_locator,
+    plain_path,
     project_dir,
     read_jsonl,
     redact,
@@ -34,9 +36,23 @@ MAX_RECAP = 200
 _NOT_A_PERSON = ("AI_HARNESS_AUTOMATED", "AI_HARNESS_ACTIVE")
 
 
+_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?$")
+
+
 def _login(comment):
+    """The author's GitHub login, or "unknown" for anything that is not shaped like one."""
     user = comment.get("user") or comment.get("author") or {}
-    return one_line(str(user.get("login", "") if isinstance(user, dict) else user), 60) or "unknown"
+    login = user.get("login") if isinstance(user, dict) else user
+    return login if isinstance(login, str) and _LOGIN.match(login) else "unknown"
+
+
+def _path(comment):
+    """The file a comment is on, when it is a repository path that reads as a path."""
+    path = comment.get("path")
+    try:
+        return gitread.checked_path(path) if plain_path(path) else None
+    except Refusal:
+        return None
 
 
 def parse_threads(raw, only=None):
@@ -44,6 +60,8 @@ def parse_threads(raw, only=None):
     (`gh api repos/{owner}/{repo}/pulls/{n}/comments`), or from {"comments": [...]}.
     A thread is a root comment and its replies, in the order they were written."""
     comments = raw.get("comments") if isinstance(raw, dict) else raw
+    if isinstance(comments, list) and comments and all(isinstance(page, list) for page in comments):
+        comments = [comment for page in comments for comment in page]  # gh api --paginate --slurp
     if not isinstance(comments, list) or not comments:
         raise Refusal("threads file must be a non-empty list of review comments")
     parsed = {}
@@ -53,14 +71,15 @@ def parse_threads(raw, only=None):
         if not isinstance(comment.get("body"), str):
             raise Refusal(f"comment {comment['id']} has no body")
         line = comment.get("line") or comment.get("original_line")
+        reply_to = comment.get("in_reply_to_id")
         parsed[comment["id"]] = {
             "id": comment["id"],
             "author": _login(comment),
-            "path": comment.get("path") if isinstance(comment.get("path"), str) else None,
+            "path": _path(comment),
             "line": line if isinstance(line, int) else None,
             "body": comment["body"],
             "created_at": str(comment.get("created_at", "")),
-            "in_reply_to": comment.get("in_reply_to_id"),
+            "in_reply_to": reply_to if isinstance(reply_to, int) else None,
         }
     threads = {}
     for comment in sorted(parsed.values(), key=lambda c: (c["created_at"], c["id"])):
@@ -107,7 +126,12 @@ class Session:
             thread = threads[event["thread"]]
             thread["events"].append(event)
             thread["phase"] = event["phase"]
-        return {"base": started["base"], "head": started["head"], "threads": list(threads.values())}
+        return {
+            "base": started["base"],
+            "head": started["head"],
+            "context": started.get("context", ""),
+            "threads": list(threads.values()),
+        }
 
     def _current(self, state):
         return next(
@@ -139,7 +163,7 @@ class Session:
 
     # -- commands ----------------------------------------------------------------------
 
-    def start(self, base, head, raw_threads, only=None):
+    def start(self, base, head, raw_threads, only=None, context=""):
         if self.log.exists():
             raise Refusal(
                 f"a session for PR #{self.pr} already exists; continue with next ({self.log})"
@@ -154,15 +178,27 @@ class Session:
         threads = parse_threads(raw_threads, only)
         for thread in threads:
             for comment in thread["comments"]:
+                # No log exists yet, so nothing has been checked against an earlier snapshot.
                 saved = self.evidence.add(
-                    f"pr:{self.pr}#comment-{comment['id']}", revisions["head"], comment["body"]
+                    f"pr:{self.pr}#comment-{comment['id']}",
+                    revisions["head"],
+                    comment["body"],
+                    replace=True,
                 )
                 comment["sha256"] = saved["sha256"]
                 del comment["body"]  # the snapshot is the one copy; the log holds metadata
-        append_private(
-            self.log,
-            {"event": "started", "at": now(), "pr": self.pr, **revisions, "threads": threads},
-        )
+        started = {
+            "event": "started",
+            "at": now(),
+            "pr": self.pr,
+            **revisions,
+            "threads": threads,
+            "context": redact(context.strip()),
+        }
+        try:
+            append_private(self.log, started, create=True)
+        except FileExistsError:
+            raise Refusal(f"a session for PR #{self.pr} was started at the same time") from None
         return {"pr": self.pr, **revisions, "threads": len(threads), "log": str(self.log)}
 
     def next(self):
@@ -173,7 +209,7 @@ class Session:
         if thread["phase"] == "new":
             self._record(thread, "presented", "presented")
             thread["phase"] = "presented"
-        return {
+        handed = {
             "action": owed(thread["phase"]),
             "preamble": PREAMBLE,
             "pr": self.pr,
@@ -183,6 +219,12 @@ class Session:
             "remaining": sum(t["phase"] not in ("recapped", "skipped") for t in state["threads"])
             - 1,
         }
+        if state["context"]:
+            handed["session_context"] = envelope("session context", state["context"])
+        question = asked(thread)
+        if thread["phase"] == "explained" and question:
+            handed["check_question"] = question  # so an interrupted session can ask it again
+        return handed
 
     def _present(self, thread, state):
         root = thread["comments"][0]
@@ -220,19 +262,21 @@ class Session:
         if problems:
             raise Refusal("explanation does not follow the contract", problems)
         report = verify(explanation["claims"], self.evidence.resolve)
+        itself = f"pr:{self.pr}#comment-{thread['id']}"
         cited = {
-            parse_locator(reference["locator"]).get("comment")
+            reference["locator"]
             for claim in explanation["claims"]
             for reference in claim.get("references", [])
         }
-        if str(thread["id"]) not in cited:
+        if itself not in cited:
             report["results"].append(
-                {
-                    "problems": [
-                        f"no claim cites the comment itself (pr:{self.pr}#comment-{thread['id']})"
-                    ]
-                }
+                {"problems": [f"no claim cites the comment itself ({itself})"]}
             )
+        report["results"] += [
+            {"problems": [f"{locator} is not part of PR #{self.pr}"]}
+            for locator in sorted(cited)
+            if parse_locator(locator).get("number") not in (None, self.pr)
+        ]
         problems = [problem for result in report["results"] for problem in result["problems"]]
         if problems:
             self._record(thread, "explain_rejected", thread["phase"], problems=problems)
@@ -366,20 +410,26 @@ def check_explanation(explanation):
     return problems
 
 
+def asked(thread):
+    """The check question of the explanation the user was last shown."""
+    explained = [e for e in thread["events"] if e["event"] == "explained"]
+    return explained[-1]["explanation"]["check_question"] if explained else None
+
+
 def thread_metrics(thread):
-    """Seconds from the comment being presented to the user's first answer, when one exists."""
-    at = {}
-    for event in thread["events"]:
-        at.setdefault(event["event"], event["at"])
+    """Seconds from the explanation the user answered being recorded to their first answer."""
     answered = next((e for e in thread["events"] if e["event"] == "answered"), None)
     seconds = None
-    if answered and "presented" in at:
-        elapsed = datetime.fromisoformat(answered["at"]) - datetime.fromisoformat(at["presented"])
+    if answered:
+        before = thread["events"][: thread["events"].index(answered)]
+        explained = [e for e in before if e["event"] == "explained"][-1]
+        elapsed = datetime.fromisoformat(answered["at"]) - datetime.fromisoformat(explained["at"])
         seconds = int(elapsed.total_seconds())
     return {
         "id": thread["id"],
         "phase": thread["phase"],
         "owed": owed(thread["phase"]),
+        "check_question": asked(thread) if thread["phase"] == "explained" else None,
         "understanding_seconds": seconds,
         "assessment": answered["assessment"] if answered else None,
         "explanations_rejected": sum(e["event"] == "explain_rejected" for e in thread["events"]),

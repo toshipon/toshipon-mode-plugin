@@ -17,11 +17,12 @@ from context_recovery.base import (  # noqa: E402
     project_dir,
     read_json,
     read_jsonl,
+    read_text,
 )
 from context_recovery.claims import parse_locator, verify  # noqa: E402
 from context_recovery.evidence import Evidence  # noqa: E402
 from context_recovery.redaction import redact  # noqa: E402
-from context_recovery.untrusted import PREAMBLE, envelope, one_line  # noqa: E402
+from context_recovery.untrusted import PREAMBLE, envelope, one_line, plain_path  # noqa: E402
 
 __all__ = [
     "Evidence",
@@ -33,10 +34,12 @@ __all__ = [
     "gitread",
     "now",
     "one_line",
+    "plain_path",
     "parse_locator",
     "project_dir",
     "read_json",
     "read_jsonl",
+    "read_text",
     "redact",
     "verify",
 ]

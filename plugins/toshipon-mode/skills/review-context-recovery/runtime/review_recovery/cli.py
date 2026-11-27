@@ -6,14 +6,17 @@ import json
 import sys
 from pathlib import Path
 
-from .foundation import Refusal, dump, read_json
+from .foundation import Refusal, dump, parse_locator, read_json, read_text
 from .session import ASSESSMENTS, Session
 
 
 def _run(args):
     session = Session(Path(args.root).resolve(), args.pr)
     if args.command == "start":
-        return session.start(args.base, args.head, read_json(args.threads, "threads"), args.comment)
+        context = read_text(args.context_file, "session context") if args.context_file else ""
+        return session.start(
+            args.base, args.head, read_json(args.threads, "threads"), args.comment, context
+        )
     if args.command == "next":
         return session.next()
     if args.command == "explain":
@@ -24,8 +27,13 @@ def _run(args):
         return session.recap(args.intent, args.risk, args.next_action)
     if args.command == "evidence":
         session.state()  # a snapshot belongs to a started session
-        text = Path(args.file).read_text(encoding="utf-8")
-        return session.evidence.add(args.locator, args.revision, text)
+        if parse_locator(args.locator).get("comment"):
+            raise Refusal(
+                "review comments are saved by start; they are not replaced or added later"
+            )
+        return session.evidence.add(
+            args.locator, args.revision, read_text(args.file, "source text")
+        )
     if args.command == "skip":
         return session.skip(args.reason)
     return session.status()
@@ -41,6 +49,9 @@ def parser():
     start.add_argument("--head", required=True, help="head commit sha")
     start.add_argument("--threads", required=True, help="review comments as JSON")
     start.add_argument("--comment", type=int, help="recover only the thread holding this comment")
+    start.add_argument(
+        "--context-file", help="what the user was doing and already knows (optional)"
+    )
     commands.add_parser("next")
     commands.add_parser("explain").add_argument("--file", required=True)
     answer = commands.add_parser("answer")
