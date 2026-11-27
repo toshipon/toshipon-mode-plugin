@@ -217,6 +217,7 @@ def config():
         }
     return {
         "schema_version": 1,
+        "state_kind": "synthetic",
         "projects": projects,
         "principals": {
             PRINCIPAL_ALL: {

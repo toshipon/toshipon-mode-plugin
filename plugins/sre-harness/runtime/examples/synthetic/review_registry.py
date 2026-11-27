@@ -44,6 +44,7 @@ CREATED = "2026-10-0{}T00:00:00Z"
 
 CONFIG = {
     "schema_version": 1,
+    "state_kind": "synthetic",
     "projects": {
         "project-alpha": {
             "repos": [ALPHA],

@@ -257,7 +257,7 @@
       }
     },
     "source_file": {
-      "description": "Input of `knowledge update --source file`. Items are checked one by one, so a bad item is rejected without failing the file.",
+      "description": "Input of `knowledge update --source file`, which only a state whose knowledge/config.json says `\"state_kind\": \"synthetic\"` takes in (any other refuses it with exit 3). Items are checked one by one, so a bad item is rejected without failing the file.",
       "type": "object",
       "additionalProperties": false,
       "required": ["schema_version", "source", "complete", "items"],

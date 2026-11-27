@@ -1,5 +1,8 @@
 """The `file` adapter: a JSON file of items (knowledge-record `$defs/source_file`).
 
+For synthetic data only: the file declares status, approval, enforcement and access itself, so
+`ingest.admit` lets it into a state whose config says `"state_kind": "synthetic"` and no other.
+
 It reads the whole file every time and says whether that file is complete; the store works out
 what changed. The cursor is the sha256 of the file, kept so that `status` shows which input
 the index was last built from.
