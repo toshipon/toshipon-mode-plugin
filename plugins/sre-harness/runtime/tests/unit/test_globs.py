@@ -52,3 +52,34 @@ def test_ingest_rejects_an_invalid_glob_and_search_answers_quickly(home, tmp_pat
     code, found = run_cli([*argv, "--path", SLOW_PATH], home)
     assert code == 0 and found["status"] == "ok"
     assert time.monotonic() - started < 5
+
+
+def test_single_stars_do_not_backtrack_either():
+    # `*a*a*…*b` against a long run of `a` is polynomial for a backtracking matcher; the limits
+    # of `problem` do not count single stars, so the matcher itself must be linear.
+    import time
+
+    glob = "*a" * 60 + "*b"
+    assert globs.problem(glob) is None
+    started = time.monotonic()
+    assert globs.path_matches("a" * 400, [glob]) is False
+    assert time.monotonic() - started < 5
+
+
+def test_the_matcher_agrees_with_the_regular_expression_reading():
+    import itertools
+    import random
+
+    rng = random.Random(20261127)
+    pieces = ["**/", "**", "*", "?", "a", "b", "/", ".", "ab"]
+    alphabet = ["a", "b", "/", "."]
+    for _ in range(4000):
+        glob = "".join(rng.choice(pieces) for _ in range(rng.randint(0, 6)))
+        if globs.collapsed(glob).count("*") > 6:
+            continue
+        for path in itertools.islice(
+            ("".join(rng.choice(alphabet) for _ in range(rng.randint(0, 7))) for _ in iter(int, 1)),
+            6,
+        ):
+            expected = globs.glob_regex(glob).fullmatch(path) is not None
+            assert globs.path_matches(path, [glob]) is expected, (glob, path)

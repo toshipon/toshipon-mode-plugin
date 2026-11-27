@@ -604,3 +604,20 @@ def test_a_long_successor_chain_is_followed_without_recursion():
     found = search.replacements(rows)
     assert len(found) == length - 1
     assert set(found.values()) == {(f"K{length - 1:05d}",)}
+
+
+def test_a_successor_reached_by_two_chains_keeps_its_own_end():
+    # A is replaced by C, C by P and by Q, Q by P, and P (still approved in its source) by D:
+    # every chain ends in D. The walk meets P from Q while P is only waiting to be visited; a
+    # waiting successor is not a settled one, so P must not be taken as an end.
+    def row(name, supersedes, status="superseded"):
+        return {"id": name, "status": status, "enforcement": "advisory", "supersedes": supersedes}
+
+    rows = [
+        row("A", []),
+        row("C", ["A"]),
+        row("P", ["C", "Q"], "approved"),
+        row("Q", ["C"]),
+        row("D", ["P"], "approved"),
+    ]
+    assert search.replacements(rows) == {"A": ("D",), "C": ("D",), "P": ("D",), "Q": ("D",)}
