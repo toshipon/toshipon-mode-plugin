@@ -82,12 +82,12 @@ def _valid(row):
 
 def _parse(data, path):
     rows = []
-    for line in data.decode("utf-8", "replace").split("\n"):
-        if not line.strip():
+    for raw in data.split(b"\n"):
+        if not raw.strip():
             continue
         try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
+            row = json.loads(raw.decode("utf-8"))  # strict: bytes that are not UTF-8 are damage
+        except (UnicodeDecodeError, json.JSONDecodeError):
             row = None
         if not _valid(row):
             raise InputError(
