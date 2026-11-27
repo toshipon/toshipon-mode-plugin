@@ -211,3 +211,19 @@ def test_a_damaged_index_is_an_input_error_with_how_to_rebuild(home, tmp_path, c
         assert "index.sqlite3" in capsys.readouterr().err
     assert update(home, write_input(tmp_path / "in.json", [item("R1")]))[0] == 2
     assert "knowledge update" in capsys.readouterr().err
+
+
+def test_a_task_without_its_component_is_refused_instead_of_finding_nothing(home, tmp_path, capsys):
+    write_config(home)
+    task_scope = {
+        "level": "task",
+        "project_id": "project-alpha",
+        "component_id": "queue",
+        "task_id": "TASK-0001",
+    }
+    assert update(home, write_input(tmp_path / "in.json", [item("T1", scope=task_scope)]))[0] == 0
+    argv = ["knowledge", "search", "--principal", "workspace-a", "--project", "project-alpha"]
+    assert run_cli([*argv, "--task", "TASK-0001"], home) == (2, None)
+    assert "--component" in capsys.readouterr().err
+    code, found = run_cli([*argv, "--component", "queue", "--task", "TASK-0001"], home)
+    assert code == 0 and len(found["records"]) == 1

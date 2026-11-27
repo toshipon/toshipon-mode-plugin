@@ -133,6 +133,11 @@ def _expansion(args):
 def _search(args, env, out):
     if args.component and not args.project:
         raise InputError("--component needs --project: a component belongs to one project.")
+    if args.task and args.project and not args.component:
+        raise InputError(
+            "--task with --project needs --component: a task record belongs to one component, "
+            "and without it no task record could be returned."
+        )
     task = _task(args, args.task)
     request = search.Request(
         project=args.project,

@@ -95,7 +95,8 @@ def test_a_question_with_a_hidden_secret_shape_is_not_put(env, tmp_path, name):
 
 def test_a_reason_with_a_hidden_secret_shape_is_not_recorded(env):
     argv = ["knowledge", "search", "--principal", "workspace-a", "--project", "project-alpha"]
-    argv += ["--task", "T-1", "--extend-task-budget", "10"]
+    argv += ["--component", "queue", "--task", "T-1", "--extend-task-budget", "10"]
+    assert run_cli([*argv, "--reason", "追加の根拠が要る"], env)[0] == 0
     for name in ("combining grapheme joiner (Mn)", "variation selector (Mn)", "fullwidth"):
         assert run_cli([*argv, "--reason", "key " + HIDDEN[name]], env) == (2, None), name
     with pytest.raises(InputError):

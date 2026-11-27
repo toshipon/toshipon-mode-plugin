@@ -508,7 +508,7 @@ $H knowledge search --principal workspace-a --project project-beta --component a
 引数は次のとおりです。
 
 - `--principal` は必須で、既定値はありません。`knowledge/config.json` に無い名前と、設定ファイルが無いときは exit 3 です。エラー文に既知の principal の名前は出しません。
-- scope は `--project`、`--component`（`--project` が要ります）、`--task` の連なりです。organization のレコードと、指定した段までのレコードだけが対象です。`--project` だけなら component と task のレコードは入りません。
+- scope は `--project`、`--component`（`--project` が要ります）、`--task` の連なりです。organization のレコードと、指定した段までのレコードだけが対象です。`--project` だけなら component と task のレコードは入りません。`--project` と `--task` を付けて `--component` を付けないと、task のレコードは 1 件も当たらないので、黙って 0 件にせず exit 2 で止まります（`--project` の無い `--task` は、タスク累計に数えるだけです）。
 - `--repo`、`--path`（繰り返せます）、`--resource-type` は facet の照合です。レコードがその facet を持たないとき、または引数で指定しないときは、合うとみなします。path は `path_globs` と宣言的検査と同じ glob（`**` は directory をまたぎ、`*` はまたがない）で照合します。
 - `--query` は任意のレコードの順位付けと絞り込みにだけ使います。語の一致（`knowledge update` と同じ分かち書き）で、1 語でも合うレコードが残ります。FTS5 の構文や引用符を入れても、語として扱います。検索できる語が無い query（1 文字、記号だけ）は、query なしと同じです。
 - `--expand`（繰り返せます）は、呼び出し側が広げた言い換え語です。各語を `--query` と同じ分かち書きで検索の語にし、`--query` の語と合わせて語の OR で一致させます。使うのは任意のレコードの絞り込みと順位付けだけで、必須の集合と必須の token は変えません。語は集合として扱うので、順序と重複は出力を変えません。1 回の呼び出しで 32 語まで、1 語 64 文字までで、超えると exit 2 です。制御文字と書式文字は落とし、FTS5 の構文や引用符は語として扱います。`--query` を付けずに `--expand` だけでも呼べます。索引は変えません。`knowledge context` も同じ `--expand` を受けます。
@@ -735,7 +735,7 @@ harness のコアが知るのは 3 つの契約だけです。タスクを動か
 
 #### knowledge context と knowledge check
 
-- `knowledge context` は、task file を 256 KiB まで読んで `task-context` の schema で検査し、その内容（principal、project、component、repo、`changed_paths` を `--path`、`resource_types`、`task_id` を `--task`）で `knowledge search` を 1 回行います。絞り込みと順位付けは search のままで、出力も search と同じです。`task_id` のタスク累計に数え、`--extend-task-budget` と `--reason` も search と同じ規則です。task file は読むだけです。
+- `knowledge context` は、task file を 256 KiB まで読んで `task-context` の schema で検査し、その内容（principal、project、component、repo、`changed_paths` を `--path`、`resource_types`、`task_id` を `--task`）で `knowledge search` を 1 回行います。task file の `component_id` が null のときは task の scope を使えないので、organization と project のレコードだけが対象になります（search の `--task` と違い、exit 2 にはしません）。絞り込みと順位付けは search のままで、出力も search と同じです。`task_id` のタスク累計に数え、`--extend-task-budget` と `--reason` も search と同じ規則です。task file は読むだけです。
 - `knowledge check` は、search と同じ絞り込みとアクセス（task の `changed_paths` に patch が変える path を足したもの）で残った承認済みのレコードのうち、registry 由来の `policy_check` の宣言的検査を patch に当てます。解釈器は `review evaluate` と同じ `apply_rules` で、pattern は別プロセスの時間制限付きの照合だけを通ります。LLM は使いません。
 - 当てる check は、registry の版の artifact（`v<N>.md`）から parse した値です。artifact の sha256 がレコードの evidence と版の記録の両方と合い、版の記録の form・title・check が artifact と一致することを確かめてから当てます（`registry.active_rules` と同じ検査）。合わないものは当てずに `unfetched` に理由（`hash_mismatch`、`content_mismatch`、`source_unavailable` など）を付け、exit 1 です。
 - 違反は、レコードの ID、path、新しい側の行番号、検査の種類（`added_line_pattern` か `added_line_pattern_and_absent_pattern`）、`mandatory` か `advisory` です。`counts` に両方の数を出します。違反が 1 つでもあれば、`advisory` だけでも exit 1 です。
