@@ -164,3 +164,90 @@ def test_the_script_writes_the_files(tmp_path):
     assert len(corpus["items"]) == 50
     assert records.violations("knowledge-record", corpus, "source_file") == []
     assert len(json.loads(Path(written["tasks"]).read_text())) == 30
+
+
+# Paraphrase cases ------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def paraphrased():
+    return kc.paraphrase_scenario(50)
+
+
+def searchable_terms(item):
+    record = model.normalize(item, "2026-11-27T00:00:00Z")
+    return set(terms.terms(store._searchable_text(record)))
+
+
+def test_at_least_ten_paraphrase_cases_in_each_category(paraphrased):
+    cases = paraphrased.paraphrase_cases
+    counts = {name: sum(c["category"] == name for c in cases) for name in kc.PARAPHRASE_CATEGORIES}
+    assert set(counts) == {"ja", "en", "cross"} and min(counts.values()) >= 10
+    assert len(cases) >= 30 and len({c["id"] for c in cases}) == len(cases)
+    assert {c["category"] for c in cases} == set(kc.PARAPHRASE_CATEGORIES)
+
+
+@pytest.mark.parametrize("size", kc.SIZES)
+def test_the_paraphrase_records_come_after_the_scenario_and_leave_it_unchanged(size):
+    base, made = kc.scenario(size), kc.paraphrase_scenario(size)
+    assert made.corpus["items"][:size] == base.corpus["items"]
+    assert len(made.corpus["items"]) > size
+    assert made.tasks == base.tasks and made.traps == base.traps
+    assert {k: v for k, v in made.sources.items() if k in base.sources} == base.sources
+    again = kc.paraphrase_scenario(size)
+    assert records.canonical(again.corpus) == records.canonical(made.corpus)
+    assert again.paraphrase_cases == made.paraphrase_cases
+    assert base.paraphrase_cases == []
+
+
+def test_each_case_names_relevant_advisory_records_of_its_topic(paraphrased):
+    items = {
+        model.record_id(i["origin"]["kind"], i["origin"]["key"]): i
+        for i in paraphrased.corpus["items"]
+    }
+    for case in paraphrased.paraphrase_cases:
+        assert case["relevant"], case["id"]
+        for record_id in case["relevant"]:
+            found = items[record_id]
+            assert case["topic"] in found["facets"]["topic"], case["id"]
+            assert found["enforcement"] != "mandatory" and found["status"] == "approved"
+            assert found["scope"]["project_id"] in (None, case["project_id"])
+        assert case["literal_query"] == kc.wording_of(case["topic"])[1]
+        assert case["component_id"] != kc.OVERFLOW[1]
+
+
+def test_the_language_of_each_category(paraphrased):
+    def japanese(text):
+        return any("぀" <= ch <= "鿿" for ch in text)
+
+    for case in paraphrased.paraphrase_cases:
+        records_ja = kc.wording_of(case["topic"])[0] == "ja"
+        query_ja = japanese(case["query"])
+        if case["category"] == "ja":
+            assert records_ja and query_ja, case["id"]
+        elif case["category"] == "en":
+            assert not records_ja and not query_ja, case["id"]
+        else:
+            assert records_ja != query_ja, case["id"]
+
+
+def test_a_paraphrase_shares_no_search_term_with_any_record(paraphrased):
+    """Not with its wording, its relevant records, nor any other record: only another way of
+    searching finds them, and nothing is found by chance."""
+    every = [searchable_terms(i) for i in paraphrased.corpus["items"] if i.get("access")]
+    for case in paraphrased.paraphrase_cases:
+        words = set(terms.terms(case["query"]))
+        assert words, case["id"]
+        assert not words & set(terms.terms(case["literal_query"])), case["id"]
+        assert not any(words & found for found in every), case["id"]
+
+
+def test_the_limited_principal_is_never_given_a_third_project_record(paraphrased):
+    gamma = {
+        model.record_id(i["origin"]["kind"], i["origin"]["key"])
+        for i in paraphrased.corpus["items"]
+        if i["scope"]["project_id"] == kc.THIRD_PROJECT
+    }
+    limited = [c for c in paraphrased.paraphrase_cases if c["principal"] == kc.PRINCIPAL_LIMITED]
+    assert limited
+    assert all(not set(c["relevant"]) & gamma for c in limited)
