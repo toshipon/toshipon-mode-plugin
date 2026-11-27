@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from sre_harness import cli, paths
 from sre_harness.knowledge import store
 from tests.helpers import run_cli
@@ -14,8 +16,10 @@ STATUS_KEYS = {
     "index",
     "generation",
     "schema_version",
+    "python_version",
     "sqlite_version",
     "fts5",
+    "extension_loading",
     "updated_at",
     "sources",
     "records",
@@ -98,6 +102,60 @@ def test_update_without_fts5_exits_2_and_writes_nothing(home, tmp_path, monkeypa
     assert not (knowledge_dir(home) / "index.sqlite3").exists()
     code, status = run_cli(["knowledge", "status"], home)
     assert code == 0 and status["fts5"] is False
+
+
+def test_status_reports_the_python_and_whether_sqlite_can_load_extensions(home):
+    import platform
+    import sqlite3
+
+    code, status = run_cli(["knowledge", "status"], home)
+    assert code == 0
+    assert status["python_version"] == platform.python_version()
+    connection = sqlite3.connect(":memory:")
+    assert status["extension_loading"] is hasattr(connection, "enable_load_extension")
+    connection.close()
+
+
+class _NoExtensions:
+    """A connection of a Python whose sqlite3 is built without extension loading."""
+
+    def close(self):
+        pass
+
+
+class _RefusesExtensions(_NoExtensions):
+    def enable_load_extension(self, enabled):
+        raise __import__("sqlite3").OperationalError("not authorized")
+
+
+@pytest.mark.parametrize("connection", [_NoExtensions, _RefusesExtensions])
+def test_without_extension_loading_status_says_so_and_nothing_stops(
+    home, tmp_path, monkeypatch, connection
+):
+    monkeypatch.setattr(store, "_probe_connection", connection)
+    assert store.extension_loading() is False
+    code, status = run_cli(["knowledge", "status"], home)
+    assert code == 0 and status["extension_loading"] is False and status["fts5"] is True
+    write_config(home)
+    code, _ = update(home, write_input(tmp_path / "in.json", [item("R1")]))
+    assert code == 0
+    code, found = run_cli(["knowledge", "search", "--principal", "workspace-a"], home)
+    assert code == 0 and found["status"] == "ok"
+
+
+def test_the_extension_check_loads_nothing(monkeypatch):
+    calls = []
+
+    class Recording(_NoExtensions):
+        def enable_load_extension(self, enabled):
+            calls.append(enabled)
+
+        def load_extension(self, *args):  # pragma: no cover - must not be called
+            calls.append("load")
+
+    monkeypatch.setattr(store, "_probe_connection", Recording)
+    assert store.extension_loading() is True
+    assert calls == [True, False]
 
 
 def test_a_cycle_exits_2(home, tmp_path):
