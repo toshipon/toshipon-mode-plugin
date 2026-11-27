@@ -639,3 +639,16 @@ def test_a_workspace_cannot_cancel_a_request_of_another(env, tmp_path):
     code, value, _ = run(env, "cancel", "--workspace", "ws-a", *argv[1:])
     assert code == 0 and value["request"]["status"] == "cancelled"
     assert "content_hashes" not in value["request"]["revision"]
+
+
+def test_asking_again_at_a_head_that_came_back_gives_a_request_that_takes_an_answer(
+    env, tmp_path, monkeypatch
+):
+    _, first = put(env, tmp_path)
+    _, moved = put(env, tmp_path, "--head-sha", OTHER_HEAD)
+    assert moved["status"] == "accepted"
+    code, back = put(env, tmp_path)
+    assert code == 0 and back["request"]["status"] == "open"
+    assert back["request"]["id"] not in {first["request"]["id"], moved["request"]["id"]}
+    at_terminal(monkeypatch)
+    assert answer(env, back["request"]["id"])[0] == 0

@@ -22,8 +22,9 @@ and a symlink anywhere in the queue is refused (exit 3).
 Rules this module decides:
 
     dedupe key   sha256 of [task, normalized question, sorted evidence ids, revision]. A put
-                 whose key matches a request that is not cancelled or expired is a duplicate
-                 of it, from whichever workspace; that workspace becomes one of its waiters.
+                 whose key matches a request that is open or answered is a duplicate of it,
+                 from whichever workspace; that workspace becomes one of its waiters. A key
+                 that matches only cancelled, expired or superseded requests makes a new one.
     revision     the index generation, {evidence id: content_hash} read with the putting
                  principal's access, and --head-sha. Only the content hashes and the head
                  decide staleness; a generation that moved for other records does not.
@@ -81,7 +82,9 @@ CONFIRM_LENGTH = 12
 MAX_FILE_BYTES = 64 * 1024
 RISKS = ("low", "medium", "high")
 REUSE_SCOPES = ("task", "project")
-LIVE = frozenset({"open", "answered", "superseded"})  # a put with the same key joins these
+# A put with the same key joins these. Not a superseded one: the state it was asked in came
+# back after another (head A, then B, then A again), and the put asks again on it.
+LIVE = frozenset({"open", "answered"})
 # autonomous-improvement's human gate (ai_harness/store.py), kept here: the plugins install apart.
 RESERVED_NAMES = ("claude", "ai", "bot", "agent", "assistant", "harness", "gpt", "llm")
 AUTOMATED_ENV, ACTIVE_ENV = "AI_HARNESS_AUTOMATED", "AI_HARNESS_ACTIVE"
