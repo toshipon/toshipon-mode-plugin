@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:knowledge-search-result",
+  "title": "knowledge-search-result",
+  "description": "What `knowledge search` prints. Any status but ok exits 1; mandatory_overflow returns no records. Counts are taken after the access filter, so nothing about records the principal cannot read appears anywhere in it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "snapshot",
+    "principal",
+    "budget",
+    "mandatory",
+    "records",
+    "truncated",
+    "unfetched",
+    "conflicts",
+    "freshness",
+    "superseded"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "status": { "enum": ["ok", "mandatory_overflow", "task_budget_exhausted", "stale_index"] },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation", "updated_at"],
+      "properties": {
+        "generation": { "type": "integer", "minimum": 0 },
+        "updated_at": { "anyOf": [{ "$ref": "urn:sre-harness:common#/$defs/timestamp" }, { "type": "null" }] }
+      }
+    },
+    "principal": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["estimator", "max_tokens", "used_tokens", "task"],
+      "properties": {
+        "estimator": { "const": "utf8_bytes_div_3" },
+        "max_tokens": { "type": "integer", "minimum": 1 },
+        "used_tokens": { "type": "integer", "minimum": 0 },
+        "task": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "limit", "used_before", "used_after"],
+              "properties": {
+                "id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+                "limit": { "type": "integer", "minimum": 1 },
+                "used_before": { "type": "integer", "minimum": 0 },
+                "used_after": { "type": "integer", "minimum": 0 }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "mandatory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "tokens", "complete"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "tokens": { "type": "integer", "minimum": 0 },
+        "complete": { "type": "boolean" },
+        "ids": { "$ref": "#/$defs/ids" }
+      }
+    },
+    "records": { "type": "array", "items": { "$ref": "#/$defs/record" } },
+    "truncated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "ids", "tokens_needed"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "ids": { "$ref": "#/$defs/ids" },
+        "tokens_needed": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "unfetched": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "reason"],
+        "properties": {
+          "id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/record_id" },
+          "locator": { "type": "string", "minLength": 1 },
+          "reason": {
+            "enum": [
+              "source_unavailable",
+              "access_denied",
+              "hash_mismatch",
+              "too_large",
+              "secret_shape",
+              "auth_missing"
+            ]
+          }
+        }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ids", "reason"],
+        "properties": {
+          "ids": { "$ref": "#/$defs/ids", "minItems": 2 },
+          "reason": { "enum": ["conflicts_with", "both_approved_same_subject"] }
+        }
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stale", "unknown", "sources_failed"],
+      "properties": {
+        "stale": { "type": "integer", "minimum": 0 },
+        "unknown": { "type": "integer", "minimum": 0 },
+        "sources_failed": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "superseded": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["asked", "by"],
+        "properties": {
+          "asked": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "by": { "$ref": "#/$defs/ids" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "urn:sre-harness:knowledge-record#/$defs/record_id" }
+    },
+    "record": {
+      "description": "A record as returned: the normative fields, the evidence pointers, and why it was chosen. No source text.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "enforcement",
+        "status",
+        "scope",
+        "summary",
+        "applies_when",
+        "exceptions",
+        "confidence",
+        "evidence",
+        "freshness",
+        "why_selected"
+      ],
+      "properties": {
+        "id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/record_id" },
+        "kind": { "$ref": "urn:sre-harness:knowledge-record#/$defs/kind" },
+        "enforcement": { "$ref": "urn:sre-harness:knowledge-record#/$defs/enforcement" },
+        "status": { "$ref": "urn:sre-harness:knowledge-record#/$defs/status" },
+        "scope": {
+          "description": "The level and the ids at or above it; ids below the level are left out.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["level"],
+          "properties": {
+            "level": { "$ref": "urn:sre-harness:knowledge-record#/$defs/scope/properties/level" },
+            "project_id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+            "component_id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+            "task_id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" }
+          }
+        },
+        "summary": { "$ref": "urn:sre-harness:knowledge-record#/$defs/summary" },
+        "applies_when": { "$ref": "urn:sre-harness:knowledge-record#/$defs/sentences" },
+        "exceptions": { "$ref": "urn:sre-harness:knowledge-record#/$defs/sentences" },
+        "confidence": {
+          "anyOf": [
+            { "$ref": "urn:sre-harness:knowledge-record#/$defs/confidence" },
+            { "type": "null" }
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "urn:sre-harness:knowledge-record#/$defs/evidence" }
+        },
+        "freshness": { "enum": ["fresh", "stale", "unknown"] },
+        "why_selected": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["mandatory", "scope_match", "path_match", "resource_type_match", "term_match"] }
+        }
+      }
+    }
+  }
+}
