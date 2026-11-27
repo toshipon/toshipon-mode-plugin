@@ -7,6 +7,7 @@ guard against writing such code by mistake, not a sandbox.
 
 import ast
 import json
+import re
 
 import pytest
 
@@ -188,3 +189,42 @@ def test_invariant_4_every_indexed_record_has_access_with_known_readers(indexed)
     indexed_keys = {row["origin"]["key"] for row in rows}
     assert not indexed_keys & {key for keys in traps.values() for key in keys}
     assert len(rows) == len(scenario.corpus["items"]) - len(result["rejected"])
+
+
+# The core knows contracts, not tools ----------------------------------------------------------
+
+# Names of particular terminal multiplexers, ticket trackers, chat tools and CI services. The
+# knowledge package and its schemas speak of a task runner, a decision queue and a source
+# adapter instead; a connection to one of these is the user's adapter, outside the package.
+TOOL_NAMES = re.compile(
+    r"(?i)\b(?:cmux|tmux|zellij|screen-session|jira|asana|trello|clickup|youtrack|redmine|"
+    r"servicenow|notion|slack|discord|pagerduty|opsgenie|jenkins|circleci|buildkite)\b"
+)
+CONTRACT_SCHEMAS = ("task-context", "decision-request", "decision-response", "source-adapter")
+
+
+def _contract_files():
+    schemas = RUNTIME / "schemas"
+    found = sorted(KNOWLEDGE.rglob("*.py")) + sorted(schemas.glob("knowledge-*.schema.json"))
+    return found + [schemas / f"{name}.schema.json" for name in CONTRACT_SCHEMAS]
+
+
+def test_no_particular_tool_is_named_in_the_knowledge_package_or_its_schemas():
+    files = _contract_files()
+    assert all(path.is_file() for path in files), [p.name for p in files if not p.is_file()]
+    offenders = {
+        str(path.relative_to(RUNTIME)): sorted(set(TOOL_NAMES.findall(path.read_text("utf-8"))))
+        for path in files
+        if TOOL_NAMES.search(path.read_text("utf-8"))
+    }
+    assert offenders == {}
+
+
+@pytest.mark.parametrize("text", ["run it in cmux", "a JIRA ticket", "post to Slack", "Discord"])
+def test_the_tool_name_check_catches_each_name(text):
+    assert TOOL_NAMES.search(text)
+
+
+@pytest.mark.parametrize("text", ["a task runner", "a decision queue", "screenshot", "linear"])
+def test_the_tool_name_check_leaves_general_words_alone(text):
+    assert not TOOL_NAMES.search(text)
