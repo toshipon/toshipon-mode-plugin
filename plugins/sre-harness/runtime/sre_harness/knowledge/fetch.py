@@ -56,10 +56,12 @@ def split_lines(text):
 
 
 def withheld_shapes(text, deny_terms):
-    """Names of what keeps a text back: secret shapes (also once invisible characters are
-    gone, so a zero-width space cannot hide one) and `deny_term`. Never the text itself."""
-    shapes = privacy.find_secrets(text + "\n" + untrusted.clean(text))
-    if privacy.find_deny_terms(text, deny_terms):
+    """Names of what keeps a text back: secret shapes and `deny_term`, looked for in the text
+    as it was read and as it is printed (without invisible characters, so a zero-width space
+    cannot hide either). Never the text itself."""
+    examined = text + "\n" + untrusted.clean(text)
+    shapes = privacy.find_secrets(examined)
+    if privacy.find_deny_terms(examined, deny_terms):
         shapes.append(DENY_TERM)
     return shapes
 
