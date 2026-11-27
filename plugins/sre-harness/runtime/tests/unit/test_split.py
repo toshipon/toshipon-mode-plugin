@@ -111,3 +111,29 @@ def test_bad_split_options_are_input_errors(tmp_path, home, clock):
     assert run_cli(["review", "split", "--run", run_id, "--t1", "2026-01-27"], home)[0] == 2
     argv = ["review", "split", "--run", run_id, "--t1", SPLIT_T1, "--gap-days", "-1"]
     assert run_cli(argv, home)[0] == 2
+
+
+def test_a_listed_pr_is_on_neither_side_and_recorded(tmp_path, home, clock):
+    run_id, code, summary = made_split(
+        tmp_path, home, evaluation_scenario(), "--exclude-pr", "41", "--exclude-pr", "11"
+    )
+    assert code == 0
+    path = run_dir(home, run_id) / "split.json"
+    split = json.loads(path.read_text())
+    assert split["excluded"]["listed_prs"] == [11, 41]
+    assert 41 not in split["evaluation"]["prs"] and 11 not in split["generation"]["prs"]
+    assert summary["excluded"]["listed_prs"] == 2
+    assert split_stage.load(path)["sha256"] == split["sha256"]
+
+
+def test_without_exclusions_the_split_has_no_listed_prs(tmp_path, home, clock):
+    run_id, code, _ = made_split(tmp_path, home, evaluation_scenario())
+    assert code == 0
+    split = json.loads((run_dir(home, run_id) / "split.json").read_text())
+    assert "listed_prs" not in split["excluded"]
+
+
+def test_excluding_a_pr_the_run_did_not_collect_is_an_input_error(tmp_path, home, clock):
+    run_id, code, _ = made_split(tmp_path, home, evaluation_scenario(), "--exclude-pr", "9999")
+    assert code == 2
+    assert not (run_dir(home, run_id) / "split.json").exists()

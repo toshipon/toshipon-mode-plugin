@@ -86,6 +86,13 @@
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "integer", "minimum": 1 }
+        },
+        "listed_prs": {
+          "description": "PRs named with --exclude-pr; on neither side.",
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": { "type": "integer", "minimum": 1 }
         }
       }
     },
