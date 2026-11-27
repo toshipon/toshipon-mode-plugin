@@ -524,7 +524,7 @@ $H knowledge search --principal workspace-a --project project-beta --component a
 | `mandatory` | 必須の件数、token 数、全部入ったか（`complete`）、ID の一覧 |
 | `records` | 必須のレコード、続いて任意のレコード。本文は含まず、要約、`applies_when`、`exceptions`、出典の locator と hash、`freshness`、`why_selected` だけです |
 | `truncated` | 条件に合ったのに予算に入らなかった件数、ID、必要な token 数 |
-| `conflicts` | 返したレコードの中で矛盾しうる組。`conflicts_with` の関係か、同じ対象（同じ `decision_id`、または scope と topic が同じ）の承認済みのレコードです。どちらが正しいかは決めません |
+| `conflicts` | 返したレコードの中で矛盾しうる組と、その理由（`reason`）。`conflicts_with`（trace の関係）、`both_approved_same_subject`（同じ対象、つまり同じ `decision_id`、または scope と topic が同じ承認済みのレコード）、`mandatory_superseded_by_advisory`（必須のレコードを、承認済みで任意の後継が置換しようとしている。必須は必須の集合に残り、後継は query や予算で選ばれなかったときも ID を出します）の 3 つです。どちらが正しいかは決めません |
 | `freshness` | 返したレコードのうち `stale` と `unknown` の件数、成功していない出典の名前 |
 | `superseded` | `--decision-id` に置換済みの決定を指定したときの後継の ID |
 
@@ -546,7 +546,7 @@ $H knowledge search --principal workspace-a --project project-beta --component a
 
 予算は順位の順に詰め、最初に入らなかったレコードから後ろはすべて `truncated` です。順位の低いものが高いものを追い越して入ることはありません。
 
-置換の扱いです。読めるレコードの `supersedes` をたどり、承認済みのレコードで終わる連鎖の、末端だけを返します。出典が古い方を `approved` のままにしていても、承認済みの後継があれば返しません。後継が `proposed` や `rejected` なら置換になりません。`--decision-id` に置換済みの決定を指定すると、古い決定は返さず、`superseded` に末端の後継を返します。後継をその principal が読めないときは、後継があること自体を出しません。
+置換の扱いです。読めるレコードの `supersedes` をたどり、承認済みのレコードで終わる連鎖の、末端だけを返します。出典が古い方を `approved` のままにしていても、承認済みの後継があれば返しません。後継が `proposed` や `rejected` なら置換になりません。置換が効くのは、後継がその request に適用される（scope と facet の絞り込みに残る）ときだけです。別の project の後継は、その project を指定した request でだけ古いレコードを置き換え、ほかの request では古い方が残ります。必須のレコードを置換できるのは必須の後継だけです。任意の後継しか無い必須のレコードは必須の集合に残り、`conflicts` に `mandatory_superseded_by_advisory` で出ます。`knowledge check` と `knowledge export` も同じ規則です（export は `--project` で絞った後のレコードで置換を決めます）。`--decision-id` に置換済みの決定を指定すると、古い決定は返さず、`superseded` に末端の後継を返します（その request に適用される後継だけです）。後継をその principal が読めないときは、後継があること自体を出しません。
 
 鮮度（`freshness`）は、レコードの出典の取り込みが最後に成功してからの経過で決めます。
 

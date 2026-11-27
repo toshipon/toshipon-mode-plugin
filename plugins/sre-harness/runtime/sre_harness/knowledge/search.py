@@ -20,8 +20,12 @@ filter), so nothing counted or listed here can be about a record the principal c
 Rules this module decides (the design leaves them open):
 
     replaced      a record is replaced when a readable successor chain (`supersedes` edges,
-                  through approved or superseded records) ends in an approved record. Only
-                  such ends are returned, whatever status the source gave the older record.
+                  through approved or superseded records) ends in an approved record, and
+                  that successor applies to the request (it passes step 2 itself). Only such
+                  ends are returned, whatever status the source gave the older record. A
+                  mandatory record is replaced only by a mandatory end: one whose chains end
+                  only in advisory records stays in the mandatory set, and the pair is
+                  reported in `conflicts` (mandatory_superseded_by_advisory), unsettled.
     same subject  two returned records share a subject when they have the same
                   `facets.decision_id`, or the same scope (level and ids) and the same topics
     freshness     fresh: the record's source last succeeded within --stale-after-hours (a
@@ -66,6 +70,7 @@ CONFIDENCE = {
 CHAIN_STATUSES = frozenset({"approved", "superseded"})  # a successor chain runs through these
 VOUCHING_STATES = frozenset({"complete", "partial"})  # source states that mean "it succeeded"
 SAME_SUBJECT = "both_approved_same_subject"
+ADVISORY_SUCCESSOR = "mandatory_superseded_by_advisory"
 METHOD = "fts5"
 MAX_EXPAND_WORDS = 32
 MAX_EXPAND_LENGTH = 64
@@ -162,9 +167,9 @@ def facet_match(record, request):
     return True, path_hit, type_hit
 
 
-def replacements(rows):
-    """{id: approved ids at the end of its successor chains} for every replaced record in
-    `rows`. Successors that are proposed, rejected, retired or unresolved replace nothing."""
+def _ends(rows):
+    """{id: approved ids at the end of its successor chains} for every record of `rows` that
+    has one. Successors that are proposed, rejected, retired or unresolved replace nothing."""
     by_id = {row["id"]: row for row in rows}
     successors = {}
     for row in rows:
@@ -188,10 +193,44 @@ def replacements(rows):
         return ends[record_id]
 
     return {
-        record_id: tuple(sorted(chain_ends(record_id)))
+        record_id: chain_ends(record_id)
         for record_id in sorted(successors)
         if record_id in by_id and chain_ends(record_id)
     }
+
+
+def _mandatory_ends(rows, ends):
+    """`ends` with the ends that may replace each record: only a mandatory end replaces a
+    mandatory record."""
+    by_id = {row["id"]: row for row in rows}
+    kept = {}
+    for record_id, found in ends.items():
+        if by_id[record_id]["enforcement"] == "mandatory":
+            found = {end for end in found if by_id[end]["enforcement"] == "mandatory"}
+        kept[record_id] = found
+    return kept
+
+
+def replacements(rows):
+    """{id: approved ids at the end of its successor chains} for every replaced record in
+    `rows`: a successor replaces only within the rows it is handed (`narrow` hands it the
+    records that apply to the request), and a mandatory record only by a mandatory end."""
+    kept = _mandatory_ends(rows, _ends(rows))
+    return {record_id: tuple(sorted(found)) for record_id, found in kept.items() if found}
+
+
+def overruled(rows):
+    """(mandatory id, advisory end) for every mandatory record of `rows` whose successor chains
+    end only in advisory records: it stays mandatory, and the pair is a conflict to settle."""
+    by_id = {row["id"]: row for row in rows}
+    ends = _ends(rows)
+    kept = _mandatory_ends(rows, ends)
+    return sorted(
+        (record_id, end)
+        for record_id, found in ends.items()
+        if by_id[record_id]["enforcement"] == "mandatory" and not kept[record_id]
+        for end in found
+    )
 
 
 # Ranking ---------------------------------------------------------------------------------
@@ -290,9 +329,11 @@ def freshness(record, source, sources, now, stale_after_hours):
     return "fresh" if end - start <= stale_after_hours * SECONDS_PER_HOUR else "stale"
 
 
-def conflicts(selected, conflict_edges):
+def conflicts(selected, conflict_edges, overruled_pairs=()):
     """Groups of returned records that may contradict each other, sorted. All of them are
-    approved and none replaces another (a replaced record is never returned)."""
+    approved and none replaces another (a replaced record is never returned). A returned
+    mandatory record whose successor is advisory (`overruled`) is paired with that successor,
+    whether or not the successor was returned: it is readable, and it says what to settle."""
     chosen = {row["id"] for row in selected}
     groups = {}
     for row in selected:
@@ -307,6 +348,11 @@ def conflicts(selected, conflict_edges):
         (store.CONFLICTS_WITH, tuple(sorted((first, second))))
         for first, second in conflict_edges
         if first in chosen and second in chosen and first != second
+    }
+    found |= {
+        (ADVISORY_SUCCESSOR, tuple(sorted((mandatory, successor))))
+        for mandatory, successor in overruled_pairs
+        if mandatory in chosen
     }
     return [{"ids": list(ids), "reason": reason} for reason, ids in sorted(found)]
 
@@ -353,23 +399,26 @@ def _superseded(applicable, replaced, request):
 @dataclass(frozen=True)
 class Narrowed:
     """Step 2. `applicable`: every record in scope whose facets fit, by id; `replaced`: see
-    `replacements`; `live`: the approved records of `applicable` that nothing replaces."""
+    `replacements`, over `applicable` only, so a successor that does not apply to the request
+    replaces nothing in it; `live`: the approved records of `applicable` that nothing
+    replaces; `overruled`: see `overruled`, over `applicable` too."""
 
     applicable: list
     replaced: dict
     live: list
+    overruled: list
 
 
 def narrow(rows, request):
     """Step 2 over the records the principal may read. Pure; the query plays no part."""
-    replaced = replacements(rows)
     applicable = [
         row
         for row in sorted(rows, key=lambda row: row["id"])
         if in_scope(row, request) and facet_match(row, request)[0]
     ]
+    replaced = replacements(applicable)
     live = [row for row in applicable if row["status"] == "approved" and row["id"] not in replaced]
-    return Narrowed(applicable, replaced, live)
+    return Narrowed(applicable, replaced, live, overruled(applicable))
 
 
 def select(rows, *, request, matches, provenance, sources, conflict_edges, now):
@@ -443,7 +492,9 @@ def select(rows, *, request, matches, provenance, sources, conflict_edges, now):
         },
         "unfetched": [],
         "conflicts": conflicts(
-            must + [row for row, _ in chosen if row["status"] == "approved"], conflict_edges
+            must + [row for row, _ in chosen if row["status"] == "approved"],
+            conflict_edges,
+            narrowed.overruled,
         ),
         "freshness": {
             "stale": sum(shown["freshness"] == "stale" for shown in returned),

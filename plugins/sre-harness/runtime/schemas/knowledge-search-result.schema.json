@@ -146,7 +146,7 @@
         "required": ["ids", "reason"],
         "properties": {
           "ids": { "$ref": "#/$defs/ids", "minItems": 2 },
-          "reason": { "enum": ["conflicts_with", "both_approved_same_subject"] }
+          "reason": { "enum": ["conflicts_with", "both_approved_same_subject", "mandatory_superseded_by_advisory"] }
         }
       }
     },

@@ -359,7 +359,7 @@ def test_an_advisory_successor_does_not_take_a_record_out_of_the_mandatory_set()
     advisory = rec("beta", scope=BETA, supersedes=[ref("org")])
     request = search.Request(project="project-beta")
     narrowed = search.narrow([old, advisory], request)
-    assert narrowed.replaced == {} and ids(narrowed.live) == [rid("beta"), rid("org")]
+    assert narrowed.replaced == {} and ids(narrowed.live) == sorted([rid("beta"), rid("org")])
     result = select([old, advisory], request)
     assert result["mandatory"]["ids"] == [rid("org")]
     assert ids(result["records"]) == [rid("org"), rid("beta")]
