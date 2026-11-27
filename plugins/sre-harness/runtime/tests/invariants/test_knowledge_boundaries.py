@@ -111,14 +111,33 @@ def test_the_operator_views_print_no_record_content():
             assert not any("body" in text for text in texts)
 
 
+# The one module of the knowledge package that reaches git, and how: through the read-only
+# bare repository of `spec analyze` (spec.prs.Repository, which calls guard.git).
+GIT_READER = KNOWLEDGE / "sources.py"
+
+
+def _imported_names(path):
+    found = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ImportFrom):
+            found |= {alias.name for alias in node.names}
+            found.add((node.module or "").split(".")[-1])
+    return found
+
+
 def test_the_knowledge_package_calls_no_model_and_no_guard():
     for path in sorted(KNOWLEDGE.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                names = {alias.name for alias in node.names}
-                assert not names & {"llm", "guard"}, path
-                assert (node.module or "").split(".")[-1] not in {"llm", "guard"}, path
+        names = _imported_names(path)
+        assert not names & {"llm", "guard"}, path
+
+
+def test_only_the_source_reader_reaches_the_bare_repository():
+    readers = sorted(
+        str(path.relative_to(RUNTIME))
+        for path in KNOWLEDGE.rglob("*.py")
+        if "prs" in _imported_names(path)
+    )
+    assert readers == [str(GIT_READER.relative_to(RUNTIME))]
 
 
 # Invariants 1-4 over the synthetic corpus ---------------------------------------------------------

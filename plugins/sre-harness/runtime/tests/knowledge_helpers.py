@@ -97,3 +97,109 @@ def update(env, input_path, *extra):
     return run_cli(
         ["knowledge", "update", "--source", "file", "--input", str(input_path), *extra], env
     )
+
+
+# Source texts behind evidence locators --------------------------------------------------------
+
+RUN_ID = "run-20261127T000000Z-0000abcd"
+GIT_ENV = {
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_AUTHOR_NAME": "alice",
+    "GIT_AUTHOR_EMAIL": "alice@example.com",
+    "GIT_COMMITTER_NAME": "alice",
+    "GIT_COMMITTER_EMAIL": "alice@example.com",
+    "GIT_AUTHOR_DATE": "2026-11-01T00:00:00Z",
+    "GIT_COMMITTER_DATE": "2026-11-01T00:00:00Z",
+}
+
+
+def evidence(locator, text, revision="v0001"):
+    return {
+        "locator": locator,
+        "revision": revision,
+        "content_sha256": records.sha256(text),
+        "size": len(text.encode("utf-8")),
+    }
+
+
+def registry_evidence(env, entry, text, *, written=None):
+    """Write `written` (default `text`) as registry/<entry>/v0001.md; evidence records `text`."""
+    path = paths.child(state_root(env), "registry", entry, "v0001.md")
+    paths.write_private(path, text if written is None else written)
+    return evidence(f"registry:{entry}/v0001.md", text)
+
+
+def run_evidence(env, document, section, text, *, run_id=RUN_ID):
+    """Add one section to the synthetic run's documents.jsonl; evidence records its text."""
+    path = paths.child(state_root(env), "runs", run_id, "documents.jsonl")
+    rows = records.read_jsonl(path) if path.exists() else []
+    rows.append(
+        {
+            "schema_version": 1,
+            "id": document,
+            "run_id": run_id,
+            "created_at": UPDATED_AT,
+            "kind": "markdown",
+            "title": document,
+            "sections": [
+                {"id": section, "heading": document, "text": text, "locator": "docs/x.md"}
+            ],
+            "provenance": {
+                "source_id": "synthetic",
+                "locator": "docs/x.md",
+                "content_sha256": records.sha256(text),
+                "retrieved_at": UPDATED_AT,
+            },
+            "missing": [],
+        }
+    )
+    records.write_jsonl(path, rows)
+    return evidence(f"run:{run_id}/documents.jsonl#{document}#{section}", text, revision=run_id)
+
+
+def bare_repository(env, work, repo, files):
+    """A commit of `files` ({path: text}) in a bare repository where `spec analyze` keeps them
+    (`cache/git/<owner>--<name>--<key>.git`). Returns the commit sha. Tests may start git;
+    the package may not."""
+    import os
+    import subprocess
+
+    child = {**os.environ, **GIT_ENV}
+    work = Path(work)
+    work.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(work)], check=True, env=child)
+    for name, text in files.items():
+        target = work / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    subprocess.run(["git", "-C", str(work), "add", "."], check=True, env=child)
+    subprocess.run(["git", "-C", str(work), "commit", "-q", "-m", "x"], check=True, env=child)
+    sha = subprocess.run(
+        ["git", "-C", str(work), "rev-parse", "HEAD"],
+        check=True,
+        env=child,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    owner, name = repo.split("/")
+    key = records.sha256(f"{repo}\n{work}")[:12]
+    git_dir = state_root(env) / "cache" / "git" / f"{owner}--{name}--{key}.git"
+    git_dir.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "clone", "-q", "--bare", str(work), str(git_dir)], check=True, env=child)
+    return sha
+
+
+def git_evidence(path, sha, text, start=None, end=None):
+    """Evidence for `git:<path>[#L<a>[-L<b>]]`, hashed over the cited lines as #52 stamps it."""
+    locator = f"git:{path}"
+    cited = text
+    if start is not None:
+        end = start if end is None else end
+        locator += f"#L{start}" + (f"-L{end}" if end != start else "")
+        cited = "\n".join(text.splitlines()[start - 1 : end])
+    return evidence(locator, cited, revision=sha)
+
+
+def fetch(env, *argv):
+    return run_cli(["knowledge", "fetch", *argv], env)
