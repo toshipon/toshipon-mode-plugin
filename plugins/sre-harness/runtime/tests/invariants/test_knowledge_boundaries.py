@@ -96,7 +96,7 @@ def test_every_reader_method_that_reads_records_passes_the_access_filter():
             assert _calls(function, "access_clause"), function.name
             params = [a.arg for a in function.args.args]
             assert params[:2] == ["self", "principal"], function.name
-    assert {"records", "matching"} <= set(checked)
+    assert {"records", "matching", "provenance", "edges"} <= set(checked)
 
 
 def test_the_operator_views_print_no_record_content():

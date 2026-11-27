@@ -551,3 +551,41 @@ def test_readers_never_see_a_mix_of_two_generations(root):
     for generation, seen, meta_generation in observed:
         assert generation == meta_generation
         assert seen == expected[generation]
+
+
+def test_provenance_names_the_source_of_readable_records_only(root):
+    gamma = {"classification": "internal", "readers": ["team-gamma"]}
+    apply(root, batch([rec("R1"), rec("G", access=gamma)]))
+    with store.reader(root) as reader:
+        assert reader.provenance(LIMITED) == {model.record_id("synthetic", "R1"): "file:synthetic"}
+        assert set(reader.provenance(EVERYONE)) == {
+            model.record_id("synthetic", "R1"),
+            model.record_id("synthetic", "G"),
+        }
+
+
+def test_edges_are_returned_only_between_readable_records(root):
+    gamma = {"classification": "internal", "readers": ["team-gamma"]}
+    apply(
+        root,
+        batch(
+            [
+                rec("R1"),
+                rec("R2", supersedes=[{"kind": "synthetic", "key": "R1"}]),
+                rec("G", access=gamma, supersedes=[{"kind": "synthetic", "key": "R2"}]),
+            ]
+        ),
+    )
+    r1, r2, g = (model.record_id("synthetic", key) for key in ("R1", "R2", "G"))
+    path = store.directory(root) / store.INDEX
+    connection = sqlite3.connect(str(path), isolation_level=None)
+    connection.executemany(
+        "INSERT INTO edges (source_id, target_id, relation) VALUES (?, ?, 'conflicts_with')",
+        [(r1, r2), (r1, g)],
+    )
+    connection.close()
+    with store.reader(root) as reader:
+        assert reader.edges(LIMITED, "supersedes") == [(r2, r1)]
+        assert reader.edges(LIMITED, "conflicts_with") == [(r1, r2)]
+        assert sorted(reader.edges(EVERYONE, "supersedes")) == sorted([(r2, r1), (g, r2)])
+        assert sorted(reader.edges(EVERYONE, "conflicts_with")) == sorted([(r1, r2), (r1, g)])
