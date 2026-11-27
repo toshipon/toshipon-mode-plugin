@@ -132,6 +132,8 @@ $H iac validate --plan "$D/iac/approver_is_implementer/plan.json" \
 | `spec check-patch` | `patches/<PT-id>.*`、今の PR 一覧と head | 標準出力だけ | なし | head が動いた、patch の書き換えは 3。`git apply --cached --check` が通らなければ 1 | GitHub 読み取り、一時 index |
 | `iac validate` | plan、証跡ディレクトリ、delivery の記録 | `transition-check.json`、`risk.json` | なし | 契約違反は 1。入力が読めないなら run を作らず 2 | ローカルの読み取り。opa は同梱 policy だけ |
 | `runs list` | 保存先 | 標準出力だけ | なし | 保存先が git の作業ツリーの中なら 3 | ローカル |
+| `knowledge update` | `--source file --input <JSON>`、`knowledge/config.json` | `<ルート>/knowledge/index.sqlite3`（run は作りません。`--dry-run` は何も書きません） | なし | 設定が無い、置換の循環、FTS5 が無いは 2。別の writer が動いていれば何も書かずに 1 | ローカル |
+| `knowledge status` | 索引 | 標準出力だけ（generation、SQLite と FTS5、ソースの cursor、status 別の件数） | なし | 索引の schema version が違えば 2 | ローカル |
 
 exit code の意味はすべての段で同じです。
 
@@ -171,9 +173,22 @@ exit code の意味はすべての段で同じです。
 | run | `<ルート>/runs/<run_id>/`。毎回新しいディレクトリで、既存の run は上書きしません |
 | 承認の記録 | `<ルート>/registry/<RG-id>/`。版は追記だけです |
 | bare リポジトリ | `<ルート>/cache/git/`。run をまたいで使います |
+| knowledge index | `<ルート>/knowledge/`。`config.json`（人が書く設定）、`index.sqlite3`（索引）、`writer.lock` |
 | 権限 | ディレクトリ 0700、ファイル 0600 |
 
 run にはレビュー本文、diff、文書の section が入ります。消すときは `runs/<run_id>/` を、bare リポジトリは `cache/git/` を削除してください（次の実行で作り直します）。ホームディレクトリを git で管理している場合、既定の場所は拒否されます。`AI_HARNESS_HOME` にリポジトリの外のディレクトリを指定してください。
+
+### knowledge index
+
+`knowledge update` は、ソース（この版では `--source file` が読む合成データの JSON）を検査して `<ルート>/knowledge/index.sqlite3` に取り込みます。LLM もネットワークも使いません。
+
+- SQLite は作り直せる索引で、正本ではありません。正本はソースと `knowledge/config.json` です。`index.sqlite3` を消しても、`knowledge update` で作り直せます。
+- 書き込むのは一度に 1 つの writer だけです。1 回の取り込みは 1 つのトランザクションで、何か変わったときだけ generation が 1 進みます。同じ入力をもう一度取り込んでも generation は進みません。`config.json` を変えると、次の取り込みで generation が進みます。
+- `complete: false`（部分的な取り込み）では、入力に無いレコードを消しません。`complete: true` のときだけ、消えたものを tombstone にします。
+- `access` の無いレコードと、どの principal も持たない reader を名指しするレコードは、索引に入れずに `rejected` に理由を付けて出します。
+- WAL を使うので、ローカルディスクに置いてください。ネットワークファイルシステムでは壊れることがあります。
+- Python の `sqlite3` に FTS5 が無いと、`knowledge update` は exit 2 で止まります。`knowledge status` の `fts5` で確かめられます。
+- アクセス区分（`access` の `classification` と `readers`、`config.json` の principal）は本人確認ではありません。同じ OS の利用者は SQLite のファイルを直接読めます。防げるのは、別 project の知識がうっかり結果に混ざることです。
 
 ### 認証
 
@@ -891,5 +906,5 @@ python -m pytest tests/e2e/test_completion_scenarios.py
 
 - テストはネットワークも認証も、本物の `claude` も使いません。例と fixture は合成データだけです。GitHub は fixture transport、git はテストが一時ディレクトリに作る合成リポジトリ、Claude CLI は `guard._run` の差し替えか stub です。
 - opa が PATH に無いと、opa を使うテストは理由付きで SKIP と表示されます。`SRE_HARNESS_REQUIRE_OPA=1` を付けると、SKIP ではなく失敗になります。
-- CI（`.github/workflows/sre-harness.yml`）は Python 3.10 と 3.13 で、compileall、ruff、pyright、opa を入れた上での `SRE_HARNESS_REQUIRE_OPA=1` の pytest と coverage を実行します。opa は v1.22.2 の Linux amd64 static バイナリを版固定の URL から取得し、公式の `.sha256` の値で検査してから PATH に置きます。
+- CI（`.github/workflows/sre-harness.yml`）は Python 3.10 と 3.13 で、compileall、ruff、pyright、opa を入れた上での `SRE_HARNESS_REQUIRE_OPA=1` の pytest と coverage を実行します。macOS（Python 3.13）でも pytest を実行します（knowledge index の flock、WAL、FTS5 を確かめるためです。opa は入れないので、opa のテストは SKIP になります）。opa は v1.22.2 の Linux amd64 static バイナリを版固定の URL から取得し、公式の `.sha256` の値で検査してから PATH に置きます。
 - `tests/invariants/` は、子プロセスを起動できるのが `guard.py` だけであること（AST の検査）、plugin のファイルに秘密情報の形が無いこと、plugin のファイルに出る URL の host が許可リスト（`example.com`、`example.org`、`github.com`、`api.github.com`、schema の host、`*.invalid`、`*.example`）の中だけであることなどを検査します。
