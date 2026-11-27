@@ -420,6 +420,11 @@ class Writer:
         return plan.summary()
 
 
+def _connect(path):
+    """A read-write connection to an index file, in autocommit (transactions are explicit)."""
+    return sqlite3.connect(str(path), isolation_level=None, timeout=TIMEOUT_SECONDS)
+
+
 def _take_lock(folder):
     descriptor = _create_private(_file(folder, LOCK), os.O_RDWR | os.O_CREAT)
     try:
@@ -444,7 +449,7 @@ def writer(root):
         path = _file(folder, INDEX)
         if not path.exists():
             os.close(_create_private(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL))
-        connection = sqlite3.connect(str(path), isolation_level=None, timeout=TIMEOUT_SECONDS)
+        connection = _connect(path)
         try:
             connection.execute("PRAGMA journal_mode = WAL")
             if not _has_schema(connection):
@@ -586,6 +591,11 @@ def plan(root, batch):
     if exists(root):
         with reader(root) as current:
             return current.plan(batch)
+    return _empty_plan(batch)
+
+
+def _empty_plan(batch):
+    """What a writer would do with `batch` to an index that does not exist yet, in memory."""
     connection = sqlite3.connect(":memory:", isolation_level=None)
     try:
         _create_schema(connection)
