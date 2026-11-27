@@ -540,9 +540,21 @@ def test_an_end_already_past_is_an_input_error(env, tmp_path):
 def test_a_cancelled_request_takes_no_answer_and_can_be_asked_again(env, tmp_path, monkeypatch):
     _, found = put(env, tmp_path)
     request_id = found["request"]["id"]
-    code, value, _ = run(env, "cancel", "--request", request_id, "--reason", "質問を取り下げる")
+    code, value, _ = run(
+        env,
+        "cancel",
+        "--workspace",
+        "ws-a",
+        "--request",
+        request_id,
+        "--reason",
+        "質問を取り下げる",
+    )
     assert code == 0 and value["request"]["status"] == "cancelled"
-    assert run(env, "cancel", "--request", request_id, "--reason", "二度目")[0] == 1
+    assert (
+        run(env, "cancel", "--workspace", "ws-a", "--request", request_id, "--reason", "二度目")[0]
+        == 1
+    )
     at_terminal(monkeypatch)
     assert answer(env, request_id)[0] == 1
     code, again = put(env, tmp_path)
@@ -551,26 +563,37 @@ def test_a_cancelled_request_takes_no_answer_and_can_be_asked_again(env, tmp_pat
 
 def test_an_answered_or_unknown_request_cannot_be_cancelled(env, tmp_path, monkeypatch):
     request_id, _ = answered(env, tmp_path, monkeypatch)
-    assert run(env, "cancel", "--request", request_id, "--reason", "遅い")[0] == 1
-    assert run(env, "cancel", "--request", "DR-000000000000", "--reason", "無い")[0] == 2
+    assert (
+        run(env, "cancel", "--workspace", "ws-a", "--request", request_id, "--reason", "遅い")[0]
+        == 1
+    )
+    assert (
+        run(
+            env, "cancel", "--workspace", "ws-a", "--request", "DR-000000000000", "--reason", "無い"
+        )[0]
+        == 2
+    )
     secret = "ghp_" + "a" * 36
-    assert run(env, "cancel", "--request", request_id, "--reason", secret)[0] == 2
+    assert (
+        run(env, "cancel", "--workspace", "ws-a", "--request", request_id, "--reason", secret)[0]
+        == 2
+    )
 
 
 def test_list_shows_every_request_with_its_status_now(env, tmp_path, monkeypatch):
     request_id, _ = answered(env, tmp_path, monkeypatch)
     _, other = put(env, tmp_path, task="TASK-0002")
-    code, listed, _ = run(env, "list")
+    code, listed, _ = run(env, "list", "--workspace", "ws-a")
     assert code == 0
     assert records.violations("decision-request", listed, "list_result") == []
     status = {r["id"]: r["status"] for r in listed["requests"]}
     assert status == {request_id: "answered", other["request"]["id"]: "open"}
-    _, only, _ = run(env, "list", "--status", "open")
+    _, only, _ = run(env, "list", "--workspace", "ws-a", "--status", "open")
     assert [r["id"] for r in only["requests"]] == [other["request"]["id"]]
 
 
 def test_list_with_no_queue_is_empty(env):
-    code, listed, _ = run(env, "list")
+    code, listed, _ = run(env, "list", "--workspace", "ws-a")
     assert code == 0 and listed["requests"] == []
 
 
@@ -579,4 +602,40 @@ def test_a_damaged_request_file_stops_the_reader(env, tmp_path):
     path = decisions_dir(env) / "outbox" / f"{found['request']['id']}.json"
     os.chmod(path, 0o600)
     path.write_text("{")
+    assert run(env, "list", "--workspace", "ws-a")[0] == 2
+
+
+def test_list_and_cancel_need_a_workspace(env, tmp_path):
+    _, found = put(env, tmp_path)
+    request_id = found["request"]["id"]
     assert run(env, "list")[0] == 2
+    assert run(env, "cancel", "--request", request_id, "--reason", "取り下げ")[0] == 2
+
+
+def test_list_shows_only_the_requests_the_workspace_put_or_waits_for(env, tmp_path):
+    _, mine = put(env, tmp_path)
+    _, other = put(env, tmp_path, workspace="ws-b", principal="workspace-b", task="TASK-0002")
+    code, listed, _ = run(env, "list", "--workspace", "ws-a")
+    assert code == 0 and [r["id"] for r in listed["requests"]] == [mine["request"]["id"]]
+    assert records.violations("decision-request", listed, "list_result") == []
+    assert all("content_hashes" not in r["revision"] for r in listed["requests"])
+    _, seen, _ = run(env, "list", "--workspace", "ws-b")
+    assert [r["id"] for r in seen["requests"]] == [other["request"]["id"]]
+    _, nobody, _ = run(env, "list", "--workspace", "ws-c")
+    assert nobody["requests"] == []
+    # A workspace that put the same question waits for that request, and sees it.
+    put(env, tmp_path, workspace="ws-c")
+    _, joined, _ = run(env, "list", "--workspace", "ws-c")
+    assert [r["id"] for r in joined["requests"]] == [mine["request"]["id"]]
+
+
+def test_a_workspace_cannot_cancel_a_request_of_another(env, tmp_path):
+    _, found = put(env, tmp_path)
+    request_id = found["request"]["id"]
+    argv = ["cancel", "--request", request_id, "--reason", "取り下げ"]
+    code, value, _ = run(env, *argv[:2], "--workspace", "ws-b", *argv[2:])
+    assert code == 2 and value is None
+    assert not (decisions_dir(env) / "cancelled" / f"{request_id}.json").exists()
+    code, value, _ = run(env, "cancel", "--workspace", "ws-a", *argv[1:])
+    assert code == 0 and value["request"]["status"] == "cancelled"
+    assert "content_hashes" not in value["request"]["revision"]
