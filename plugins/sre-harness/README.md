@@ -123,7 +123,7 @@ $H iac validate --plan "$D/iac/approver_is_implementer/plan.json" \
 | `review classify` | `lessons.jsonl`、`--existing-rules` | `classified.jsonl`、`set-aside.jsonl`、`conflicts.jsonl` | 必須 | ルールファイルの上限超えは 2、symlink のディレクトリは 3 | 同上。ルールは読むだけ |
 | `review generate` | `classified.jsonl`、生成側の patch | `candidates/<IC-id>/` | 必須 | 1 件も残らなければ 1。同じ run の 2 回目は 2 | 同上 |
 | `review evaluate` | 候補、registry、評価用 PR の hunk、`--adjudication` | `evaluation.json`、`evaluation.md` | 必須（文章ルールの判定だけ） | split の不整合は 2。評価用 PR が 30 件未満は `unevaluable` で 0 | 宣言的検査はローカルの別プロセス |
-| `review approve` / `reject` / `retire` | 候補、registry、人の入力 | `<ルート>/registry/<RG-id>/v<N>.*` | なし | TTY が無い、hash の不一致、未評価などは 3 | ローカル。作業ツリーに書かない |
+| `review approve` / `reject` / `retire` | 候補、registry、人の入力。approve は `--knowledge-*` を付けたときだけ `knowledge/config.json` も読みます | `<ルート>/registry/<RG-id>/v<N>.*`（approve に `--knowledge-*` を付けたときだけ、承認の版に `knowledge` block を記録します） | なし | TTY が無い、hash の不一致、未評価などは 3。`knowledge` block の不整合（scope の不変条件、設定に無い project・component・reader、設定が無い）と、reject・retire に `--knowledge-*` を付けたは 2 | ローカル。作業ツリーに書かない |
 | `spec ingest` | manifest のファイル、GitHub の PR | `documents.jsonl`、`ingest.json` | なし | ファイルの不在などは `partial` で 1。path の拒否は 3 | ファイルと GitHub の読み取り |
 | `spec extract` | `documents.jsonl` | `decisions.json`、`requirements.json`、`extract.json` | 必須（推定だけ） | 置換の循環、ID の重複は 2 | `claude` は Anthropic へ送信 |
 | `spec analyze` | 台帳、open PR の一覧、default branch と PR の head | `trace.json`、`findings.json`、`analyze.json`、`diff-cache/` | 選択（推定リンクと説明文） | `stale_sha` は `stale` で 1、`input_missing` の PR は `partial` で 1 | GitHub 読み取り、bare リポジトリの git |
@@ -132,7 +132,7 @@ $H iac validate --plan "$D/iac/approver_is_implementer/plan.json" \
 | `spec check-patch` | `patches/<PT-id>.*`、今の PR 一覧と head | 標準出力だけ | なし | head が動いた、patch の書き換えは 3。`git apply --cached --check` が通らなければ 1 | GitHub 読み取り、一時 index |
 | `iac validate` | plan、証跡ディレクトリ、delivery の記録 | `transition-check.json`、`risk.json` | なし | 契約違反は 1。入力が読めないなら run を作らず 2 | ローカルの読み取り。opa は同梱 policy だけ |
 | `runs list` | 保存先 | 標準出力だけ | なし | 保存先が git の作業ツリーの中なら 3 | ローカル |
-| `knowledge update` | `--source file --input <JSON>` か `--source review-registry`（`<ルート>/registry/` を読むだけ）、`knowledge/config.json` | `<ルート>/knowledge/index.sqlite3`（run は作りません。`--dry-run` は索引を書きません） | なし | 設定が無い、置換の循環、FTS5 が無い、`review-registry` に `--input` を付けたは 2。別の writer が動いていれば何も書かずに 1 | ローカル。registry は読むだけ |
+| `knowledge update` | `--source file --input <JSON>`、`--source review-registry`（`<ルート>/registry/` を読むだけ）か `--source spec-run --run <run_id> --project <project>`（run の `decisions.json`、`requirements.json`、`trace.json`、`documents.jsonl` を読むだけ）、`knowledge/config.json` | `<ルート>/knowledge/index.sqlite3`（run は作りません。`--dry-run` は索引を書きません） | なし | 設定が無い、置換の循環、FTS5 が無い、`review-registry` と `spec-run` に `--input` を付けた、`spec-run` 以外に `--run` か `--project` を付けた、`spec-run` の project が設定に無い、run の台帳が schema か不変条件に反するは 2。別の writer が動いていれば何も書かずに 1 | ローカル。registry と run は読むだけ |
 | `knowledge status` | 索引 | 標準出力だけ（generation、SQLite と FTS5、ソースの cursor、status 別の件数） | なし | 索引の schema version が違えば 2 | ローカル |
 | `knowledge search` | 索引、`knowledge/config.json`、`--principal`（必須）と scope・facet・query・予算 | 標準出力（`knowledge-search-result` の JSON）。`--task` を付けたときだけ `<ルート>/knowledge/tasks/<hash>.jsonl` に追記します | なし | 必須が予算に入らない（`mandatory_overflow`）、索引が今の設定に追随していない（`stale_index`）、タスク累計を超える（`task_budget_exhausted`）は 1。principal が不明か設定が無いと 3。索引が無い、引数の誤りは 2 | ローカル（読み取りだけ） |
 | `knowledge fetch` | 索引、`knowledge/config.json`、`--principal` と `--id`（必須）、レコードの出典（registry の artifact、run の `documents.jsonl`、bare リポジトリ） | 標準出力（`knowledge-fetch-result` の JSON）。`--task` を付けたときだけタスク累計に追記します | なし | 取得できない出典がある（`incomplete`）、取り下げ済み（`withdrawn`）、1 行も入らない（`max_tokens_too_small`）、`stale_index`、`task_budget_exhausted` は 1。principal が不明か設定が無いと 3。ID の形の誤り、`--offset` が末尾より後ろ、索引が無いは 2 | ローカル（読み取りだけ。git は bare リポジトリの object を読むだけで fetch しません） |
@@ -184,7 +184,7 @@ run にはレビュー本文、diff、文書の section が入ります。消す
 
 ### knowledge index
 
-`knowledge update` は、ソース（`--source file` が読む合成データの JSON か、`--source review-registry` が読む承認の記録）を検査して `<ルート>/knowledge/index.sqlite3` に取り込みます。LLM もネットワークも使いません。
+`knowledge update` は、ソース（`--source file` が読む合成データの JSON、`--source review-registry` が読む承認の記録、`--source spec-run` が読む spec の run の台帳）を検査して `<ルート>/knowledge/index.sqlite3` に取り込みます。LLM もネットワークも使いません。
 
 - SQLite は作り直せる索引で、正本ではありません。正本はソースと `knowledge/config.json` です。`index.sqlite3` を消しても、`knowledge update` で作り直せます。
 - 書き込むのは一度に 1 つの writer だけです。1 回の取り込みは 1 つのトランザクションで、何か変わったときだけ generation が 1 進みます。同じ入力をもう一度取り込んでも generation は進みません。`config.json` を変えると、次の取り込みで generation が進みます。
@@ -193,6 +193,46 @@ run にはレビュー本文、diff、文書の section が入ります。消す
 - WAL を使うので、ローカルディスクに置いてください。ネットワークファイルシステムでは壊れることがあります。
 - Python の `sqlite3` に FTS5 が無いと、`knowledge update` は exit 2 で止まります。`knowledge status` の `fts5` で確かめられます。
 - アクセス区分（`access` の `classification` と `readers`、`config.json` の principal）は本人確認ではありません。同じ OS の利用者は SQLite のファイルを直接読めます。防げるのは、別 project の知識がうっかり結果に混ざることです。
+- **必須（`mandatory`）にするのは人の操作だけです。** レコードが `mandatory` になるのは、人が `review approve` の `--knowledge-enforcement mandatory` で明示し、その entry の最新版が承認のときだけです。`review-registry` の既定、`spec-run` の取り込み、移行したレコードは、どれも `advisory` です。文書に「approved」と書いてあっても必須にはなりません。
+
+#### `knowledge` block の指定（`review approve`）
+
+承認のときに、そのルールを索引のどこに置くかを指定できます。どれも付けなければ、registry の版は今までと byte 単位で同じです。
+
+```bash
+$H review approve --run run-... --candidate IC-0001 --reviewer alice --reason "..." \
+  --knowledge-scope component --knowledge-project project-alpha --knowledge-component queue \
+  --knowledge-classification internal --knowledge-reader team-alpha \
+  --knowledge-enforcement mandatory \
+  --knowledge-applies-when "キューを新しく作る" --knowledge-exception "一時的な検証用のキュー"
+```
+
+- `--knowledge-scope` は `organization`、`project`、`component` のどれかです。`project` は `--knowledge-project`、`component` は `--knowledge-project` と `--knowledge-component` が要ります。level より下の ID を付けると exit 2 です（`organization` に `--knowledge-project` など）。`--knowledge-scope` を付けずに `--knowledge-project` か `--knowledge-component` を付けても exit 2 です。
+- `--knowledge-reader`、`--knowledge-applies-when`、`--knowledge-exception` は繰り返せます。`applies_when` と `exceptions` は 1 行 200 文字まで、10 件までです。
+- block を付けるときは `knowledge/config.json` が要ります。無ければ exit 2 です。project と component は設定にあるもの、reader はどれかの principal が持つものだけを受け付けます（無ければ exit 2）。
+- 付けなかった項目は設定から取ります。scope を付けなければ、run の repo を `repos` に持つ project の単位です。アクセスは、scope の project（`organization` なら run の repo の project）の `default_access` です。どちらも決まらなければ exit 2 で、指定を求めます。`--knowledge-enforcement` の既定は `advisory` です。
+- 承認の画面に「Knowledge index placement」の節が出て、scope、アクセス（区分と reader）、enforcement、`applies_when`、`exceptions` と、記録する block の JSON を見せます。`mandatory` のときは、その scope の search が query に関係なく必ず返し、予算に入らなければ `mandatory_overflow` で止まることを書きます。
+- block を付けたときは、`content_sha256` ではなく `confirmation_sha256`（`content_sha256` と block を合わせた hash）の先頭 12 文字を入力します。block を 1 項目でも変えると、入力する hash も変わります。`content_sha256` の先頭を打っても承認になりません（exit 3）。
+- block を持てるのは承認の版だけです。`review reject` と `review retire` は `--knowledge-*` を受け付けません（exit 2）。retire の版は block を持たず、取り下げた entry は、最後に承認した版の block の scope とアクセスのまま `advisory` で索引に残ります（既定の search には出ません）。
+- `knowledge update --source review-registry` と `knowledge migrate` は、最新の承認の版の block を使います。移行の計画（`--dry-run`）にも、block の scope、アクセス、enforcement がそのまま出ます。
+
+#### spec の台帳の取り込み（`--source spec-run`）
+
+```bash
+$H knowledge update --source spec-run --run run-... --project project-alpha
+```
+
+`spec extract`（と `spec analyze`）が書いた run の台帳を、`--project` の project のレコードとして取り込みます。run のファイルは読むだけです。
+
+- key は文書に書かれた ID（`external_id`。`ADR-0002` など）です。レコードの origin は `{kind: decision, key: "<project>:<external_id>"}` で、run の中で振る `DEC-0001` は使いません。別の run から同じ決定を取り込んでも、同じレコード ID のまま更新されます。requirement は、文書が書いた `REQ-` の ID を key にします（`kind: requirement`）。
+- `external_id` の無い決定と、inferred の決定・requirement（モデルや stub の推定）は索引に入れず、`skipped` に理由（`no_external_id`、`inferred`）を付けて出します。evidence の section が run の `documents.jsonl` に無いものも `evidence_unresolved` で外します。
+- status は台帳の値です（proposed、approved、rejected、superseded、unresolved）。requirement の台帳には status も承認も無いので、`proposed` として入れます（`--include-proposed` のときだけ別枠で返ります）。承認記録は、approved と superseded の決定について、台帳の承認者の名前と日付（その日の 00:00 UTC。日付が無ければ台帳を作った時刻）を写し、`via` は `spec-document` です。
+- **spec 由来のレコードは常に `advisory` です。** 台帳に何が書いてあっても必須にはなりません。
+- scope は `--project` の project の単位、アクセスはその project の `default_access` です。project が設定に無ければ exit 2 です。`facets.decision_id` に `external_id` が入るので、`knowledge search --decision-id ADR-0002` で引けます。置換済みの ID を聞くと、`superseded` に後継が返ります。
+- 置換は台帳の `supersedes` をそのまま写します。連鎖は末端だけが search に返ります。台帳が不変条件（`spec` の Decision Registry の検査。置換の循環を含む）に反していれば、何も書かずに exit 2 です。
+- trace の関係（`refines`、`implements`、`verifies`、`depends_on`、`conflicts_with`）は、両端が索引に入るレコードどうしの explicit なものだけを edge にします。inferred の関係は edge にせず、`skipped` に `kind: relation`、`inferred` で出します。`conflicts_with` は、両方が返ったときに search の `conflicts` に出ます。`trace.json` が無い run（`spec analyze` の前）では、関係は入りません。
+- evidence は `run:<run_id>/documents.jsonl#<DOC>#<S>` で、section の本文から hash と大きさを計算します。`knowledge fetch` で、run が残っている間は section の原文を hash の照合付きで取れます。
+- source は project ごとに 1 つ（`spec-run:<project>`）で、取り込みは毎回 `complete` です。新しい run を取り込むと、それがその project の台帳の最新の姿になり、古い run にだけあった決定は索引から消えます（tombstone の理由は `removed_from_source`）。別の project の source とほかの source のレコードは消しません。cursor は run id と台帳のファイルの sha256 です。
 
 #### knowledge search
 
@@ -392,7 +432,7 @@ $H knowledge rollback --to index-<時刻>-g0001.sqlite3   # --list に出た名�
 3. **検査**: `config.json` にある repo ごとに、`registry.active_rules` が返す entry の集合と、一時の索引にある、その repo の `review-registry` 由来の approved のレコードの集合が同じであることを確かめます。違えば、入れ替えもバックアップもせずに exit 1 で、`check.repos` に repo ごとの `missing`（registry にあって索引に無い）と `unexpected`（その逆）を出します。承認済みの artifact が記録の後に変わっていると `active_rules` 自体が拒否するので、その repo は `error` 付きの違いになり、移行は止まります（`review evaluate` も同じ repo で exit 3 になります）。
 4. **切り替え**: 検査が通ると、WAL を空にしてから（下の「WAL と入れ替え」）、今の索引を `knowledge/backups/index-<UTC の時刻>-g<generation>.sqlite3`（0600）に写し、一時ファイルを `os.replace` で `index.sqlite3` に入れ替えます。途中で止まっても、古い索引か新しい索引のどちらかが残ります。索引が無かったときは `backup` に `{"name": null, "reason": "no_index"}` と書きます。
 
-移行したレコードは、すべて `advisory` です。`mandatory` にはなりません。`knowledge` block（scope、アクセス、enforcement）を持たない registry の記録は、`repo` を `config.json` の `repos` に持つ project の単位で、その project の `default_access` を使います。summary は artifact の題名、path の条件は宣言的検査の `path_globs` です。`applies_when` と `exceptions` は空です。evidence は `registry:RG-<n>/v<n>.md` なので、`knowledge fetch` で artifact の原文を hash の照合付きで取れます。retire や reject した entry は既定の search に出ず、fetch には `withdrawn` と答えます。版が増えたら `knowledge update --source review-registry` で取り込めます。変更が無ければ generation は進みません。
+移行したレコードは、人が `review approve` で `mandatory` の `knowledge` block を付けた entry を除き、すべて `advisory` です。`knowledge` block（scope、アクセス、enforcement）を持たない registry の記録は、`repo` を `config.json` の `repos` に持つ project の単位で、その project の `default_access` を使います。summary は artifact の題名、path の条件は宣言的検査の `path_globs` です。`applies_when` と `exceptions` は空です。evidence は `registry:RG-<n>/v<n>.md` なので、`knowledge fetch` で artifact の原文を hash の照合付きで取れます。retire や reject した entry は既定の search に出ず、fetch には `withdrawn` と答えます。版が増えたら `knowledge update --source review-registry` で取り込めます。変更が無ければ generation は進みません。
 
 WAL と入れ替え:
 
@@ -448,6 +488,7 @@ Claude CLI を使う段は `--auth-mode api-key|subscription` の指定が必須
 
 - `review approve` と `review retire` は stdin と stdout の両方が TTY のときだけ動きます。TTY がなければ何も記録せず exit 3 です。この検査を迂回する flag や環境変数はありません。
 - **TTY と hash の入力は、パイプや非対話の実行からの「うっかりの自動承認」を防ぐためのものです。** pty を開いて起動し、画面の hash の先頭を打ち込むプログラムは通るので、意図的な迂回は防げません（`os.openpty()` で起動して hash の先頭を打ち込むスクリプトが承認を通すことを、合成データで確かめています）。承認者の本人確認でも、改ざん耐性でもありません。`--reviewer` は入力どおりに記録します。**承認の正当性は、registry の diff を置くリポジトリのレビュー（人がその diff を commit する段）で担保してください。**
+- `--knowledge-*` で付けた `knowledge` block（scope、アクセス、enforcement、`applies_when`、`exceptions`）も、画面に出して `confirmation_sha256` の入力で確かめる対象です。これも同じく「うっかり」を防ぐためのもので、本人確認ではありません。
 - `review reject` は TTY を求めません。候補を使えなくするだけの安全側の操作だからです。承認済みのルールを取り下げる `review retire` は、agent が非対話で実行できないよう TTY を求めます。
 - 承認の画面には、まず registry に記録される内容そのもの（`body.md` から parse した form、title、check）を出し、続けて本文、本文の lint、元になったコメントの引用（コードブロック）と投稿者の種別・association、既存ルールとの関係、評価の結果、リスクとロールバックを出します。外部の文字列は escape し、制御文字は置き換えます。
 - 画面の後で `content_sha256` の先頭 12 文字を入力します。違えば exit 3 です。候補が同じ `content_sha256` で評価されていない（未評価、評価後に本文が変わった、`check_failed`）とき、`evaluation.json` の `status` が `evaluated` でない（`unevaluable`）ときも exit 3 です。
@@ -547,6 +588,7 @@ toshipon-mode plugin の Autonomous Improvement Harness v2（`plugins/toshipon-m
 - bare リポジトリの fetch は `fetch.fsckObjects=true` で行います。古い履歴に fsck の警告（壊れた日付、tree の並び順など）がある実際のリポジトリで fetch が失敗するかは確かめていません。失敗したら default branch の fetch で exit 1 になります。
 - `knowledge fetch` の `git:` の locator を、`spec analyze` が実際に作った bare リポジトリで読むこと。テストはローカルで作った合成の bare リポジトリだけを通ります。`pr:` と `doc:` の出典は読みません。タスク累計の既定値（6000）と fetch の既定の上限（3000）が実際の作業で妥当かも測っていません。
 - `knowledge migrate` と `rollback` の入れ替え。確かめたのは、手元の macOS（SQLite 3.54.1）で、別プロセスの reader が古いファイルを開いたまま入れ替えても読み続けられること、WAL の frame を読んでいる reader がいると exit 1 で止まることだけです。CI の OS と SQLite、ネットワークファイルシステムでは確かめていません。実際の registry（`review approve` が実際の端末で書いたもの）での移行もしていません。
+- `knowledge update --source spec-run` を、実際の文書から `spec extract --backend claude` と `spec analyze` が作った run で取り込むこと。テストは合成の文書を stub で抽出した run と、手で書いた合成の `trace.json` だけを通ります。実際の端末で `--knowledge-*` を付けた `review approve` も行っていません。
 - `knowledge search` の検索の質。合成データで確かめたのは、必須の集合がラベルと一致すること、予算と止まる条件、置換、漏れないことだけです。任意のレコードの recall と precision、既定の予算（1500 token）と鮮度の閾値（168 時間）が実際の作業で妥当かは測っていません。
 - `impact-report.md` の自動リンク対策（`www.`、`@`、`://` の文字参照化）が GitHub の Markdown 表示で実際にリンクにならないこと。テストは文字列に元の形が残らないことだけを確かめています。
 
