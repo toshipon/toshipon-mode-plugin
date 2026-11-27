@@ -2,6 +2,7 @@
 
     <state root>/knowledge/index.sqlite3   the index (WAL; rebuilt from the sources at will)
     <state root>/knowledge/writer.lock     held with flock by the one writer
+    <state root>/knowledge/backups/        copies of the index taken before it was replaced
 
 One writer at a time: `writer()` takes the lock without waiting, and a second writer stops with
 exit 1 before it writes anything. One update is one `BEGIN IMMEDIATE` transaction; when it
@@ -11,14 +12,26 @@ the middle of its transaction.
 
 Which records a principal may read is decided in one place, `access_clause`. Every reader
 method that returns records takes the principal first and puts that clause in its WHERE.
+
+The whole index is replaced (migrate, rollback) only through `staged`, under the same lock: a
+copy is built in a temporary file beside the index, and `Stage.commit` puts it in place with
+one `os.replace`, so a crash leaves the old index or the new one. Before the rename, the WAL of
+the index in place is checkpointed and emptied (TRUNCATE): its -wal and -shm stay at their
+paths and the new file opens with them, so no frame of the old file may be left in them. A
+reader that still reads frames from that WAL holds the checkpoint off; after the busy timeout
+the replacement stops with exit 1 and changes nothing. A reader that has the old file open
+keeps reading it (its own descriptor) until it ends: one command, one snapshot.
 """
 
 import fcntl
 import json
 import os
+import re
+import secrets
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .. import paths
 from ..errors import BoundaryError, InputError, QualityGateError
@@ -31,6 +44,14 @@ SCHEMA_VERSION = 1
 SUPERSEDES = "supersedes"
 CONFLICTS_WITH = "conflicts_with"
 TIMEOUT_SECONDS = 5
+BACKUPS = "backups"
+# index-<UTC time>-g<generation>[-<n>].sqlite3; `n` tells apart two of one second and generation
+BACKUP_NAME = re.compile(
+    r"index-([0-9]{8}T[0-9]{6}Z)-g([0-9]{4,12})(?:-([2-9]|[1-9][0-9]{1,3}))?\.sqlite3"
+)
+MAX_BACKUPS_PER_NAME = 9999
+STAGED = ".staged-"
+SIDECARS = ("-wal", "-shm", "-journal")
 
 _SCHEMA = [
     "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -420,6 +441,11 @@ class Writer:
         return plan.summary()
 
 
+def _connect(path):
+    """A read-write connection to an index file, in autocommit (transactions are explicit)."""
+    return sqlite3.connect(str(path), isolation_level=None, timeout=TIMEOUT_SECONDS)
+
+
 def _take_lock(folder):
     descriptor = _create_private(_file(folder, LOCK), os.O_RDWR | os.O_CREAT)
     try:
@@ -444,7 +470,7 @@ def writer(root):
         path = _file(folder, INDEX)
         if not path.exists():
             os.close(_create_private(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL))
-        connection = sqlite3.connect(str(path), isolation_level=None, timeout=TIMEOUT_SECONDS)
+        connection = _connect(path)
         try:
             connection.execute("PRAGMA journal_mode = WAL")
             if not _has_schema(connection):
@@ -586,9 +612,312 @@ def plan(root, batch):
     if exists(root):
         with reader(root) as current:
             return current.plan(batch)
+    return _empty_plan(batch)
+
+
+def _empty_plan(batch):
+    """What a writer would do with `batch` to an index that does not exist yet, in memory."""
     connection = sqlite3.connect(":memory:", isolation_level=None)
     try:
         _create_schema(connection)
         return _plan(connection, batch).summary()
     finally:
         connection.close()
+
+
+# Replacing the whole index -----------------------------------------------------------------
+
+
+def _sidecar(path, suffix):
+    return path.with_name(path.name + suffix)
+
+
+def _remove(path):
+    for suffix in ("", *SIDECARS):
+        _sidecar(path, suffix).unlink(missing_ok=True)
+
+
+def _fsync_directory(folder):
+    descriptor = os.open(folder, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _open_quiet(path):
+    """A read-only connection to an index file that writes nothing beside it, for a caller
+    holding the writer lock (so no writer changes the file meanwhile). When the -wal holds
+    frames they are part of the content and are read the usual way, through the -shm; else the
+    file is opened immutable and no -wal or -shm is created."""
+    wal = _sidecar(path, "-wal")
+    held = wal.is_file() and wal.stat().st_size > 0
+    query = "?mode=ro" if held else "?mode=ro&immutable=1"
+    return sqlite3.connect(
+        Path(path).absolute().as_uri() + query,
+        uri=True,
+        isolation_level=None,
+        timeout=TIMEOUT_SECONDS,
+    )
+
+
+def _copy(source, target):
+    """`target` (new, 0600): one consistent snapshot of the index file `source`, with what its
+    WAL holds, through the SQLite backup API. It is left in rollback-journal mode, so that
+    reading it later needs no -wal or -shm. Nothing of a half copy is left behind."""
+    os.close(_create_private(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL))
+    try:
+        origin = _open_quiet(source)
+        try:
+            copy = _connect(target)
+            try:
+                origin.backup(copy)
+                copy.execute("PRAGMA journal_mode = DELETE")
+            finally:
+                copy.close()
+        finally:
+            origin.close()
+    except BaseException:
+        _remove(target)
+        raise
+
+
+def _settle(index):
+    """Fold the WAL of the index in place into its file and empty it (see the module doc)."""
+    connection = _connect(index)
+    try:
+        busy, _, _ = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    finally:
+        connection.close()
+    wal = _sidecar(index, "-wal")
+    if busy or (wal.is_file() and wal.stat().st_size > 0):
+        raise QualityGateError(
+            "a reader is still reading the current knowledge index from its WAL; nothing was "
+            "replaced and nothing was backed up. Run it again when the reader has finished."
+        )
+
+
+def _backups_directory(folder, create=False):
+    path = _file(folder, BACKUPS)
+    if create and not path.exists():
+        path.mkdir(mode=0o700)
+        os.chmod(path, 0o700)
+    return path
+
+
+def _stamp(now):
+    """2026-11-27T00:00:00Z -> 20261127T000000Z."""
+    return now.replace("-", "").replace(":", "")
+
+
+def _moment(stamp):
+    """20261127T000000Z -> 2026-11-27T00:00:00Z."""
+    return f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}T{stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}Z"
+
+
+def _backup(folder, index, now, generation):
+    """Copy the index in place into backups/ under a new name. Returns {name, generation}."""
+    base = _backups_directory(folder, create=True)
+    for number in range(1, MAX_BACKUPS_PER_NAME + 1):
+        suffix = "" if number == 1 else f"-{number}"
+        name = f"index-{_stamp(now)}-g{generation:04d}{suffix}.sqlite3"
+        path = paths.child(base, name)
+        if path.exists() or path.is_symlink():
+            continue
+        _copy(index, path)
+        return {"name": name, "generation": generation}
+    raise QualityGateError(f"there are {MAX_BACKUPS_PER_NAME} backups of this second already.")
+
+
+def backups(root):
+    """The backups under knowledge/backups/, oldest first: {name, generation, created_at,
+    bytes}. Only names the harness makes are listed."""
+    base = _backups_directory(directory(root))
+    if base.is_symlink() or not base.is_dir():
+        return []
+    found = []
+    for path in base.iterdir():
+        match = BACKUP_NAME.fullmatch(path.name)
+        if match is None or path.is_symlink() or not path.is_file():
+            continue
+        found.append(
+            (
+                (match[1], int(match[2]), int(match[3] or 1)),
+                {
+                    "name": path.name,
+                    "generation": int(match[2]),
+                    "created_at": _moment(match[1]),
+                    "bytes": path.stat().st_size,
+                },
+            )
+        )
+    return [entry for _, entry in sorted(found, key=lambda pair: pair[0])]
+
+
+def backup_path(root, name):
+    """The backup called `name`: only a name the harness makes (exit 2 otherwise), and one
+    that exists (exit 2 when it does not)."""
+    if not isinstance(name, str) or not BACKUP_NAME.fullmatch(name):
+        raise InputError(
+            f"not a backup name: {name!r}. `sre-harness knowledge rollback --list` shows them."
+        )
+    path = paths.child(_backups_directory(directory(root)), name)
+    if path.is_symlink() or not path.is_file():
+        raise InputError(
+            f"there is no backup {name}. `sre-harness knowledge rollback --list` shows them."
+        )
+    return path
+
+
+class Stage:
+    """A whole new index, built in a temporary file beside the index in place (see `staged`)."""
+
+    def __init__(self, folder, path, connection, current):
+        self._folder = folder
+        self._path = path
+        self._connection = connection
+        self._open = True
+        self.current = current  # the generation of the index in place, None when there is none
+        self.writer = Writer(connection)
+        self.committed = False
+
+    @contextmanager
+    def read(self):
+        """A Reader over the new index as it is now."""
+        connection = self._connection
+        connection.execute("BEGIN")
+        try:
+            yield Reader(connection, _meta(connection))
+        finally:
+            connection.execute("ROLLBACK")
+
+    def advance(self, now):
+        """Give the new index the next generation after both its own and the one in place, so
+        that one generation never names two contents (a restored backup keeps its records,
+        not its number). Returns the generation."""
+        connection = self._connection
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            generation = max(_meta(connection)["generation"], self.current or 0) + 1
+            connection.executemany(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                [("generation", str(generation)), ("updated_at", now)],
+            )
+            connection.execute("COMMIT")
+        except BaseException:
+            connection.execute("ROLLBACK")
+            raise
+        return generation
+
+    def close(self):
+        if self._open:
+            self._connection.close()
+            self._open = False
+
+    def commit(self, now):
+        """Back up the index in place, then put the new one in its place with one rename.
+        Returns the backup ({name, generation}), or None when there was no index."""
+        self.close()  # the only connection: closing it folds its WAL into the file
+        if _sidecar(self._path, "-wal").exists():
+            raise QualityGateError("the new knowledge index kept a WAL; nothing was replaced.")
+        index = _file(self._folder, INDEX)
+        saved = None
+        if self.current is not None:
+            _settle(index)
+            saved = _backup(self._folder, index, now, self.current)
+        os.replace(self._path, index)
+        self.committed = True
+        _fsync_directory(self._folder)
+        return saved
+
+
+def _generation_in_place(index):
+    connection = _open_quiet(index)
+    try:
+        return _meta(connection)["generation"]
+    finally:
+        connection.close()
+
+
+def _open_stage(path, source):
+    """A connection to the new file `path`: a copy of `source`, or an empty index without one,
+    in WAL mode with the schema checked. A source that is no index of this schema: exit 2."""
+    try:
+        if source is None:
+            os.close(_create_private(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL))
+        else:
+            _copy(source, path)
+        connection = _connect(path)
+        try:
+            connection.execute("PRAGMA journal_mode = WAL")
+            if not _has_schema(connection):
+                _create_schema(connection)
+            _meta(connection)
+        except BaseException:
+            connection.close()
+            raise
+    except sqlite3.DatabaseError as error:
+        raise InputError(
+            f"{source.name if source else path.name} is no knowledge index: {error}."
+        ) from None
+    return connection
+
+
+@contextmanager
+def staged(root, start=None):
+    """The only way to replace the whole index. Under the writer lock (exit 1 at once if
+    another writer runs), a copy of the index in place, of the backup named `start`, or an
+    empty index when there is neither, in a temporary file beside it. Change it through
+    `.writer`, read it through `.read()`; `.commit(now)` puts it in place. Without a commit
+    (a failed check, an exception) the temporary file is removed and the index is untouched."""
+    require_fts5()
+    source = None if start is None else backup_path(root, start)
+    folder = directory(root, create=True)
+    lock = _take_lock(folder)
+    try:
+        index = _file(folder, INDEX)
+        current = _generation_in_place(index) if index.is_file() else None
+        if source is None and current is not None:
+            source = index
+        path = paths.child(folder, f"{STAGED}{secrets.token_hex(8)}.sqlite3")
+        stage = None
+        try:
+            stage = Stage(folder, path, _open_stage(path, source), current)
+            yield stage
+        finally:
+            if stage is not None:
+                stage.close()
+            if stage is None or not stage.committed:
+                _remove(path)
+    finally:
+        os.close(lock)
+
+
+@contextmanager
+def peek(root):
+    """A Reader over the index in place that writes nothing to disk, for a dry run; None when
+    there is no index. It holds the writer lock (exit 1 at once if a writer runs), so the file
+    does not change while it is read."""
+    folder = directory(root)
+    index = _file(folder, INDEX)
+    if not index.is_file():
+        yield None
+        return
+    lock = _take_lock(folder)
+    try:
+        connection = _open_quiet(index)
+        try:
+            connection.execute("BEGIN")
+            yield Reader(connection, _meta(connection))
+        finally:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            connection.close()
+    finally:
+        os.close(lock)
+
+
+def plan_on(current, batch):
+    """A dry run against the Reader `current`, or an empty index when it is None."""
+    require_fts5()
+    return _empty_plan(batch) if current is None else current.plan(batch)

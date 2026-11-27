@@ -13,6 +13,8 @@ Items from different origins with the same content hash are listed in `duplicate
 indexed; nothing is merged automatically.
 """
 
+from dataclasses import dataclass
+
 from .. import records
 from ..errors import InputError
 from . import config, model, store
@@ -101,22 +103,32 @@ def _tombstones(changes, accepted):
     return stones
 
 
-def update(root, adapter, *, dry_run=False, now=None):
-    """Bring the index in line with `adapter`'s source. With `dry_run`, only report."""
-    store.require_fts5()
-    settings = config.load(root)
-    if settings is None:
+@dataclass(frozen=True)
+class Prepared:
+    """One source's answer, checked and turned into the batch a writer applies."""
+
+    changes: object  # adapters.Changes
+    accepted: list
+    rejected: list
+    batch: store.Batch
+
+
+def settings(root):
+    """The knowledge config an update needs, or exit 2."""
+    found = config.load(root)
+    if found is None:
         raise InputError(
             "knowledge update needs knowledge/config.json under the state root: the principals "
             "in it decide which readers a record may name."
         )
-    now = now or records.iso()
-    previous = None
-    if store.exists(root):
-        with store.reader(root) as reader:
-            previous = reader.cursor(adapter.source)
+    return found
+
+
+def prepare(adapter, found, previous, now):
+    """Ask `adapter` for its changes since the cursor `previous` and check every item."""
     changes = adapter.changes(previous)
-    accepted, rejected = check(changes.items, config.known_readers(settings), now)
+    accepted, rejected = check(changes.items, config.known_readers(found), now)
+    left_out = {entry["id"] for entry in changes.skipped or ()}
     batch = store.Batch(
         source=adapter.source,
         adapter=adapter.name,
@@ -124,16 +136,17 @@ def update(root, adapter, *, dry_run=False, now=None):
         complete=changes.complete,
         records=accepted,
         tombstones=_tombstones(changes, accepted),
-        rejected=sorted({entry["id"] for entry in rejected if entry["id"] is not None}),
-        config_hash=config.config_hash(settings),
+        rejected=sorted({entry["id"] for entry in rejected if entry["id"] is not None} | left_out),
+        config_hash=config.config_hash(found),
     )
-    if dry_run:
-        summary = store.plan(root, batch)
-    else:
-        with store.writer(root) as writer:
-            summary = writer.apply(batch, now)
+    return Prepared(changes, accepted, rejected, batch)
+
+
+def report(prepared, summary, dry_run):
+    """The update's answer, from what was prepared and what the store did (or would do)."""
+    batch, accepted, rejected = prepared.batch, prepared.accepted, prepared.rejected
     found = duplicates(accepted)
-    return {
+    answer = {
         "source": batch.source,
         "dry_run": dry_run,
         "complete": batch.complete,
@@ -142,7 +155,7 @@ def update(root, adapter, *, dry_run=False, now=None):
         "advanced": summary["advanced"],
         "config_changed": summary["config_changed"],
         "counts": {
-            "items": len(changes.items),
+            "items": len(prepared.changes.items),
             "indexed": len(accepted),
             "inserted": len(summary["inserted"]),
             "updated": len(summary["updated"]),
@@ -155,3 +168,24 @@ def update(root, adapter, *, dry_run=False, now=None):
         "rejected": rejected,
         "duplicates": found,
     }
+    if prepared.changes.skipped is not None:
+        answer["skipped"] = prepared.changes.skipped
+    return answer
+
+
+def update(root, adapter, *, dry_run=False, now=None):
+    """Bring the index in line with `adapter`'s source. With `dry_run`, only report."""
+    store.require_fts5()
+    found = settings(root)
+    now = now or records.iso()
+    previous = None
+    if store.exists(root):
+        with store.reader(root) as reader:
+            previous = reader.cursor(adapter.source)
+    prepared = prepare(adapter, found, previous, now)
+    if dry_run:
+        summary = store.plan(root, prepared.batch)
+    else:
+        with store.writer(root) as writer:
+            summary = writer.apply(prepared.batch, now)
+    return report(prepared, summary, dry_run)

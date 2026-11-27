@@ -8,12 +8,14 @@ reads, which keys its cursor in the index), and `changes(cursor)`, which returns
     cursor      what to hand back next time (the index keeps it per source)
     complete    True when `items` is all the source holds. Only then does a record missing
                 from it become a tombstone; a partial answer never deletes.
+    skipped     entries of the source that yield no item and why (None when the adapter has
+                no such list). Their records leave the index as rejected.
 """
 
 from dataclasses import dataclass
 
 from ...errors import InputError
-from . import file
+from . import file, review_registry
 
 
 @dataclass(frozen=True)
@@ -22,9 +24,10 @@ class Changes:
     tombstones: list
     cursor: str | None
     complete: bool
+    skipped: list | None = None
 
 
-ADAPTERS = {"file": file.FileAdapter}
+ADAPTERS = {"file": file.FileAdapter, "review-registry": review_registry.ReviewRegistryAdapter}
 
 
 def build(name, options):
