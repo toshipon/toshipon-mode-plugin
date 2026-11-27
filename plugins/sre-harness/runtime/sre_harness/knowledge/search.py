@@ -28,9 +28,10 @@ Rules this module decides (the design leaves them open):
                   partial update only vouches for the records it wrote, so `indexed_at`
                   counts there); stale: longer ago; unknown: no successful update is on
                   record, or the clock is behind it. Nothing is read from the source here.
-    stale_index   the index was built with another knowledge/config.json than the one in
-                  place now, so who may read what (and which readers were rejected) may have
-                  changed under it. No record is returned until `knowledge update` runs.
+    stale_index   a source was last taken in with another knowledge/config.json than the one
+                  in place now, so who may read what (and which readers were rejected) may have
+                  changed under it. No record is returned until every source named in
+                  `stale_sources` is taken in again (`knowledge update`).
     tokens        a returned record costs terms.estimate_tokens of its canonical JSON, exactly
                   as it appears in `records` or `proposed` (see `tokens`). `retrieval` is not
                   counted.
@@ -468,9 +469,10 @@ def run(root, name, request, now):
             "principal": principal.name,
             "retrieval": retrieval(request),
         }
-        if meta["config_hash"] != config.config_hash(settings):
+        stale = reader.stale_sources(config.config_hash(settings))
+        if stale:
             empty = {"count": 0, "tokens": 0, "complete": False, "ids": []}
-            return {**head, **stopped("stale_index", request, empty)}
+            return {**head, **stopped("stale_index", request, empty), "stale_sources": stale}
         words = search_terms(request)
         body = select(
             reader.records(principal),

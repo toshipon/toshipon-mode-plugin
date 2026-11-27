@@ -334,10 +334,12 @@ def _revision(root, task, evidence, head_sha):
         raise BoundaryError("no knowledge/config.json, so no principal can be resolved.")
     principal = config.principal(settings, task["principal"])
     with store.reader(root) as reader:
-        if reader.meta()["config_hash"] != config.config_hash(settings):
+        stale = reader.stale_sources(config.config_hash(settings))
+        if stale:
             raise QualityGateError(
-                "the knowledge index was built with another knowledge/config.json; run "
-                "`sre-harness knowledge update` first. Nothing was put."
+                "stale_index: these sources were taken in with another knowledge/config.json: "
+                f"{', '.join(stale)}; run `sre-harness knowledge update` for each of them first. "
+                "Nothing was put."
             )
         found = {row["id"]: row["content_hash"] for row in reader.records(principal, evidence)}
         generation = reader.generation

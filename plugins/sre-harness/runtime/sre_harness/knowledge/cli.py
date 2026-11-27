@@ -15,6 +15,7 @@ from . import (
     adapters,
     budget,
     check,
+    config,
     context,
     decisions,
     export,
@@ -53,6 +54,8 @@ def _status(args, env, out):
         "records": {},
     }
     if store.exists(root):
+        settings = config.load(root)
+        current = None if settings is None else config.config_hash(settings)
         with store.reader(root) as reader:
             meta = reader.meta()
             value.update(
@@ -60,11 +63,19 @@ def _status(args, env, out):
                 generation=meta["generation"],
                 schema_version=meta["schema_version"],
                 updated_at=meta["updated_at"],
-                sources=reader.sources(),
+                sources=[_followed(row, current) for row in reader.sources()],
                 records=reader.status_counts(),
             )
     print(json.dumps(value, indent=2, ensure_ascii=False), file=out)
     return EXIT_OK
+
+
+def _followed(row, current):
+    """A source as status shows it: whether it was last taken in under the config in place
+    (None without a config), not the config's hash."""
+    shown = {name: value for name, value in row.items() if name != "config_hash"}
+    shown["config_current"] = None if current is None else row["config_hash"] == current
+    return shown
 
 
 def _update(args, env, out):

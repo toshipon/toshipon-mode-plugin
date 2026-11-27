@@ -373,7 +373,7 @@ bind mount の試験は、ラッパーが bind mount の state を拒否する�
 | `iac validate` | plan、証跡ディレクトリ、delivery の記録 | `transition-check.json`、`risk.json` | なし | 契約違反は 1。入力が読めないなら run を作らず 2 | ローカルの読み取り。opa は同梱 policy だけ |
 | `runs list` | 保存先 | 標準出力だけ | なし | 保存先が git の作業ツリーの中なら 3 | ローカル |
 | `knowledge update` | `--source file --input <JSON>`、`--source review-registry`（`<ルート>/registry/` を読むだけ）か `--source spec-run --run <run_id> --project <project>`（run の `decisions.json`、`requirements.json`、`trace.json`、`documents.jsonl` を読むだけ）、`knowledge/config.json` | `<ルート>/knowledge/index.sqlite3`（run は作りません。`--dry-run` は索引を書きません） | なし | 設定が無い、置換の循環、FTS5 が無い、`review-registry` と `spec-run` に `--input` を付けた、`spec-run` 以外に `--run` か `--project` を付けた、`spec-run` の project が設定に無い、run の台帳が schema か不変条件に反するは 2。別の writer が動いていれば何も書かずに 1 | ローカル。registry と run は読むだけ |
-| `knowledge status` | 索引 | 標準出力だけ（generation、Python と SQLite の版、FTS5 と拡張の読み込みの可否、ソースの cursor、status 別の件数） | なし | 索引の schema version が違えば 2 | ローカル |
+| `knowledge status` | 索引 | 標準出力だけ（generation、Python と SQLite の版、FTS5 と拡張の読み込みの可否、ソースの cursor と今の `config.json` に追随しているか（`config_current`）、status 別の件数） | なし | 索引の schema version が違えば 2 | ローカル |
 | `knowledge search` | 索引、`knowledge/config.json`、`--principal`（必須）と scope・facet・query・予算 | 標準出力（`knowledge-search-result` の JSON）。`--task` を付けたときだけ `<ルート>/knowledge/tasks/<hash>.jsonl` に追記します | なし | 必須が予算に入らない（`mandatory_overflow`）、索引が今の設定に追随していない（`stale_index`）、タスク累計を超える（`task_budget_exhausted`）は 1。principal が不明か設定が無いと 3。索引が無い、引数の誤りは 2 | ローカル（読み取りだけ） |
 | `knowledge fetch` | 索引、`knowledge/config.json`、`--principal` と `--id`（必須）、レコードの出典（registry の artifact、run の `documents.jsonl`、bare リポジトリ） | 標準出力（`knowledge-fetch-result` の JSON）。`--task` を付けたときだけタスク累計に追記します | なし | 取得できない出典がある（`incomplete`）、取り下げ済み（`withdrawn`）、1 行も入らない（`max_tokens_too_small`）、`stale_index`、`task_budget_exhausted` は 1。principal が不明か設定が無いと 3。ID の形の誤り、`--offset` が末尾より後ろ、索引が無いは 2 | ローカル（読み取りだけ。git は bare リポジトリの object を読むだけで fetch しません） |
 | `knowledge context` | `--task-file`（schema `task-context`）、索引、`knowledge/config.json` | 標準出力（`knowledge-search-result` の JSON）。task file の `task_id` のタスク累計に追記します | なし | search と同じ（`mandatory_overflow`、`stale_index`、`task_budget_exhausted` は 1、principal が不明か設定が無いと 3）。task file が schema に通らない、JSON でない、256 KiB を超える、無いは 2 | ローカル（task file は読むだけ） |
@@ -432,7 +432,7 @@ run にはレビュー本文、diff、文書の section が入ります。消す
 `knowledge update` は、ソース（`--source file` が読む合成データの JSON、`--source review-registry` が読む承認の記録、`--source spec-run` が読む spec の run の台帳）を検査して `<ルート>/knowledge/index.sqlite3` に取り込みます。LLM もネットワークも使いません。
 
 - SQLite は作り直せる索引で、正本ではありません。正本はソースと `knowledge/config.json` です。`index.sqlite3` を消しても、`knowledge update` で作り直せます。
-- 書き込むのは一度に 1 つの writer だけです。1 回の取り込みは 1 つのトランザクションで、何か変わったときだけ generation が 1 進みます。同じ入力をもう一度取り込んでも generation は進みません。`config.json` を変えると、次の取り込みで generation が進みます。
+- 書き込むのは一度に 1 つの writer だけです。1 回の取り込みは 1 つのトランザクションで、何か変わったときだけ generation が 1 進みます。同じ入力をもう一度取り込んでも generation は進みません。索引は source ごとに、その source を最後に取り込んだときの `config.json` の hash を持ちます。`config.json` を変えると、その source の次の取り込みで generation が進みます。
 - `complete: false`（部分的な取り込み）では、入力に無いレコードを消しません。`complete: true` のときだけ、消えたものを tombstone にします。
 - `access` の無いレコードと、どの principal も持たない reader を名指しするレコードは、索引に入れずに `rejected` に理由を付けて出します。
 - WAL を使うので、ローカルディスクに置いてください。ネットワークファイルシステムでは壊れることがあります。
@@ -531,7 +531,7 @@ $H knowledge search --principal workspace-a --project project-beta --component a
 止まる条件は次の 4 つです。どれも部分的な結果を `ok` として返しません。
 
 - 必須のレコードの合計が `--max-tokens` を超えた（`mandatory_overflow`、exit 1）。必須を黙って省かないので、続けるには上限を上げて呼び直します。
-- 索引を作ったときの `config.json` と今の `config.json` が違う（`stale_index`、exit 1）。読める範囲や、取り込みで外した reader が変わっているかもしれないので、何も返しません。`knowledge update` を実行し直してください。
+- どれか 1 つでも source が、今の `config.json` と違う `config.json` で最後に取り込まれている（`stale_index`、exit 1）。読める範囲や、取り込みで外した reader が変わっているかもしれないので、何も返しません。取り込み直しが要る source の名前を `stale_sources` に出します。`config.json` を変えたら、**すべての source** を `knowledge update` で取り込み直すまで、search・fetch・context・check・export・decision put は止まります（1 つの source を取り込み直しても、ほかの source の分は解けません）。もう使わない file source は、`complete: true` で `items` が空のファイルを取り込むと、レコードが消えて今の config に追随します。`knowledge status` の `sources[].config_current` で、どの source が追随しているかを確かめられます。
 - `--task` のタスク累計を、今回返す分で超える（`task_budget_exhausted`、exit 1）。何も返さず、累計にも足しません。
 - principal が不明、設定が無い（exit 3）。索引が無い、引数の誤り（exit 2）。
 

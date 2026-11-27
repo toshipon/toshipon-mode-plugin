@@ -40,7 +40,7 @@ from . import model, terms
 DIRECTORY = "knowledge"
 INDEX = "index.sqlite3"
 LOCK = "writer.lock"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SUPERSEDES = "supersedes"
 CONFLICTS_WITH = "conflicts_with"
 TIMEOUT_SECONDS = 5
@@ -91,7 +91,7 @@ _SCHEMA = [
     )""",
     """CREATE TABLE sources (
         name TEXT PRIMARY KEY, adapter TEXT NOT NULL, cursor TEXT, state TEXT NOT NULL,
-        last_success_at TEXT NOT NULL
+        last_success_at TEXT NOT NULL, config_hash TEXT
     )""",
 ]
 
@@ -225,7 +225,6 @@ def _meta(connection):
     return {
         "schema_version": version,
         "generation": int(rows["generation"]),
-        "config_hash": rows.get("config_hash"),
         "updated_at": rows.get("updated_at"),
     }
 
@@ -291,6 +290,9 @@ def _plan(connection, batch):
     """What `batch` would change, read inside the caller's transaction. Refuses (exit 2) an
     update after which `supersedes` would have a cycle."""
     meta = _meta(connection)
+    followed = connection.execute(
+        "SELECT config_hash FROM sources WHERE name = ?", (batch.source,)
+    ).fetchone()
     current = {
         row[0]: {"source": row[1], "hash": row[2], "origin": {"kind": row[3], "key": row[4]}}
         for row in connection.execute(
@@ -344,7 +346,7 @@ def _plan(connection, batch):
         )
     return _Plan(
         before=meta["generation"],
-        config_changed=meta["config_hash"] != batch.config_hash,
+        config_changed=(followed[0] if followed else None) != batch.config_hash,
         upserts=upserts,
         inserted=inserted,
         updated=updated,
@@ -428,7 +430,6 @@ def _write(connection, batch, plan, now):
         "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
         [
             ("generation", str(generation)),
-            ("config_hash", batch.config_hash or ""),
             ("updated_at", now),
         ],
     )
@@ -450,14 +451,16 @@ class Writer:
             if plan.advanced:
                 _write(connection, batch, plan, now)
             connection.execute(
-                "INSERT OR REPLACE INTO sources (name, adapter, cursor, state, last_success_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO sources "
+                "(name, adapter, cursor, state, last_success_at, config_hash) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     batch.source,
                     batch.adapter,
                     batch.cursor,
                     "complete" if batch.complete else "partial",
                     now,
+                    batch.config_hash,
                 ),
             )
             connection.execute("COMMIT")
@@ -580,10 +583,20 @@ class Reader:
 
     def sources(self):
         rows = self._connection.execute(
-            "SELECT name, adapter, cursor, state, last_success_at FROM sources ORDER BY name"
+            "SELECT name, adapter, cursor, state, last_success_at, config_hash FROM sources "
+            "ORDER BY name"
         )
-        names = ("name", "adapter", "cursor", "state", "last_success_at")
+        names = ("name", "adapter", "cursor", "state", "last_success_at", "config_hash")
         return [dict(zip(names, row)) for row in rows]
+
+    def stale_sources(self, config_hash):
+        """Names of the sources last taken in under another config than `config_hash`. Each
+        source keeps the config it was last taken in with: while one of them is behind, who
+        may read its records (and which readers it had rejected) may have changed under it."""
+        rows = self._connection.execute(
+            "SELECT name FROM sources WHERE config_hash IS NOT ? ORDER BY name", (config_hash,)
+        )
+        return [row[0] for row in rows]
 
     def cursor(self, source):
         row = self._connection.execute(

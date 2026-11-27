@@ -2,8 +2,8 @@
 
 No model, no network, no cache. The steps:
 
-    1. resolve the principal (unknown or no config: exit 3) and stop with stale_index when the
-       index was built with another knowledge/config.json
+    1. resolve the principal (unknown or no config: exit 3) and stop with stale_index when a
+       source was last taken in with another knowledge/config.json
     2. read the record through the store's access filter. A record the principal cannot read,
        one that never existed and one that left the index (a tombstone) all get the same
        answer, so the answer says nothing about which it was
@@ -216,8 +216,9 @@ def run(root, name, request, read=sources.read):
             "principal": principal.name,
             "id": request.record_id,
         }
-        if meta["config_hash"] != config.config_hash(settings):
-            return answer(head, request, "stale_index")
+        stale = reader.stale_sources(config.config_hash(settings))
+        if stale:
+            return {**answer(head, request, "stale_index"), "stale_sources": stale}
         found = reader.records(principal, ids=[request.record_id])
     if not found:
         return answer(head, request, "incomplete", unfetched=[{"reason": "access_denied"}])

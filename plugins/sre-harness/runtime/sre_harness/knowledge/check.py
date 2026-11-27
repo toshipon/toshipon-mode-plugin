@@ -5,8 +5,8 @@ that apply to a task are applied to a patch with the interpreter `review evaluat
     1. the task (`task-context`) and the patch are external input: the patch is capped at
        MAX_PATCH_BYTES, must be UTF-8 without control characters (a tab and a CR before the
        line end aside), and every path it names is relative and never climbs (exit 3)
-    2. resolve the principal (unknown or no config: exit 3); an index built with another
-       config stops with stale_index
+    2. resolve the principal (unknown or no config: exit 3); a source last taken in with
+       another config stops with stale_index
     3. the records that apply are `search.narrow`'s: the same scope, facets, replacement and
        access as `knowledge search`, with the task's changed paths and the patch's paths
     4. a policy_check record from the review registry is applied with the check parsed from
@@ -315,8 +315,9 @@ def run(root, task, patch, env=None):
                 "sha256": patch.sha256,
             },
         }
-        if meta["config_hash"] != config.config_hash(settings):
-            return {**head, **_empty("stale_index")}
+        stale = reader.stale_sources(config.config_hash(settings))
+        if stale:
+            return {**head, **_empty("stale_index"), "stale_sources": stale}
         rows = reader.records(principal)
     live = search.narrow(rows, context.request(task, paths=patch.paths)).live
     body = _empty("ok")

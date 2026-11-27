@@ -188,6 +188,7 @@ def test_the_source_cursor_moves_even_when_nothing_else_does(root):
         "cursor": "k2",
         "state": "complete",
         "last_success_at": LATER,
+        "config_hash": "c1",
     }
 
 
