@@ -334,3 +334,32 @@ def write_spec_run(env, drafts, requirements=(), links=None, *, run_id=SPEC_RUN_
 def update_spec(env, run_id=SPEC_RUN_ID, project="project-alpha", *extra):
     argv = ["knowledge", "update", "--source", "spec-run", "--run", run_id, "--project", project]
     return run_cli([*argv, *extra], env)
+
+
+# A synthetic review registry with knowledge blocks (`review approve --knowledge-*`) -------------
+
+
+def project_block(project, enforcement, readers, classification="internal"):
+    """A `knowledge` block placing an approved entry at `project`'s level."""
+    return {
+        "scope": {"level": "project", "project_id": project, "component_id": None, "task_id": None},
+        "access": {"classification": classification, "readers": list(readers)},
+        "enforcement": enforcement,
+        "applies_when": [],
+        "exceptions": [],
+    }
+
+
+def registry_entry(root, entry_id, repo, history, knowledge=None):
+    """Write one registry entry: `history` is [(status, artifact text)], oldest first; the
+    latest version carries `knowledge` when it is approved. Returns the latest version."""
+    from examples.synthetic import review_registry as rr
+    from sre_harness.review import registry
+
+    written = None
+    for number, (status, artifact) in enumerate(history, start=1):
+        written = rr.version(entry_id, number, status, repo, artifact, number - 1 or None)
+        if knowledge is not None and number == len(history):
+            written["knowledge"] = knowledge
+        registry.write_version(root, written, artifact)
+    return written
