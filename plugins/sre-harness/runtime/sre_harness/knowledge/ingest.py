@@ -128,7 +128,7 @@ def prepare(adapter, found, previous, now):
     """Ask `adapter` for its changes since the cursor `previous` and check every item."""
     changes = adapter.changes(previous)
     accepted, rejected = check(changes.items, config.known_readers(found), now)
-    left_out = {entry["id"] for entry in changes.skipped or ()}
+    left_out = {entry["id"] for entry in changes.skipped or () if entry["id"] is not None}
     batch = store.Batch(
         source=adapter.source,
         adapter=adapter.name,

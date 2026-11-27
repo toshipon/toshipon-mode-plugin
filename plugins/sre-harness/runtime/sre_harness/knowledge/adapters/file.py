@@ -23,6 +23,9 @@ class FileAdapter:
 
     @classmethod
     def from_options(cls, options):
+        from . import refuse_run_options
+
+        refuse_run_options(cls.name, options)
         if not options.get("input"):
             raise InputError("--source file needs --input <path to a JSON file>.")
         return cls(options["input"])

@@ -395,7 +395,11 @@ def _write(connection, batch, plan, now):
         _index_terms(connection, record)
         connection.executemany(
             "INSERT INTO edges (source_id, target_id, relation) VALUES (?, ?, ?)",
-            [(record["id"], target, SUPERSEDES) for target in record["supersedes"]],
+            [(record["id"], target, SUPERSEDES) for target in record["supersedes"]]
+            + [
+                (record["id"], row["target"], row["relation"])
+                for row in record.get("relations", [])
+            ],
         )
         connection.execute("DELETE FROM tombstones WHERE id = ?", (record["id"],))
     connection.executemany(

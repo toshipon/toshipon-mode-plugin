@@ -2,6 +2,8 @@
 
 id            KN- + the first 12 hex of sha256(canonical([origin.kind, origin.key]))
 content_hash  fingerprint of the normative fields (NORMATIVE)
+relations     trace relations to other records ({relation, target id}), sorted; only present
+              when there are some
 record_hash   fingerprint of every field but indexed_at; decides whether a write is needed
 """
 
@@ -67,6 +69,14 @@ def normalize(item, indexed_at):
         "indexed_at": indexed_at,
         "approval": item.get("approval"),
     }
+    relations = sorted(
+        {
+            (row["relation"], record_id(row["target"]["kind"], row["target"]["key"]))
+            for row in item.get("relations", [])
+        }
+    )
+    if relations:  # absent means none, so a record of a source without relations is unchanged
+        record["relations"] = [{"relation": name, "target": target} for name, target in relations]
     record["content_hash"] = content_hash(record)
     return record
 

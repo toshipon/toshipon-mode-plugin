@@ -33,6 +33,8 @@ from pathlib import PurePosixPath
 
 from .. import paths, records
 from ..errors import BoundaryError, InputError
+from ..knowledge import block as knowledge_block
+from ..knowledge import config as knowledge_config
 from . import candidates, metrics, registry
 from . import split as split_stage
 from .markdown import code_block, escape
@@ -143,11 +145,13 @@ def recorded(content):
     return json.dumps(content, ensure_ascii=False, indent=2, sort_keys=True)
 
 
-def screen(record, text, content, evaluation, entry):
+def screen(record, text, content, evaluation, entry, knowledge=None):
     """The approval screen as Markdown. Every external string is escaped or fenced.
 
     `content` is what the registry will record (parsed from body.md, which the hash covers).
-    The rest comes from candidate.json: context for the decision, not recorded.
+    `knowledge`, when given, is the knowledge block it will record as well; the typed hash
+    then covers both. The rest comes from candidate.json: context for the decision, not
+    recorded.
     """
     digest = candidates.content_sha256(text)
     lines = [
@@ -159,6 +163,10 @@ def screen(record, text, content, evaluation, entry):
         "",
         code_block(recorded(content), "json"),
         "",
+    ]
+    if knowledge is not None:
+        lines += knowledge_block.describe(knowledge, digest)
+    lines += [
         "## Context from candidate.json (not covered by the hash, not recorded)",
         "",
         f"- target: {record['target']}",
@@ -249,9 +257,25 @@ def _generation(split_path):
     return {"generation": {"prs": split["generation"]["prs"], "t1": split["t1"]}}
 
 
-def _version(root, run_dir, candidate_id, content, status, evaluation, decision, text, path=None):
+def _repo(run_dir):
+    return records.read_json(paths.child(run_dir, "collect.json"))["repo"]
+
+
+def _version(
+    root,
+    run_dir,
+    candidate_id,
+    content,
+    status,
+    evaluation,
+    decision,
+    text,
+    path=None,
+    knowledge=None,
+):
     """Write one registry version. Every recorded value comes from body.md (`content`, the
-    hash), the run (repository, lineage) or the person (decision); none from candidate.json."""
+    hash), the run (repository, lineage) or the person (decision, the knowledge block); none
+    from candidate.json. Without a knowledge block the version has no such key."""
     entry_id, versions = _place(root, run_dir, candidate_id)
     number = len(versions) + 1
     block = {
@@ -259,7 +283,6 @@ def _version(root, run_dir, candidate_id, content, status, evaluation, decision,
         **content,
         "artifact_file": registry.version_name(number, "md"),
     }
-    collect = records.read_json(paths.child(run_dir, "collect.json"))
     split_path = paths.child(run_dir, split_stage.FILE)
     version = {
         "schema_version": records.SCHEMA_VERSION,
@@ -267,7 +290,7 @@ def _version(root, run_dir, candidate_id, content, status, evaluation, decision,
         "version": number,
         "created_at": decision["decided_at"],
         "status": status,
-        "repo": collect["repo"],
+        "repo": _repo(run_dir),
         "lineage": {"run_id": run_dir.name, "candidate_id": candidate_id},
         **_generation(split_path),
         "candidate": block,
@@ -276,6 +299,8 @@ def _version(root, run_dir, candidate_id, content, status, evaluation, decision,
         "previous_version": number - 1 if number > 1 else None,
         "activation": None,
     }
+    if knowledge is not None:
+        version[knowledge_block.DEFINITION] = knowledge
     diff = None
     if path is not None:
         diff = activation_diff(path, text)
@@ -288,19 +313,29 @@ def _version(root, run_dir, candidate_id, content, status, evaluation, decision,
     return version, folder, versions
 
 
-def approve(run_dir, root, candidate_id, reviewer, reason, ask, show, activate_as=None):
+def approve(
+    run_dir, root, candidate_id, reviewer, reason, ask, show, activate_as=None, knowledge=None
+):
     """Show the screen, ask for the hash prefix, then record the approval. `ask` and `show` are
-    the terminal's input and output; the command line passes them only when both are a TTY."""
+    the terminal's input and output; the command line passes them only when both are a TTY.
+    `knowledge` (knowledge.block.Options) places the rule in the knowledge index; with no
+    option given, the version is written exactly as without it."""
     reviewer, reason = _person(reviewer, reason)
     path = None if activate_as is None else target_path(activate_as)
     record, text = candidates.load(run_dir, candidate_id)
     evaluation, entry, evaluation_sha = evaluated(run_dir, record, text)
     content = candidates.content(record, text)
     digest = candidates.content_sha256(text)
-    show(screen(record, text, content, evaluation, entry))
-    typed = ask(f"Type the first {PREFIX_LENGTH} characters of content_sha256 to approve: ")
-    if not isinstance(typed, str) or typed.strip() != digest[:PREFIX_LENGTH]:
-        raise BoundaryError("the typed hash does not match the artifact; nothing was recorded.")
+    placed = None
+    if knowledge is not None and knowledge.given():
+        placed = knowledge_block.build(knowledge_config.load(root), _repo(run_dir), knowledge)
+    show(screen(record, text, content, evaluation, entry, placed))
+    name = "content_sha256" if placed is None else "confirmation_sha256"
+    typed = ask(f"Type the first {PREFIX_LENGTH} characters of {name} to approve: ")
+    expected = knowledge_block.confirmation(digest, placed)
+    if not isinstance(typed, str) or typed.strip() != expected[:PREFIX_LENGTH]:
+        what = "the artifact" if placed is None else "the artifact and the knowledge block"
+        raise BoundaryError(f"the typed hash does not match {what}; nothing was recorded.")
     _, versions = _place(root, run_dir, candidate_id)
     if versions and versions[-1]["status"] == "approved":
         if versions[-1]["candidate"]["content_sha256"] == digest:
@@ -315,7 +350,16 @@ def approve(run_dir, root, candidate_id, reviewer, reason, ask, show, activate_a
     }
     decision = _decision(reviewer, reason, now, "terminal_hash_prefix")
     version, folder, _ = _version(
-        root, run_dir, candidate_id, content, "approved", reference, decision, text, path
+        root,
+        run_dir,
+        candidate_id,
+        content,
+        "approved",
+        reference,
+        decision,
+        text,
+        path,
+        placed,
     )
     record["approval"] = {
         "reviewer": reviewer,
@@ -371,6 +415,8 @@ def retire(root, entry_id, reviewer, reason):
         "previous_version": latest["version"],
         "activation": None,
     }
+    # The knowledge block stays on the approved version; the entry keeps that placement.
+    version.pop(knowledge_block.DEFINITION, None)
     registry.write_version(root, version, text)
     lineage = latest["lineage"]
     run = paths.child(root, "runs", lineage["run_id"])

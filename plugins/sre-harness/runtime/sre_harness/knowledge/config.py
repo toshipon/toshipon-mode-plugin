@@ -40,6 +40,18 @@ def known_readers(config):
     )
 
 
+def project_of(config, repo):
+    """(project id, project) holding `repo`, or (None, the reason it has none)."""
+    found = [
+        (name, project) for name, project in config["projects"].items() if repo in project["repos"]
+    ]
+    if not found:
+        return None, "repo_not_in_config"
+    if len(found) > 1:
+        return None, "repo_in_several_projects"
+    return found[0]
+
+
 def principal(config, name):
     entry = config["principals"].get(name)
     if entry is None:

@@ -22,6 +22,8 @@ from collections import deque
 from .structure import id_type
 
 NODE_TYPES = ("decision", "requirement", "design", "iac", "test")
+# Every relation a link may have (trace-link `relation`); the knowledge index keeps the same names.
+RELATION_NAMES = ("refines", "implements", "verifies", "depends_on", "conflicts_with")
 RELATIONS = {
     ("requirement", "decision"): "refines",
     ("requirement", "requirement"): "depends_on",

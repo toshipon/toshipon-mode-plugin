@@ -9,13 +9,14 @@ reads, which keys its cursor in the index), and `changes(cursor)`, which returns
     complete    True when `items` is all the source holds. Only then does a record missing
                 from it become a tombstone; a partial answer never deletes.
     skipped     entries of the source that yield no item and why (None when the adapter has
-                no such list). Their records leave the index as rejected.
+                no such list). Their records (`id`, None when there is no record id) leave the
+                index as rejected.
 """
 
 from dataclasses import dataclass
 
 from ...errors import InputError
-from . import file, review_registry
+from . import file, review_registry, spec_run
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,17 @@ class Changes:
     skipped: list | None = None
 
 
-ADAPTERS = {"file": file.FileAdapter, "review-registry": review_registry.ReviewRegistryAdapter}
+ADAPTERS = {
+    "file": file.FileAdapter,
+    "review-registry": review_registry.ReviewRegistryAdapter,
+    "spec-run": spec_run.SpecRunAdapter,
+}
+
+
+def refuse_run_options(name, options):
+    """--run and --project belong to the spec-run source only."""
+    if options.get("run") or options.get("project"):
+        raise InputError(f"--source {name} takes no --run or --project (spec-run only).")
 
 
 def build(name, options):

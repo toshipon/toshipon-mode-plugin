@@ -13,10 +13,11 @@ One entry is one record, at the entry's latest version:
     approval     the decision of the latest approved version (none for an entry never approved)
     updated_at   when the latest version was recorded
 
-Scope, access and enforcement come from `norms`. A version written before `review approve`
-recorded them has no `knowledge` block, and gets the defaults: the project whose `repos`
-in knowledge/config.json hold the entry's repo, at project level, that project's
-`default_access`, and `advisory`. Nothing is made mandatory here.
+Scope, access, enforcement, applies_when and exceptions come from `norms`: the `knowledge`
+block a person gave `review approve` when there is one, otherwise the defaults (the project
+whose `repos` in knowledge/config.json hold the entry's repo, at project level, that project's
+`default_access`, and `advisory`). Only such a block makes a record mandatory, and only while
+the entry's latest version is approved.
 
 An entry is listed in `skipped`, and yields no item, when it is
 
@@ -36,6 +37,7 @@ from ... import records
 from ...errors import BoundaryError, InputError
 from ...review import candidates, registry
 from .. import config, model
+from ..block import placement
 
 NAME = "review-registry"
 KINDS = {"declarative_check": "policy_check", "prose": "rule"}
@@ -44,26 +46,28 @@ UNMAPPED = "unmapped"
 INVALID = "invalid"
 
 
-def project_of(settings, repo):
-    """(project id, project) holding `repo`, or (None, the reason it has none)."""
-    found = [
-        (name, project)
-        for name, project in settings["projects"].items()
-        if repo in project["repos"]
-    ]
-    if not found:
-        return None, "repo_not_in_config"
-    if len(found) > 1:
-        return None, "repo_in_several_projects"
-    return found[0]
+def norms(versions, project_id, project):
+    """Scope, access, enforcement, applies_when and exceptions of one entry ({versions}, oldest
+    first). The one place that decides them.
 
-
-def norms(latest, project_id, project):
-    """Scope, access, enforcement, applies_when and exceptions of one entry.
-
-    The one place that decides them. A version that carries a `knowledge` block (recorded by
-    `review approve` once it asks for scope, access and enforcement) is to be read here; the
-    versions this adapter reads have none, so every entry gets the defaults below."""
+    The `knowledge` block that places the entry (`block.placement`: the latest version's when
+    it is approved, else the latest approved version's) gives all five, as the person approved
+    them. Mandatory holds only while the latest version is approved: a retired or rejected
+    entry is advisory whatever a block says. Without a block, the defaults: `project_id`'s
+    project level, its `default_access`, advisory, no applies_when or exceptions."""
+    placed = placement(versions)
+    if placed is not None:
+        approved = versions[-1]["status"] == "approved"
+        return {
+            "scope": dict(placed["scope"]),
+            "access": {
+                "classification": placed["access"]["classification"],
+                "readers": list(placed["access"]["readers"]),
+            },
+            "enforcement": placed["enforcement"] if approved else "advisory",
+            "applies_when": list(placed["applies_when"]),
+            "exceptions": list(placed["exceptions"]),
+        }
     return {
         "scope": {
             "level": "project",
@@ -163,6 +167,9 @@ class ReviewRegistryAdapter:
 
     @classmethod
     def from_options(cls, options):
+        from . import refuse_run_options
+
+        refuse_run_options(cls.name, options)
         if options.get("input"):
             raise InputError(
                 "--source review-registry reads registry/ under the state root; it takes no "
@@ -180,7 +187,7 @@ class ReviewRegistryAdapter:
         items, left_out = [], []
         for versions in found.values():
             latest = versions[-1]
-            project_id, project = project_of(settings, latest["repo"])
+            project_id, project = config.project_of(settings, latest["repo"])
             if project_id is None:
                 left_out.append(skipped(latest, UNMAPPED, project))
                 continue
@@ -188,7 +195,7 @@ class ReviewRegistryAdapter:
             if text is None:
                 left_out.append(skipped(latest, INVALID, problem))
                 continue
-            items.append(item(latest, versions, text, norms(latest, project_id, project)))
+            items.append(item(latest, versions, text, norms(versions, project_id, project)))
         versions = {entry_id: rows[-1]["version"] for entry_id, rows in found.items()}
         return Changes(
             items=items,
