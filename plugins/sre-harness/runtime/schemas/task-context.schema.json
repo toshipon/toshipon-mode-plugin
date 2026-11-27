@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sre-harness:task-context",
+  "title": "task-context",
+  "description": "What a task runner (a terminal multiplexer, CI, a person by hand: any of them) hands `knowledge context`, `knowledge check` and `knowledge decision put` as --task-file. The harness only reads the file. `task_id` and `workspace_id` are names without meaning to the harness: they are checked for length and characters only, and no ticket id is parsed out of them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "task_id",
+    "workspace_id",
+    "principal",
+    "project_id",
+    "component_id",
+    "repo",
+    "base_sha",
+    "changed_paths",
+    "resource_types"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "urn:sre-harness:common#/$defs/schema_version" },
+    "task_id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+    "workspace_id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+    "principal": {
+      "description": "Who searches: a principal of knowledge/config.json.",
+      "$ref": "urn:sre-harness:knowledge-record#/$defs/name"
+    },
+    "project_id": { "$ref": "urn:sre-harness:knowledge-record#/$defs/name" },
+    "component_id": {
+      "anyOf": [{ "$ref": "urn:sre-harness:knowledge-record#/$defs/name" }, { "type": "null" }]
+    },
+    "repo": {
+      "anyOf": [
+        { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$" },
+        { "type": "null" }
+      ]
+    },
+    "base_sha": {
+      "description": "The commit the work starts from (SHA-1 or SHA-256), when there is one.",
+      "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$" }, { "type": "null" }]
+    },
+    "changed_paths": {
+      "type": "array",
+      "maxItems": 1000,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "resource_types": { "$ref": "urn:sre-harness:knowledge-record#/$defs/labels" }
+  },
+  "$defs": {
+    "path": {
+      "description": "A path relative to the repository root: no leading '/', no '.' or '..' segment, no backslash, no control character.",
+      "type": "string",
+      "pattern": "^(?!/)(?!(?:.*/)?\\.{1,2}(?:/|$))[^\\u0000-\\u001f\\u007f\\\\]{1,400}$"
+    }
+  }
+}
