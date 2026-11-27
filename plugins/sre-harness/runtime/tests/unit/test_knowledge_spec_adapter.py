@@ -190,6 +190,29 @@ def test_an_entry_whose_section_is_missing_is_skipped(env):
     } in found.skipped
 
 
+def test_no_relation_or_supersession_points_at_an_entry_left_out(env):
+    links = [
+        spec_link(1, ("decision", "DEC-0002"), ("decision", "DEC-0001"), "depends_on"),
+        spec_link(2, ("requirement", "REQ-0001"), ("decision", "DEC-0001"), "refines"),
+        spec_link(3, ("requirement", "REQ-0001"), ("decision", "DEC-0002"), "refines"),
+    ]
+    standard(env, links=links)
+    path = paths.child(state_root(env), "runs", SPEC_RUN_ID, "documents.jsonl")
+    records.write_jsonl(path, [row for row in records.read_jsonl(path) if row["id"] != "DOC-0001"])
+    _, found = changes(env)
+    items = by_key(found.items)
+    assert "project-alpha:ADR-0001" not in items  # evidence_unresolved
+    left_out = {"kind": "decision", "key": "project-alpha:ADR-0001"}
+    assert items["project-alpha:ADR-0002"]["supersedes"] == []
+    assert "relations" not in items["project-alpha:ADR-0002"]
+    assert items["project-alpha:REQ-0001"]["relations"] == [
+        {"relation": "refines", "target": {"kind": "decision", "key": "project-alpha:ADR-0002"}}
+    ]
+    for item in found.items:
+        assert left_out not in [row["target"] for row in item.get("relations", [])]
+        assert left_out not in item.get("supersedes", [])
+
+
 @pytest.mark.parametrize("status", ["approved", "superseded", "rejected", "proposed", "unresolved"])
 def test_every_spec_item_is_advisory_whatever_the_registry_says(env, status):
     # A document that says "approved", or anything else, never makes a rule mandatory here.
