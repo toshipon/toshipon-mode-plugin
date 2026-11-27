@@ -135,7 +135,13 @@ def test_what_does_not_fit_is_counted(corpus):
     )
     assert result["budget"]["used_tokens"] <= 900
     assert not {view["id"] for view in returned} & set(result["truncated"]["ids"])
-    assert result["budget"]["task"] is None
+    # `--task` counts what was returned toward the task total (a fresh one in each test).
+    assert result["budget"]["task"] == {
+        "id": task["task_id"],
+        "limit": 6000,
+        "used_before": 0,
+        "used_after": result["budget"]["used_tokens"],
+    }
 
 
 # Leaks -----------------------------------------------------------------------------------

@@ -286,6 +286,20 @@ def test_a_symlinked_registry_file_is_not_followed(home, tmp_path):
     assert "保持期間" not in everything(result)
 
 
+def test_a_fifo_at_a_registry_path_is_refused_without_waiting(home, tmp_path):
+    folder = state_root(home) / "registry" / "RG-0001"
+    folder.mkdir(parents=True)
+    os.mkfifo(folder / "v0001.md")
+    proof = {
+        "locator": "registry:RG-0001/v0001.md",
+        "revision": "v0001",
+        "content_sha256": records.sha256(TEXT),
+        "size": 1,
+    }
+    index(home, tmp_path, [item("R1", evidence=[proof])])
+    assert [m["reason"] for m in run(home, "R1")["unfetched"]] == ["source_unavailable"]
+
+
 # Who may read the record ---------------------------------------------------------------------
 
 
@@ -392,8 +406,8 @@ def test_a_source_carrying_boundary_lines_cannot_close_its_envelope(home, tmp_pa
     (fragment,) = run(home, "R1")["fragments"]
     boundary = fragment["text"].split(" ")[1]
     assert boundary not in inner(fragment["text"])
-    closing = [line for line in fragment["text"].split("\n") if line.endswith(f"{boundary}>>>")]
-    assert len(closing) == 2  # the opening and the closing line, and nothing in between
+    marked = [line for line in fragment["text"].split("\n") if boundary in line]
+    assert marked == [fragment["text"].split("\n")[0], f"{untrusted.CLOSE} {boundary}>>>"]
     assert inner(fragment["text"]) == text
 
 
