@@ -311,3 +311,35 @@ def test_a_rollback_takes_only_a_name_the_harness_made(root, made, indexed, name
 def test_a_rollback_to_a_missing_backup_is_an_input_error(root, made, indexed):
     with pytest.raises(InputError, match="no backup"):
         migrate.rollback(root, "index-20261127T000000Z-g0001.sqlite3", now=LATER)
+
+
+def test_a_backup_that_is_no_index_is_refused_and_changes_nothing(root, made, indexed):
+    name = "index-20261127T000000Z-g0001.sqlite3"
+    paths.write_private(root / "knowledge" / "backups" / name, "not a database\n")
+    before = tree(root)
+    with pytest.raises(InputError, match="no knowledge index"):
+        migrate.rollback(root, name, now=LATER)
+    assert tree(root) == before
+
+
+def test_a_backup_of_another_schema_version_is_refused(root, made, indexed):
+    import sqlite3
+
+    migrated = migrate.run(root, now=NOW)
+    path = root / "knowledge" / "backups" / migrated["backup"]["name"]
+    connection = sqlite3.connect(path, isolation_level=None)
+    connection.execute("UPDATE meta SET value = '99' WHERE key = 'schema_version'")
+    connection.close()
+    before = tree(root)
+    with pytest.raises(InputError, match="schema version 99"):
+        migrate.rollback(root, migrated["backup"]["name"], now=LATER)
+    assert tree(root) == before
+
+
+def test_the_backup_list_holds_only_names_the_harness_makes(root, made, indexed):
+    migrated = migrate.run(root, now=NOW)
+    folder = root / "knowledge" / "backups"
+    paths.write_private(folder / "notes.txt", "x")
+    (folder / "index-20261127T000000Z-g0009.sqlite3").symlink_to(folder / "notes.txt")
+    (folder / "index-20261127T000000Z-g0008.sqlite3").mkdir()
+    assert [entry["name"] for entry in migrate.backups(root)] == [migrated["backup"]["name"]]

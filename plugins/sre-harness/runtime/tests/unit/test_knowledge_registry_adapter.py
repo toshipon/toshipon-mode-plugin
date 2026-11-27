@@ -211,3 +211,9 @@ def test_an_update_indexes_the_items_and_a_new_version_is_picked_up(root, made):
     with store.reader(root) as reader:
         (row,) = reader.records(principal, ids=[model.record_id(ORIGIN, "RG-9001")])
     assert row["status"] == "retired" and row["origin"]["version"] == 2
+
+
+def test_the_adapter_alone_needs_the_config(root, made):
+    (root / "knowledge" / "config.json").unlink()
+    with pytest.raises(InputError, match="config.json"):
+        changes(root)

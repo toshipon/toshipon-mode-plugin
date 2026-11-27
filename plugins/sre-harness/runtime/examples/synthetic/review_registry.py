@@ -7,6 +7,10 @@ bytes.
     made = write(state_root)                    # .entries .config, and what each entry becomes
     made = write(state_root, tampered=True)     # plus an approved entry whose artifact changed
 
+Run as a script to write it into the state root ($AI_HARNESS_HOME/sre-harness), with CONFIG as
+knowledge/config.json when there is none yet: `python -m examples.synthetic.review_registry`
+from `runtime/`.
+
 Entry numbers start at FIRST, far above the `registry/RG-<n>/v0001.md` texts that
 `knowledge_corpus.write_sources` writes (those have no `.json` and are no entries), so both
 can live under one state root.
@@ -24,6 +28,7 @@ can live under one state root.
                                                              refuses the repo (exit 3)
 """
 
+import json
 from dataclasses import dataclass
 
 from sre_harness import paths, records
@@ -200,3 +205,16 @@ def write(root, tampered=False):
         unmapped=[entry_id(5)],
         invalid=invalid,
     )
+
+
+def main():
+    root = paths.state_root()
+    target = paths.child(root, "knowledge", "config.json")
+    if not target.exists():
+        paths.write_private(target, records.canonical(CONFIG) + "\n")
+    made = write(root)
+    print(json.dumps({"registry": sorted(made.entries), "config": str(target)}))
+
+
+if __name__ == "__main__":
+    main()

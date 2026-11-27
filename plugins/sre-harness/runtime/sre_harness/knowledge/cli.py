@@ -1,6 +1,6 @@
 """`sre-harness knowledge <stage>`: the knowledge index (`status`, `update`, `search`,
-`fetch`). With `--task`, search and fetch also add what they return to the task total
-(`budget`), checked before anything is printed."""
+`fetch`, `migrate`, `rollback`). With `--task`, search and fetch also add what they return to
+the task total (`budget`), checked before anything is printed."""
 
 import argparse
 import json
@@ -8,7 +8,7 @@ import re
 
 from .. import paths, privacy, records
 from ..errors import EXIT_OK, InputError
-from . import adapters, budget, fetch, ingest, model, search, store, untrusted
+from . import adapters, budget, fetch, ingest, migrate, model, search, store, untrusted
 
 DECISION_ID_LENGTH = 64
 REASON_LENGTH = 200
@@ -147,6 +147,23 @@ def _fetch(args, env, out):
     return fetch.exit_code(result)
 
 
+def _migrate(args, env, out):
+    root, now = paths.state_root(env), clock()
+    result = migrate.plan(root, now) if args.dry_run else migrate.run(root, now)
+    print(json.dumps(result, indent=2, ensure_ascii=False), file=out)
+    return migrate.exit_code(result)
+
+
+def _rollback(args, env, out):
+    root = paths.state_root(env)
+    if args.list:
+        value = {"backups": migrate.backups(root)}
+    else:
+        value = migrate.rollback(root, args.to, clock())
+    print(json.dumps(value, indent=2, ensure_ascii=False), file=out)
+    return EXIT_OK
+
+
 def _count(minimum):
     def parse(text):
         try:
@@ -235,7 +252,8 @@ def _register_fetch(stages):
 def register(groups):
     knowledge = groups.add_parser(
         "knowledge",
-        help="knowledge index: approved norms by scope and access (status, update, search, fetch)",
+        help="knowledge index: approved norms by scope and access (status, update, search, fetch, "
+        "migrate, rollback)",
     )
     stages = knowledge.add_subparsers(dest="stage", required=True)
 
@@ -252,3 +270,16 @@ def register(groups):
 
     _register_search(stages)
     _register_fetch(stages)
+
+    migrating = stages.add_parser(
+        "migrate",
+        help="take the review registry in after a backup, checked against it before the swap",
+    )
+    migrating.add_argument("--dry-run", action="store_true", help="list the plan and write nothing")
+    migrating.set_defaults(handler=_migrate)
+
+    rolling = stages.add_parser("rollback", help="put a backup of the index back, or list them")
+    chosen = rolling.add_mutually_exclusive_group(required=True)
+    chosen.add_argument("--to", metavar="BACKUP", help="a name from --list")
+    chosen.add_argument("--list", action="store_true", help="the backups, oldest first")
+    rolling.set_defaults(handler=_rollback)
