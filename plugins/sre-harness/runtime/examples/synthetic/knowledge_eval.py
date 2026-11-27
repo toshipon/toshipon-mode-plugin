@@ -947,7 +947,7 @@ def paraphrase_markdown(result):
             for category in kc.PARAPHRASE_CATEGORIES:
                 literal = found["fts5-literal"][category]
                 cells = [
-                    f"{size} 件（索引 {value['records']} 件）",
+                    f"{size} 件 + 言い換え {value['records'] - int(size)} 件",
                     max_tokens,
                     category,
                     str(literal["cases"]),

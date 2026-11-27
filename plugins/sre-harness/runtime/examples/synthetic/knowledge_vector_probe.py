@@ -304,7 +304,8 @@ def markdown(summary):
                         ke._ratio(recall[name]) for name in ("mean", "min", "max", "stdev")
                     )
                     text += (
-                        f"| {size} 件（索引 {value['records']} 件） | {budget} | {k} | {category} "
+                        f"| {size} 件 + 言い換え {value['records'] - int(size)} 件 | {budget} "
+                        f"| {k} | {category} "
                         f"| {cells} | {ke._ratio(metrics['precision']['mean'])} |\n"
                     )
     return text
